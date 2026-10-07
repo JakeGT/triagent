@@ -39,6 +39,8 @@ if (config.databaseUrl) {
     console.warn("Using the in-memory store: nothing is kept when the server stops. Set DATABASE_URL to keep data.");
 }
 const services = createServices(config, store);
+// Live updates reach subscribers on every server process sharing the database.
+if (store instanceof PostgresStore) await services.events.connect(store.relay());
 if (!config.secretsKey)
     console.warn(
         "No TRIAGENT_SECRETS_KEY: secrets are encrypted with a throwaway key, so they can't be read after a restart. Fine for development only.",

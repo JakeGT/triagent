@@ -27,6 +27,14 @@ export async function postgresStore(options: Omit<PostgresOptions, "schema"> = {
     return store;
 }
 
+/** Another connection pool on `store`'s schema, as a second server process would have. */
+export function sameDatabase(store: PostgresStore): PostgresStore {
+    if (!TEST_DATABASE_URL || !store.schema) throw new Error("Only for stores made by postgresStore().");
+    const other = new PostgresStore(TEST_DATABASE_URL, { max: 5, idleTimeout: 2, schema: store.schema });
+    opened.push(other);
+    return other;
+}
+
 /** The store tests run against: Postgres if a test database is set, otherwise memory. */
 export function testStore(): Promise<Store> {
     return TEST_DATABASE_URL ? postgresStore() : Promise.resolve(new MemoryStore());

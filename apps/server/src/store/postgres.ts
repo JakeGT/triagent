@@ -11,7 +11,9 @@
 // `tx`. A write outside any transaction runs as a transaction of its own.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import postgres from "postgres";
+import type { Relay } from "../services/events.ts";
 import type {
     ActivityRow,
     ApiToken,
@@ -304,6 +306,27 @@ export class PostgresStore implements Store {
                 insert into ${sql(table)} ${sql(row as Record<string, postgres.ParameterOrJSON<never>>)}
                 on conflict (${sql(key)}) do update set ${sql(row as Record<string, postgres.ParameterOrJSON<never>>, columns)}`;
         });
+    }
+
+    /**
+     * Live updates for the other server processes using this database and schema, by LISTEN/NOTIFY.
+     * Messages go out once a change is saved (live updates are sent after commit), outside any transaction.
+     */
+    relay(): Relay {
+        // Channel names are identifiers (at most 63 bytes), so a schema is folded into a short hash.
+        const channel = this.schema
+            ? `triagent_events_${createHash("sha256").update(this.schema).digest("hex").slice(0, 16)}`
+            : "triagent_events";
+        return {
+            send: (message) => {
+                this.sql
+                    .notify(channel, message)
+                    .catch((err: unknown) => console.error("Couldn't send a live update to other processes:", err));
+            },
+            listen: async (receive) => {
+                await this.sql.listen(channel, receive);
+            },
+        };
     }
 
     async ping(): Promise<void> {
