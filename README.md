@@ -38,7 +38,29 @@ docker run -d --rm --name triagent-test-pg -e POSTGRES_PASSWORD=test -p 127.0.0.
 TRIAGENT_TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:5433/postgres pnpm test:v1
 ```
 
-- [docs/architecture.md](docs/architecture.md): how the server is put together, workspaces and permissions, secrets.
+### The web app
+
+The web app (`apps/web`) is a React single-page app. In production the server serves it from `apps/web/dist`; in development, Vite serves it and passes `/api`, `/auth`, `/mcp`, `/llms.txt` and `/healthz` to the server on port 8080.
+
+```sh
+# Development: the server, then Vite. PUBLIC_ORIGIN is the address in the browser; the server checks it on every write.
+PUBLIC_ORIGIN=http://localhost:5173 TRIAGENT_ADMIN_USER=me TRIAGENT_ADMIN_PASSWORD='a long password' pnpm --filter @triagent/server dev
+pnpm --filter @triagent/web dev
+# http://localhost:5173
+
+# Production: build once, and the server serves the app on its own port.
+pnpm build:web
+TRIAGENT_ADMIN_USER=me TRIAGENT_ADMIN_PASSWORD='a long password' pnpm --filter @triagent/server start
+# http://localhost:8080
+
+pnpm test:web     # unit tests (Vitest)
+pnpm test:e2e     # builds the app and runs Playwright against the real server
+                  # (once: pnpm --filter @triagent/web exec playwright install chromium)
+```
+
+`WEB_DIST_DIR` serves a build from another folder. Without a build, the server serves the API only.
+
+- [docs/architecture.md](docs/architecture.md): how the server and web app are put together, workspaces and permissions, secrets.
 - [tests/contract](tests/contract/README.md): what any Triagent server must do.
 - [skills/triagent](skills/triagent/SKILL.md): a skill that teaches agents to work through findings with the MCP tools.
 
@@ -46,4 +68,4 @@ TRIAGENT_TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:5433/postgres pnpm
 
 Copyright (C) 2026 Jake Talling.
 
-Triagent is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License, version 3, as published by the Free Software Foundation. See [LICENSE](LICENSE). If you run a modified version as a network service, the AGPL requires you to offer its source to that service's users. Third-party software Triagent runs is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Triagent is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License, version 3, as published by the Free Software Foundation. See [LICENSE](LICENSE). If you run a modified version as a network service, the AGPL requires you to offer its source to that service's users. Third-party software Triagent runs or includes is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

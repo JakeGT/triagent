@@ -24,6 +24,8 @@ export interface Config {
     requestsPerMinute: number;
     sessionIdleMinutes: number;
     sessionMaxHours: number;
+    /** The built web app to serve, or null for this repository's apps/web/dist. */
+    webDistDir: string | null;
     production: boolean;
 }
 
@@ -113,6 +115,7 @@ export function loadConfig(env: Env = process.env): Config {
         requestsPerMinute: whole(env, "REQUESTS_PER_MINUTE", 600, 10, 1_000_000),
         sessionIdleMinutes: whole(env, "SESSION_IDLE_MINUTES", 480, 5, 525_600),
         sessionMaxHours: whole(env, "SESSION_MAX_HOURS", 72, 1, 8760),
+        webDistDir: env.WEB_DIST_DIR || null,
         production,
     };
 }

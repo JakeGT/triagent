@@ -1,0 +1,301 @@
+/* Theme tokens are shadcn/ui's CSS variables (adapted from shadcn-admin, MIT), plus Triagent's severity
+   and status colours. Everything here is a static stylesheet: the CSP allows no injected styles. */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./fonts.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+    color-scheme: light;
+    --radius: 0.5rem;
+    --background: oklch(0.985 0.002 240);
+    --foreground: oklch(0.22 0.015 240);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.22 0.015 240);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.22 0.015 240);
+    --primary: oklch(0.42 0.11 245);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.955 0.005 240);
+    --secondary-foreground: oklch(0.25 0.015 240);
+    --muted: oklch(0.955 0.005 240);
+    --muted-foreground: oklch(0.47 0.015 240);
+    --accent: oklch(0.94 0.012 240);
+    --accent-foreground: oklch(0.22 0.015 240);
+    --destructive: oklch(0.5 0.19 27);
+    --border: oklch(0.89 0.006 240);
+    --input: oklch(0.8 0.008 240);
+    --ring: oklch(0.55 0.12 245);
+    --sidebar: oklch(0.965 0.004 240);
+    --sidebar-foreground: oklch(0.22 0.015 240);
+    --sidebar-primary: oklch(0.42 0.11 245);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.92 0.01 240);
+    --sidebar-accent-foreground: oklch(0.2 0.015 240);
+    --sidebar-border: oklch(0.89 0.006 240);
+    --sidebar-ring: oklch(0.55 0.12 245);
+
+    /* Severity and status: text on the page background passes 4.5:1 in both themes. */
+    --sev-critical: #a4161a;
+    --sev-high: #a63f12;
+    --sev-medium: #7c5c00;
+    --sev-low: #45657a;
+    --st-open: #4a5560;
+    --st-in_progress: #1c5bb8;
+    --st-resolved: #1d6e37;
+    --st-wont_fix: #6a6170;
+    --diff-add: #e3f4e7;
+    --diff-del: #fbe7e6;
+}
+
+.dark {
+    color-scheme: dark;
+    --background: oklch(0.17 0.01 240);
+    --foreground: oklch(0.94 0.005 240);
+    --card: oklch(0.205 0.012 240);
+    --card-foreground: oklch(0.94 0.005 240);
+    --popover: oklch(0.22 0.012 240);
+    --popover-foreground: oklch(0.94 0.005 240);
+    --primary: oklch(0.78 0.1 245);
+    --primary-foreground: oklch(0.18 0.02 245);
+    --secondary: oklch(0.27 0.012 240);
+    --secondary-foreground: oklch(0.94 0.005 240);
+    --muted: oklch(0.26 0.012 240);
+    --muted-foreground: oklch(0.74 0.012 240);
+    --accent: oklch(0.29 0.014 240);
+    --accent-foreground: oklch(0.96 0.005 240);
+    --destructive: oklch(0.7 0.17 25);
+    --border: oklch(1 0 0 / 12%);
+    --input: oklch(1 0 0 / 22%);
+    --ring: oklch(0.7 0.1 245);
+    --sidebar: oklch(0.2 0.012 240);
+    --sidebar-foreground: oklch(0.94 0.005 240);
+    --sidebar-primary: oklch(0.78 0.1 245);
+    --sidebar-primary-foreground: oklch(0.18 0.02 245);
+    --sidebar-accent: oklch(0.29 0.014 240);
+    --sidebar-accent-foreground: oklch(0.96 0.005 240);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.7 0.1 245);
+
+    --sev-critical: #ff7a75;
+    --sev-high: #f8995f;
+    --sev-medium: #e6bb47;
+    --sev-low: #9dbccd;
+    --st-open: #c3ccd4;
+    --st-in_progress: #86b4ff;
+    --st-resolved: #74d391;
+    --st-wont_fix: #b5aabb;
+    --diff-add: #173523;
+    --diff-del: #42201f;
+}
+
+@theme inline {
+    --font-sans: "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+    --color-sidebar: var(--sidebar);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sev-critical: var(--sev-critical);
+    --color-sev-high: var(--sev-high);
+    --color-sev-medium: var(--sev-medium);
+    --color-sev-low: var(--sev-low);
+    --color-st-open: var(--st-open);
+    --color-st-in_progress: var(--st-in_progress);
+    --color-st-resolved: var(--st-resolved);
+    --color-st-wont_fix: var(--st-wont_fix);
+    --color-diff-add: var(--diff-add);
+    --color-diff-del: var(--diff-del);
+}
+
+@layer base {
+    * {
+        @apply border-border outline-ring/50;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+    }
+    html {
+        @apply overflow-x-hidden;
+    }
+    body {
+        @apply min-h-svh w-full bg-background font-sans text-foreground antialiased;
+        font-size: 0.875rem;
+        line-height: 1.45;
+    }
+    code,
+    kbd,
+    pre,
+    samp {
+        @apply font-mono;
+    }
+    /* Radix locks scrolling while a dialog is open; the lock's own styles are added as a constructed
+       stylesheet (src/lib/style-singleton.ts). */
+    body[data-scroll-locked] {
+        /* biome-ignore lint/complexity/noImportantStyles: must win over page layout while a dialog is open */
+        overflow: hidden !important;
+        overscroll-behavior: contain;
+    }
+    button:not(:disabled),
+    [role="button"]:not(:disabled) {
+        cursor: pointer;
+    }
+    @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+            /* biome-ignore lint/complexity/noImportantStyles: reduced motion overrides every component */
+            animation-duration: 0.01ms !important;
+            /* biome-ignore lint/complexity/noImportantStyles: as above */
+            transition-duration: 0.01ms !important;
+        }
+    }
+}
+
+/* Severity and status marks: colour plus a shape, so they don't rely on colour alone. */
+@layer components {
+    .sev {
+        --c: var(--sev-low);
+        @apply inline-flex items-center gap-1.5 font-medium whitespace-nowrap;
+        color: var(--c);
+    }
+    .sev::before {
+        content: "";
+        @apply inline-block size-2.5 shrink-0;
+        background: var(--c);
+    }
+    .sev-critical {
+        --c: var(--sev-critical);
+    }
+    .sev-critical::before {
+        clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    }
+    .sev-high {
+        --c: var(--sev-high);
+    }
+    .sev-high::before {
+        clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+    }
+    .sev-medium {
+        --c: var(--sev-medium);
+    }
+    .sev-medium::before {
+        border-radius: 1px;
+    }
+    .sev-low {
+        --c: var(--sev-low);
+    }
+    .sev-low::before {
+        border-radius: 999px;
+    }
+
+    .status {
+        --c: var(--st-open);
+        @apply inline-flex items-center gap-1.5 whitespace-nowrap;
+        color: var(--c);
+    }
+    .status::before {
+        content: "";
+        @apply inline-block size-2.5 shrink-0 rounded-full border-2;
+        border-color: var(--c);
+    }
+    .status-in_progress {
+        --c: var(--st-in_progress);
+    }
+    .status-in_progress::before {
+        background: linear-gradient(90deg, var(--c) 50%, transparent 50%);
+    }
+    .status-resolved {
+        --c: var(--st-resolved);
+    }
+    .status-resolved::before {
+        background: var(--c);
+    }
+    .status-wont_fix {
+        --c: var(--st-wont_fix);
+    }
+    .status-wont_fix::before {
+        border-style: dashed;
+    }
+
+    /* Rendered Markdown (findings, the reviewer's summary, tasks). */
+    .prose-md {
+        @apply text-sm leading-relaxed break-words;
+    }
+    .prose-md p,
+    .prose-md ul,
+    .prose-md ol,
+    .prose-md pre,
+    .prose-md blockquote {
+        @apply my-2;
+    }
+    .prose-md h1,
+    .prose-md h2,
+    .prose-md h3,
+    .prose-md h4 {
+        @apply mt-4 mb-2 font-semibold;
+    }
+    .prose-md h1 {
+        @apply text-lg;
+    }
+    .prose-md h2 {
+        @apply text-base;
+    }
+    .prose-md ul {
+        @apply list-disc ps-5;
+    }
+    .prose-md ol {
+        @apply list-decimal ps-5;
+    }
+    .prose-md li {
+        @apply my-0.5;
+    }
+    .prose-md a {
+        @apply text-primary underline underline-offset-2;
+    }
+    .prose-md code {
+        @apply rounded bg-muted px-1 py-0.5 text-[0.85em];
+    }
+    .prose-md pre {
+        @apply overflow-x-auto rounded-md border bg-muted p-3 text-xs;
+    }
+    .prose-md pre code {
+        @apply bg-transparent p-0;
+    }
+    .prose-md blockquote {
+        @apply border-s-4 ps-3 text-muted-foreground;
+    }
+}
+
+/* Collapsible sidebar groups (from shadcn-admin). */
+.CollapsibleContent {
+    overflow: hidden;
+}

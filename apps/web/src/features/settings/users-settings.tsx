@@ -1,0 +1,251 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useId, useState } from "react";
+import { toast } from "sonner";
+import { ConfirmAction } from "@/components/confirm-action";
+import { Field, FieldError } from "@/components/field";
+import { LoadError, LoadingRows } from "@/components/load-state";
+import { OneTimeReveal } from "@/components/one-time-reveal";
+import { PasswordInput } from "@/components/password-input";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { api, errorMessage, paths } from "@/lib/api";
+import { formatDate, timeAgo } from "@/lib/format";
+import { instanceUsersQuery, keys } from "@/lib/queries";
+import { useMe } from "@/lib/session";
+import type { InstanceUser, PublicUser } from "@/lib/types";
+import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
+
+interface Revealed {
+    label: string;
+    value: string;
+}
+
+function CreateAccount({ onPassword }: { onPassword(r: Revealed): void }) {
+    const queryClient = useQueryClient();
+    const adminId = useId();
+    const [username, setUsername] = useState("");
+    const [password, setPassword] = useState("");
+    const [isAdmin, setIsAdmin] = useState(false);
+    const create = useMutation({
+        mutationFn: () =>
+            api.post<{ user: PublicUser; password: string | null }>(paths.instanceUsers, {
+                username: username.trim(),
+                isInstanceAdmin: isAdmin,
+                ...(password ? { password } : {}),
+            }),
+        onSuccess: async (r) => {
+            if (r.password) onPassword({ label: `Temporary password for ${r.user.username}`, value: r.password });
+            else toast.success(`Account ${r.user.username} created.`);
+            setUsername("");
+            setPassword("");
+            setIsAdmin(false);
+            await queryClient.invalidateQueries({ queryKey: keys.instanceUsers });
+        },
+    });
+    return (
+        <SettingsSection
+            title="Create an account"
+            description="The person signs in with this username and a temporary password, and must choose their own straight away. Add them to workspaces under Members."
+        >
+            <form
+                className="grid gap-4"
+                onSubmit={(e) => {
+                    e.preventDefault();
+                    create.mutate();
+                }}
+            >
+                <div className="grid gap-4 sm:grid-cols-2">
+                    <Field label="Username" hint="Letters, numbers and . _ @ -">
+                        {(p) => (
+                            <Input
+                                {...p}
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                required
+                                maxLength={64}
+                                autoComplete="off"
+                            />
+                        )}
+                    </Field>
+                    <Field label="Temporary password" hint="Leave empty to have one generated and shown once.">
+                        {(p) => (
+                            <PasswordInput
+                                {...p}
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                autoComplete="new-password"
+                            />
+                        )}
+                    </Field>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Checkbox id={adminId} checked={isAdmin} onCheckedChange={(v) => setIsAdmin(v === true)} />
+                    <Label htmlFor={adminId}>Instance administrator (can manage every account)</Label>
+                </div>
+                <FieldError message={create.error ? errorMessage(create.error) : null} />
+                <div>
+                    <Button type="submit" disabled={create.isPending || !username.trim()}>
+                        {create.isPending ? "Creating…" : "Create account"}
+                    </Button>
+                </div>
+            </form>
+        </SettingsSection>
+    );
+}
+
+function UserActions({ user, onPassword }: { user: InstanceUser; onPassword(r: Revealed): void }) {
+    const queryClient = useQueryClient();
+    const [error, setError] = useState<string | null>(null);
+    const url = `${paths.instanceUsers}/${encodeURIComponent(user.id)}`;
+    const name = user.username ?? user.displayName;
+    const refresh = () => queryClient.invalidateQueries({ queryKey: keys.instanceUsers });
+    const run = async (fn: () => Promise<void>) => {
+        setError(null);
+        try {
+            await fn();
+        } catch (err) {
+            setError(errorMessage(err));
+            throw err;
+        }
+    };
+    return (
+        <div className="grid justify-items-end gap-1">
+            <div className="flex flex-wrap justify-end gap-1">
+                <ConfirmAction
+                    trigger={
+                        <Button size="sm" variant="ghost">
+                            Reset password<span className="sr-only"> of {name}</span>
+                        </Button>
+                    }
+                    title={`Reset ${name}'s password?`}
+                    description="A temporary password is generated and shown once. They're signed out everywhere and must choose a new password when they next sign in."
+                    confirmLabel="Reset password"
+                    destructive={false}
+                    onConfirm={() =>
+                        run(async () => {
+                            const r = await api.post<{ password: string | null; signedOutSessions: number }>(`${url}/password`, {});
+                            if (r.password) onPassword({ label: `Temporary password for ${name}`, value: r.password });
+                            await refresh();
+                        })
+                    }
+                />
+                <ConfirmAction
+                    trigger={
+                        <Button size="sm" variant="ghost">
+                            Sign out<span className="sr-only"> {name}</span>
+                        </Button>
+                    }
+                    title={`Sign ${name} out everywhere?`}
+                    description="Every browser session of this account ends. Their API tokens keep working."
+                    confirmLabel="Sign out"
+                    destructive={false}
+                    onConfirm={() =>
+                        run(async () => {
+                            const r = await api.post<{ signedOutSessions: number }>(`${url}/sign-out`, {});
+                            await refresh();
+                            toast.success(`${name} signed out of ${r.signedOutSessions} session(s).`);
+                        })
+                    }
+                />
+                <ConfirmAction
+                    trigger={
+                        <Button size="sm" variant="ghost">
+                            Remove<span className="sr-only"> {name}</span>
+                        </Button>
+                    }
+                    title={`Remove ${name}?`}
+                    description="The account, its personal workspace and its memberships are deleted. This can't be undone."
+                    confirmLabel="Remove account"
+                    typeToConfirm={name}
+                    onConfirm={() =>
+                        run(async () => {
+                            await api.delete(url);
+                            await refresh();
+                            toast.success(`${name} removed.`);
+                        })
+                    }
+                />
+            </div>
+            <FieldError message={error} />
+        </div>
+    );
+}
+
+export function UsersSettings() {
+    const me = useMe();
+    const allowed = me.user.isInstanceAdmin;
+    const query = useQuery({ ...instanceUsersQuery, enabled: allowed });
+    // A generated password lives only here, shown once.
+    const [revealed, setRevealed] = useState<Revealed | null>(null);
+    const dismiss = useCallback(() => setRevealed(null), []);
+
+    if (!allowed)
+        return (
+            <SettingsPage title="Users">
+                <ReadOnlyNote>Only instance administrators can manage accounts.</ReadOnlyNote>
+            </SettingsPage>
+        );
+
+    return (
+        <SettingsPage title="Users" description="Every local account on this Triagent, across all workspaces.">
+            {revealed && (
+                <OneTimeReveal
+                    value={revealed.value}
+                    label={revealed.label}
+                    hint="Give it to the person privately. They must choose their own password when they sign in."
+                    onDismiss={dismiss}
+                />
+            )}
+            {query.isError ? (
+                <LoadError error={query.error} onRetry={() => query.refetch()} />
+            ) : query.isPending ? (
+                <LoadingRows rows={3} />
+            ) : (
+                <div className="rounded-md border">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Account</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead>Last sign-in</TableHead>
+                                <TableHead>
+                                    <span className="sr-only">Actions</span>
+                                </TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {query.data.map((u) => (
+                                <TableRow key={u.id} className="align-top">
+                                    <TableCell>
+                                        <div className="font-medium">
+                                            {u.username ?? u.displayName}
+                                            {u.id === me.user.id && <span className="text-muted-foreground"> (you)</span>}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">Created {formatDate(u.createdAt)}</div>
+                                    </TableCell>
+                                    <TableCell className="text-xs">
+                                        <ul className="grid gap-0.5">
+                                            {u.isInstanceAdmin && <li>Instance administrator</li>}
+                                            {u.mustChangePassword && <li>Must choose a new password</li>}
+                                            <li>
+                                                {u.sessions} active {u.sessions === 1 ? "session" : "sessions"}
+                                            </li>
+                                        </ul>
+                                    </TableCell>
+                                    <TableCell className="text-xs">{u.lastLoginAt ? timeAgo(u.lastLoginAt) : "Never"}</TableCell>
+                                    <TableCell className="text-end">
+                                        {u.id !== me.user.id && <UserActions user={u} onPassword={setRevealed} />}
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </div>
+            )}
+            <CreateAccount onPassword={setRevealed} />
+        </SettingsPage>
+    );
+}

@@ -4,11 +4,13 @@ import { Hono } from "hono";
 import { ApiError } from "./errors.ts";
 import { clientIp, errorResponse, mount } from "./http/mount.ts";
 import type { Route } from "./http/route.ts";
+import { serveWeb, webDistDir } from "./http/static.ts";
 import { accountRoutes } from "./routes/account.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { platformRoutes } from "./routes/platform.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { reportRoutes } from "./routes/reports.ts";
+import { skillRoutes } from "./routes/skill.ts";
 import { workspaceRoutes } from "./routes/workspace.ts";
 import { RequestLimiter } from "./security.ts";
 import type { Services } from "./services/index.ts";
@@ -34,6 +36,7 @@ export function allRoutes(services: Services): Route[] {
         ...projectRoutes,
         ...reportRoutes,
         ...issueRoutes,
+        ...skillRoutes,
         ...platformRoutes(services, () => routes),
     );
     return routes;
@@ -63,6 +66,8 @@ export function createApp(services: Services): { app: Hono; routes: Route[] } {
 
     const routes = allRoutes(services);
     mount(app, services, routes);
+    // The web app, if it has been built (after the API, so API routes win).
+    serveWeb(app, webDistDir(services.config.webDistDir));
     app.onError((err, c) => errorResponse(c, err));
     app.notFound((c) => c.json({ error: `Nothing at ${c.req.method} ${c.req.path}. See /api/v1/openapi.json.` }, 404));
     return { app, routes };
