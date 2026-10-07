@@ -64,7 +64,8 @@ export type Query = Record<string, string>;
 
 export interface Target {
     readonly name: string;
-    readonly defaultProject: string;
+    /** A project that always exists and can't be deleted, if the target has one. */
+    readonly defaultProject: string | null;
     readonly defaultBranch: string;
     close(): Promise<void>;
 

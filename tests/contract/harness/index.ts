@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { after, before } from "node:test";
 import { LegacyTarget } from "./legacy.ts";
 import type { Caller, Finding, Report, Target } from "./types.ts";
+import { V1Target } from "./v1.ts";
 
 export type * from "./types.ts";
 
 const TARGETS: Record<string, () => Promise<Target>> = {
     legacy: () => LegacyTarget.start(),
+    v1: () => V1Target.start(),
 };
 
 const chosen = process.env.TRIAGENT_CONTRACT_TARGET;

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { describe, test } from "node:test";
-import { expectStatus, finding, issueAt, report, skip, unique, useTarget } from "./harness/index.ts";
+import { expectStatus, finding, issueAt, knownGap, report, skip, unique, useTarget } from "./harness/index.ts";
 
 const sign = (secret: string, body: string) => `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 
@@ -82,8 +82,8 @@ describe("MCP", { skip }, () => {
 
     test("the core triage tools are listed with input schemas", async () => {
         const { t, admin } = await setup();
-        const read = await t.token(admin, "read");
-        const r = await t.mcp(read, { id: 2, method: "tools/list" });
+        const full = await t.token(admin, "full");
+        const r = await t.mcp(full, { id: 2, method: "tools/list" });
         const tools = new Map(r.body.result.tools.map((x: { name: string }) => [x.name, x]));
         for (const name of [
             "list_projects",
@@ -99,6 +99,22 @@ describe("MCP", { skip }, () => {
         }
         assert.equal((tools.get("update_issue") as { inputSchema: { type: string } }).inputSchema.type, "object");
     });
+
+    test(
+        "a token is only offered the tools its scope allows",
+        knownGap("legacy", "lists every tool whatever the token's scope"),
+        async () => {
+            const { t, admin } = await setup();
+            const read = await t.token(admin, "read");
+            const r = await t.mcp(read, { id: 6, method: "tools/list" });
+            const names = r.body.result.tools.map((x: { name: string }) => x.name);
+            assert.ok(names.includes("list_issues") && names.includes("get_issue"));
+            assert.ok(
+                !names.includes("update_issue") && !names.includes("create_upload_link"),
+                `read token was offered: ${names.join(", ")}`,
+            );
+        },
+    );
 
     test("tools respect the token's scope", async () => {
         const { t, admin, project, issue } = await setup();

@@ -30,14 +30,14 @@ describe("projects", { skip }, () => {
         expectStatus(await t.getIssue(admin, p2, "main", issue.id), 404);
     });
 
-    test("deleting a project removes it; the default project can't be deleted", async () => {
+    test("deleting a project removes it, and a default project (if the target has one) can't be deleted", async () => {
         const t = target();
         const admin = await t.admin();
         const id = unique("gone");
         expectStatus(await t.createProject(admin, id), 201);
         expectStatus(await t.deleteProject(admin, id), 200);
         expectStatus(await t.listIssues(admin, id, "main"), 404);
-        expectStatus(await t.deleteProject(admin, t.defaultProject), 400);
+        if (t.defaultProject) expectStatus(await t.deleteProject(admin, t.defaultProject), 400);
     });
 });
 

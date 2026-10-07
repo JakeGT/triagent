@@ -23,13 +23,16 @@ describe("authentication and permissions", { skip }, () => {
 
     test("the API refuses callers who aren't signed in", async () => {
         const t = target();
-        expectStatus(await t.listIssues({ kind: "anonymous" }, t.defaultProject, branch), 401);
+        expectStatus(await t.listIssues({ kind: "anonymous" }, t.defaultProject ?? "any-project", branch), 401);
         expectStatus(await t.mcp({ kind: "anonymous" }, { id: 1, method: "tools/list" }), 401);
     });
 
     test("the API refuses an unknown token", async () => {
         const t = target();
-        expectStatus(await t.listIssues({ kind: "token", name: "nobody", token: "ocr_not-a-real-token" }, t.defaultProject, branch), 401);
+        expectStatus(
+            await t.listIssues({ kind: "token", name: "nobody", token: "tri_not-a-real-token" }, t.defaultProject ?? "any-project", branch),
+            401,
+        );
     });
 
     test("browser writes need the session's CSRF token and the site's own origin", async () => {

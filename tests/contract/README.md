@@ -5,7 +5,7 @@ These tests describe what a Triagent server must do: who may do what, how report
 | Target | What it is |
 |---|---|
 | `legacy` | The prototype Triagent is being rebuilt from. It isn't in this repository. |
-| *(to come)* | The rebuilt server, once its API exists. |
+| `v1` | The server in this repository (`apps/server`), started from source. |
 
 Each test file starts its own server on a free port with a throwaway data folder, and nothing reaches GitHub, the GitHub CLI or an LLM.
 
@@ -15,7 +15,10 @@ Each test file starts its own server on a free port with a throwaway data folder
 # Against the prototype (point LEGACY_APP_DIR at the folder that has its server.mjs):
 LEGACY_APP_DIR=../path/to/prototype pnpm test:legacy
 
-# Without a target, the suites report as skipped (this is what CI does for now):
+# Against the server in this repository (what CI runs):
+pnpm test:v1
+
+# Without a target, the suites report as skipped:
 pnpm test
 ```
 
@@ -26,6 +29,7 @@ A test the prototype is known to fail is marked with `knownGap("legacy", reason)
 | Test | Gap in the prototype |
 |---|---|
 | A finding can be added by hand to a branch with no report yet | The route looks the branch up first and answers 404 |
+| A token is only offered the tools its scope allows | It lists every tool, whatever the scope |
 
 ## Adding a target
 

@@ -13,8 +13,9 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test --test-reporter=spec \"tests/**/*.test.ts\"",
+    "test": "node --test --test-reporter=spec \"apps/*/test/**/*.test.ts\" \"tests/**/*.test.ts\"",
     "test:legacy": "TRIAGENT_CONTRACT_TARGET=legacy node --test --test-reporter=spec \"tests/**/*.test.ts\"",
+    "test:v1": "TRIAGENT_CONTRACT_TARGET=v1 node --test --test-reporter=spec \"tests/**/*.test.ts\"",
     "check": "pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
