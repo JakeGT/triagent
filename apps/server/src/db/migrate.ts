@@ -45,7 +45,8 @@ export async function migrate(sql: Sql, { schema, migrations = readMigrations() 
     };
     await sql.begin(async (tx) => {
         await lock(tx);
-        if (schema) await tx`create schema if not exists ${tx(schema)}`;
+        // Checked first: creating it (even "if not exists") needs a privilege an existing schema's owner may lack.
+        if (schema && !(await tx`select 1 from pg_namespace where nspname = ${schema}`).length) await tx`create schema ${tx(schema)}`;
         await tx`
             create table if not exists schema_migrations (
                 version    text primary key,
