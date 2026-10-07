@@ -19,7 +19,9 @@ export function describeSecret(secret: Pick<SecretView, "set" | "hint" | "setBy"
     if (secret.setBy) parts.push(`by ${secret.setBy}`);
     if (secret.setAt) parts.push(`on ${formatDate(secret.setAt)}`);
     let text = parts.join(" ");
-    if (secret.hint) text += `, ends …${secret.hint}`;
+    // The server's hint is the last four characters after an ellipsis ("…abcd"), or just "…" for short values.
+    const tail = secret.hint?.replace(/^…/, "");
+    if (tail) text += `, ends …${tail}`;
     return text;
 }
 

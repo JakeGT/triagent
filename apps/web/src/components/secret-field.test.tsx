@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { describeSecret, SecretField } from "./secret-field";
 
-const SET = { name: "github-token", set: true, hint: "abcd", setBy: "Sam", setAt: "2026-10-07T09:30:00.000Z" };
+const SET = { name: "github-token", set: true, hint: "…abcd", setBy: "Sam", setAt: "2026-10-07T09:30:00.000Z" };
 const UNSET = { name: "github-token", set: false, hint: null, setBy: null, setAt: null };
 
 describe("SecretField", () => {
@@ -67,5 +67,6 @@ describe("SecretField", () => {
     it("describes an unset secret", () => {
         expect(describeSecret(UNSET)).toBe("Not set");
         expect(describeSecret({ set: true, hint: null, setBy: null, setAt: null })).toBe("Set");
+        expect(describeSecret({ set: true, hint: "…", setBy: "Sam", setAt: null })).toBe("Set by Sam");
     });
 });

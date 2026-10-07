@@ -70,6 +70,26 @@ export async function seedProject(api: Api, opts: { ws?: string; project?: strin
     return { ws, project };
 }
 
+/** A new account added to a workspace with a role. */
+export async function addMember(admin: Api, baseURL: string, ws: string, role: "viewer" | "editor" | "admin" | "owner") {
+    const username = unique(role);
+    const api = await createUser(admin, baseURL, username);
+    await admin.post(`/api/v1/w/${ws}/settings/members`, { username, role });
+    return { username, api };
+}
+
+/** The issues on main, as the API lists them (most urgent first). */
+export async function issuesOf(api: Api, ws: string, project: string) {
+    return (await api.get(`/api/v1/w/${ws}/p/${project}/issues?branch=main`)).items as {
+        id: string;
+        title: string;
+        path: string;
+        severity: string;
+        status: string;
+        rev: number;
+    }[];
+}
+
 /** Sign the page's browser context in (the cookie is shared with the page). */
 export async function signInPage(page: Page, username: string, password: string) {
     const res = await page.request.post("/auth/login", { data: { username, password } });

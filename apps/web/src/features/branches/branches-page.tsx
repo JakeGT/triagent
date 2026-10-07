@@ -1,9 +1,296 @@
-import { Page, PageHeader } from "@/components/page";
+// Branches & reports: every branch with a report, uploading a new one, each branch's report history,
+// and moving or deleting a branch's report and triage.
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { History, MoveRight, Trash2 } from "lucide-react";
+import { useId, useState } from "react";
+import { toast } from "sonner";
+import { ConfirmAction } from "@/components/confirm-action";
+import { Field, FieldError } from "@/components/field";
+import { LoadError, LoadingRows } from "@/components/load-state";
+import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { api, errorMessage, paths } from "@/lib/api";
+import { formatDateTime, plural, timeAgo } from "@/lib/format";
+import { branchesQuery, historyQuery, keys } from "@/lib/queries";
+import { useCan, useProject } from "@/lib/session";
+import type { Branch } from "@/lib/types";
+import { UploadReport } from "./upload-report";
 
 export function BranchesPage() {
+    const { ws, slug, project } = useProject();
+    const can = useCan();
+    const queryClient = useQueryClient();
+    const branches = useQuery(branchesQuery(ws, slug));
+    const [history, setHistory] = useState<string | null>(null);
+    const [moving, setMoving] = useState<Branch | null>(null);
+
+    const remove = useMutation({
+        mutationFn: (branch: string) => api.post(`${paths.project(ws, slug)}/branches/delete`, { branch, confirm: true }),
+        onSuccess: (_r, branch) => {
+            toast.success(`Deleted the report for ${branch}.`);
+            void queryClient.invalidateQueries({ queryKey: keys.project(ws, slug) });
+            void queryClient.invalidateQueries({ queryKey: keys.projects(ws) });
+        },
+    });
+
     return (
         <Page>
-            <PageHeader title="BranchesPage" />
+            <PageMeta title={`Branches & reports · ${project.name}`} />
+            <PageHeader title="Branches & reports" description="Each branch has its own report and its own triage." />
+            {can("upload") && <UploadReport />}
+
+            <section aria-labelledby="branches-heading" className="grid gap-2">
+                <h2 id="branches-heading" className="font-semibold">
+                    Branches with a report
+                </h2>
+                {branches.isPending ? (
+                    <LoadingRows rows={4} />
+                ) : branches.isError ? (
+                    <LoadError error={branches.error} onRetry={() => branches.refetch()} title="Couldn't load the branches" />
+                ) : branches.data.items.length === 0 ? (
+                    <EmptyState title="No reports yet">
+                        {can("upload")
+                            ? "Upload the JSON report Open Code Review wrote, above."
+                            : "Someone with upload access needs to upload a report."}
+                    </EmptyState>
+                ) : (
+                    <div className="rounded-md border">
+                        <Table>
+                            <TableHeader className="bg-muted/50 text-xs">
+                                <TableRow>
+                                    <TableHead scope="col">Branch</TableHead>
+                                    <TableHead scope="col" className="text-end">
+                                        Issues
+                                    </TableHead>
+                                    <TableHead scope="col" className="text-end">
+                                        Unresolved
+                                    </TableHead>
+                                    <TableHead scope="col" className="text-end">
+                                        In progress
+                                    </TableHead>
+                                    <TableHead scope="col" className="text-end">
+                                        Done
+                                    </TableHead>
+                                    <TableHead scope="col">Report</TableHead>
+                                    <TableHead scope="col">
+                                        <span className="sr-only">Actions</span>
+                                    </TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {branches.data.items.map((b) => (
+                                    <TableRow key={b.name} data-testid={`branch-${b.name}`}>
+                                        <TableCell>
+                                            <Link
+                                                to="/w/$ws/p/$project/overview"
+                                                params={{ ws, project: slug }}
+                                                search={{ branch: b.isDefault ? undefined : b.name }}
+                                                className="font-mono text-xs font-medium hover:underline"
+                                            >
+                                                {b.name}
+                                            </Link>
+                                            {b.isDefault && (
+                                                <Badge variant="secondary" className="ms-2">
+                                                    default
+                                                </Badge>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="text-end tabular-nums">{b.issues}</TableCell>
+                                        <TableCell className="text-end tabular-nums">{b.unresolved}</TableCell>
+                                        <TableCell className="text-end tabular-nums">{b.inProgress}</TableCell>
+                                        <TableCell className="text-end tabular-nums">{b.done}</TableCell>
+                                        <TableCell className="text-xs">
+                                            <span className="font-mono">{b.fileName}</span>
+                                            <span className="block text-muted-foreground">
+                                                {b.scope === "diff" ? "Changes only" : "Whole codebase"} · {b.uploadedBy},{" "}
+                                                <time dateTime={b.uploadedAt} title={formatDateTime(b.uploadedAt)}>
+                                                    {timeAgo(b.uploadedAt)}
+                                                </time>
+                                                {b.commit && (
+                                                    <>
+                                                        {" "}
+                                                        · <span className="font-mono">{b.commit.slice(0, 10)}</span>
+                                                    </>
+                                                )}
+                                            </span>
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className="flex justify-end gap-1">
+                                                <Button variant="ghost" size="sm" onClick={() => setHistory(b.name)}>
+                                                    <History /> History<span className="sr-only"> of {b.name}</span>
+                                                </Button>
+                                                {can("configure") && (
+                                                    <Button variant="ghost" size="sm" onClick={() => setMoving(b)}>
+                                                        <MoveRight /> Move<span className="sr-only"> {b.name}</span>
+                                                    </Button>
+                                                )}
+                                                {can("configure") && !b.isDefault && (
+                                                    <ConfirmAction
+                                                        trigger={
+                                                            <Button variant="ghost" size="sm">
+                                                                <Trash2 /> Delete<span className="sr-only"> {b.name}</span>
+                                                            </Button>
+                                                        }
+                                                        title={`Delete the report for ${b.name}?`}
+                                                        description={
+                                                            <>
+                                                                <p>
+                                                                    Its report and triage are moved to the project's archive and the branch
+                                                                    disappears from every page.
+                                                                </p>
+                                                                {b.unresolved > 0 && (
+                                                                    <p className="mt-2 font-medium">
+                                                                        It still has {plural(b.unresolved, "unresolved issue")}.
+                                                                    </p>
+                                                                )}
+                                                            </>
+                                                        }
+                                                        confirmLabel="Delete branch report"
+                                                        typeToConfirm={b.name}
+                                                        onConfirm={() => remove.mutateAsync(b.name)}
+                                                    />
+                                                )}
+                                            </span>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                )}
+            </section>
+
+            <HistoryDialog branch={history} onClose={() => setHistory(null)} />
+            <MoveDialog branch={moving} onClose={() => setMoving(null)} />
         </Page>
+    );
+}
+
+function HistoryDialog({ branch, onClose }: { branch: string | null; onClose(): void }) {
+    const { ws, slug } = useProject();
+    const history = useQuery({ ...historyQuery(ws, slug, branch ?? ""), enabled: Boolean(branch) });
+    const current = history.data?.current?.upload;
+    return (
+        <Dialog open={Boolean(branch)} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-xl">
+                <DialogHeader>
+                    <DialogTitle>Report history of {branch}</DialogTitle>
+                    <DialogDescription>The current report and the ones it replaced, newest first.</DialogDescription>
+                </DialogHeader>
+                {history.isPending ? (
+                    <LoadingRows rows={3} />
+                ) : history.isError ? (
+                    <LoadError error={history.error} onRetry={() => history.refetch()} />
+                ) : (
+                    <ol className="grid max-h-96 gap-2 overflow-y-auto text-sm">
+                        {current && (
+                            <li className="rounded-md border p-2">
+                                <span className="font-mono">{current.fileName}</span> <Badge variant="secondary">current</Badge>
+                                <span className="block text-xs text-muted-foreground">
+                                    Uploaded by {current.uploadedBy} on {formatDateTime(current.uploadedAt)}
+                                    {current.commit ? ` at ${current.commit.slice(0, 10)}` : ""}
+                                </span>
+                            </li>
+                        )}
+                        {history.data.archived.map((a) => (
+                            <li key={`${a.upload.id}-${a.archivedAt}`} className="rounded-md border p-2">
+                                <span className="font-mono">{a.upload.fileName}</span>, {plural(a.findings, "finding")}
+                                <span className="block text-xs text-muted-foreground">
+                                    Uploaded by {a.upload.uploadedBy} on {formatDateTime(a.upload.uploadedAt)}
+                                    {a.upload.commit ? ` at ${a.upload.commit.slice(0, 10)}` : ""}.{" "}
+                                    {a.reason === "deleted" ? "Deleted" : "Replaced"} {formatDateTime(a.archivedAt)}.
+                                </span>
+                            </li>
+                        ))}
+                        {!current && history.data.archived.length === 0 && <li className="text-muted-foreground">No reports.</li>}
+                    </ol>
+                )}
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function MoveDialog({ branch, onClose }: { branch: Branch | null; onClose(): void }) {
+    const { ws, slug } = useProject();
+    const queryClient = useQueryClient();
+    const checkId = useId();
+    const [to, setTo] = useState("");
+    const [makeDefault, setMakeDefault] = useState(false);
+    const [open, setOpen] = useState<string | null>(null);
+    // Start fresh each time a different branch is opened.
+    if (branch && open !== branch.name) {
+        setOpen(branch.name);
+        setTo("");
+        setMakeDefault(branch.isDefault);
+    }
+    const close = () => {
+        setOpen(null);
+        move.reset();
+        onClose();
+    };
+    const move = useMutation({
+        mutationFn: () =>
+            api.post<{ from: string; to: string; defaultBranch: string }>(`${paths.project(ws, slug)}/branches/move`, {
+                from: branch?.name,
+                to: to.trim(),
+                makeDefault,
+            }),
+        onSuccess: (r) => {
+            toast.success(`Moved ${r.from} to ${r.to}.`);
+            void queryClient.invalidateQueries({ queryKey: keys.project(ws, slug) });
+            void queryClient.invalidateQueries({ queryKey: keys.projects(ws) });
+            close();
+        },
+    });
+    return (
+        <Dialog
+            open={Boolean(branch)}
+            onOpenChange={(next) => {
+                if (!next) close();
+            }}
+        >
+            <DialogContent>
+                <form
+                    className="grid gap-4"
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        if (to.trim()) move.mutate();
+                    }}
+                >
+                    <DialogHeader>
+                        <DialogTitle>Move {branch?.name}</DialogTitle>
+                        <DialogDescription>
+                            Moves the report, its triage and its history to another branch name, for a report uploaded to the wrong branch.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <Field label="New branch name">
+                        {(p) => <Input {...p} value={to} onChange={(e) => setTo(e.target.value)} className="font-mono" required />}
+                    </Field>
+                    <div className="flex items-center gap-2">
+                        <Checkbox id={checkId} checked={makeDefault} onCheckedChange={(v) => setMakeDefault(v === true)} />
+                        <Label htmlFor={checkId} className="font-normal">
+                            Make it the project's default branch
+                        </Label>
+                    </div>
+                    <FieldError message={move.error ? errorMessage(move.error) : null} />
+                    <DialogFooter>
+                        <Button type="button" variant="ghost" onClick={close}>
+                            Cancel
+                        </Button>
+                        <Button type="submit" disabled={move.isPending || !to.trim()}>
+                            Move branch
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
     );
 }

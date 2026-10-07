@@ -28,6 +28,9 @@ import { activeFilters, type IssueSearch, issueApiQuery, PAGE_SIZE, withoutFilte
 
 const ROUTE = "/authed/w/$ws/p/$project/issues" as const;
 
+/** Columns hidden while an issue is open beside the list, unless the screen is very wide. */
+const WIDE_ONLY = new Set(["category", "assignee"]);
+
 function summaryText(total: number, counts: Record<string, number> | undefined): string {
     const parts = SEVERITIES.filter((s) => counts?.[s]).map((s) => `${counts?.[s]} ${s}`);
     return `${plural(total, "issue")}${parts.length ? `: ${parts.join(", ")}` : ""}`;
@@ -284,7 +287,14 @@ export function IssuesPage() {
                                     {table.getHeaderGroups().map((hg) => (
                                         <tr key={hg.id}>
                                             {hg.headers.map((h) => (
-                                                <th key={h.id} scope="col" className="h-8 px-2 text-start font-medium whitespace-nowrap">
+                                                <th
+                                                    key={h.id}
+                                                    scope="col"
+                                                    className={cn(
+                                                        "h-8 px-2 text-start font-medium whitespace-nowrap",
+                                                        issueId && WIDE_ONLY.has(h.id) && "hidden 2xl:table-cell",
+                                                    )}
+                                                >
                                                     {flexRender(h.column.columnDef.header, h.getContext())}
                                                 </th>
                                             ))}
@@ -303,7 +313,13 @@ export function IssuesPage() {
                                             )}
                                         >
                                             {row.getVisibleCells().map((cell) => (
-                                                <td key={cell.id} className="px-2 py-1.5">
+                                                <td
+                                                    key={cell.id}
+                                                    className={cn(
+                                                        "px-2 py-1.5",
+                                                        issueId && WIDE_ONLY.has(cell.column.id) && "hidden 2xl:table-cell",
+                                                    )}
+                                                >
                                                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                                 </td>
                                             ))}

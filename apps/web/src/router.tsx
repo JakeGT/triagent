@@ -37,7 +37,8 @@ const str = (v: unknown, max = 200) => (typeof v === "string" || typeof v === "n
 
 async function loadMe(queryClient: QueryClient, href: string): Promise<Me> {
     try {
-        const me = await queryClient.ensureQueryData(meQuery);
+        // Cached while fresh; fetched again once stale or invalidated (after a password change, a new organisation).
+        const me = await queryClient.fetchQuery(meQuery);
         setCsrfToken(me.csrf);
         return me;
     } catch (err) {

@@ -4,7 +4,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api, paths } from "./api";
 import type {
-    ActivityRow,
     ApiToken,
     AuditRow,
     Automation,
@@ -129,13 +128,6 @@ export const compareQuery = (ws: string, p: string, base: string, head: string) 
     queryOptions({
         queryKey: keys.compare(ws, p, base, head),
         queryFn: ({ signal }) => api.get<Comparison>(`${paths.project(ws, p)}/compare`, { base, head }, { signal }),
-    });
-
-export const activityQuery = (ws: string, p: string, branch: string) =>
-    queryOptions({
-        queryKey: keys.activity(ws, p, branch),
-        queryFn: ({ signal }) => api.get<{ items: ActivityRow[] }>(`${paths.project(ws, p)}/activity`, { branch, limit: 100 }, { signal }),
-        select: (d) => d.items,
     });
 
 export const generalQuery = (ws: string, p: string) =>
