@@ -1,6 +1,7 @@
 // Regression tests for problems found in review of the first version of this server.
 
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { test } from "node:test";
 import { hashPassword } from "../src/security.ts";
 import { ADMIN_PASSWORD, report, testApp } from "./helpers.ts";
@@ -178,7 +179,7 @@ test("read-only access sees whether model keys are set, not their hints", async 
     await t.request("/api/v1/w/admin/settings/review-model/keys/openrouter", {
         method: "PUT",
         session: admin,
-        body: { key: "sk-or-0123456789abcdef" },
+        body: { key: `sk-or-${randomBytes(16).toString("hex")}` },
     });
     const read = (
         await t.request("/api/v1/w/admin/settings/tokens", { method: "POST", session: admin, body: { name: "reader", scope: "read" } })
