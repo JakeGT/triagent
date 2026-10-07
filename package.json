@@ -12,11 +12,14 @@
   "scripts": {
     "lint": "biome check .",
     "format": "biome check --write .",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json",
     "test": "node --test --test-reporter=spec \"apps/*/test/**/*.test.ts\" \"tests/**/*.test.ts\"",
     "test:legacy": "TRIAGENT_CONTRACT_TARGET=legacy node --test --test-reporter=spec \"tests/**/*.test.ts\"",
     "test:v1": "TRIAGENT_CONTRACT_TARGET=v1 node --test --test-reporter=spec \"tests/**/*.test.ts\"",
-    "check": "pnpm lint && pnpm typecheck && pnpm test"
+    "build:web": "pnpm --filter @triagent/web build",
+    "test:web": "pnpm --filter @triagent/web test",
+    "test:e2e": "pnpm build:web && pnpm --filter @triagent/web test:e2e",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:web"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

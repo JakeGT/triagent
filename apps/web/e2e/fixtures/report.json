@@ -1,0 +1,87 @@
+{
+  "status": "completed",
+  "session_id": "e2e-fixture",
+  "comments": [
+    {
+      "path": "src/db/query.ts",
+      "start_line": 41,
+      "end_line": 44,
+      "severity": "critical",
+      "category": "security",
+      "content": "User input is concatenated into SQL. The `name` parameter goes straight into the query string, so a crafted value can read or change any table. Use a parameterised query.",
+      "existing_code": "export async function findUser(name: string) {\n    const sql = `SELECT * FROM users WHERE name = '${name}'`;\n    return db.query(sql);\n}",
+      "suggestion_code": "export async function findUser(name: string) {\n    const sql = \"SELECT * FROM users WHERE name = $1\";\n    return db.query(sql, [name]);\n}"
+    },
+    {
+      "path": "src/auth/session.ts",
+      "start_line": 12,
+      "end_line": 18,
+      "severity": "high",
+      "category": "security",
+      "content": "Session ids are compared with `===`. Comparing secrets this way leaks timing information; use a constant-time comparison.",
+      "existing_code": "if (cookie === session.id) return session;",
+      "suggestion_code": "if (timingSafeEqual(Buffer.from(cookie), Buffer.from(session.id))) return session;"
+    },
+    {
+      "path": "src/auth/session.ts",
+      "start_line": 57,
+      "severity": "medium",
+      "category": "bug",
+      "content": "Expired sessions are never removed. The cleanup timer is created but never started, so the session table grows without limit."
+    },
+    {
+      "path": "src/api/users.ts",
+      "start_line": 88,
+      "end_line": 95,
+      "severity": "high",
+      "category": "bug",
+      "content": "The handler returns before awaiting the save. Errors from `saveUser` are lost and the client is told the change succeeded.",
+      "existing_code": "saveUser(user);\nreturn res.json({ ok: true });",
+      "suggestion_code": "await saveUser(user);\nreturn res.json({ ok: true });"
+    },
+    {
+      "path": "src/api/users.ts",
+      "start_line": 120,
+      "severity": "medium",
+      "category": "performance",
+      "content": "Users are loaded one by one inside a loop. Load them with a single query using `WHERE id = ANY($1)`."
+    },
+    {
+      "path": "src/ui/list.tsx",
+      "start_line": 30,
+      "end_line": 31,
+      "severity": "medium",
+      "category": "performance",
+      "content": "The list re-sorts every item on each render. Memoise the sorted list so typing in the filter stays responsive."
+    },
+    {
+      "path": "src/ui/list.tsx",
+      "start_line": 72,
+      "severity": "low",
+      "category": "maintainability",
+      "content": "This component is over 400 lines long. Split the toolbar and the row renderer into their own components."
+    },
+    {
+      "path": "src/utils/format.ts",
+      "start_line": 5,
+      "severity": "low",
+      "category": "style",
+      "content": "Dates are formatted by hand. Use `Intl.DateTimeFormat` so they follow the reader's locale."
+    },
+    {
+      "path": "tests/users.test.ts",
+      "start_line": 14,
+      "severity": "low",
+      "category": "test",
+      "content": "The test only checks the happy path. Add a case for a missing user and for a save that fails."
+    },
+    {
+      "path": "README.md",
+      "start_line": 3,
+      "severity": "low",
+      "category": "documentation",
+      "content": "The setup steps mention a configuration file that no longer exists. Update them to describe the environment variables."
+    }
+  ],
+  "project_summary": "## Top issues\n\n1. **SQL injection in user lookup**: `src/db/query.ts` builds SQL from user input.\n2. **Session handling**: `src/auth/session.ts` compares secrets unsafely and never removes expired sessions.\n3. **Lost errors when saving users**: `src/api/users.ts` doesn't await its writes.\n\n## Next steps\n\n- **Speed up the list**: `src/ui/list.tsx` re-sorts on every render.\n- **Tidy formatting helpers**: `src/utils/format.ts` formats dates by hand.\n"
+}

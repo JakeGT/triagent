@@ -15,5 +15,6 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["tests/**/*.ts", "apps/*/src/**/*.ts", "apps/*/test/**/*.ts", "packages/*/src/**/*.ts"]
+  "include": ["tests/**/*.ts", "apps/*/src/**/*.ts", "apps/*/test/**/*.ts", "packages/*/src/**/*.ts"],
+  "exclude": ["apps/web"]
 }
