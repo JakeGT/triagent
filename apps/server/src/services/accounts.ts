@@ -392,14 +392,16 @@ export class Accounts {
         const value = name.trim();
         if (!value || value.length > 80) throw badRequest("Give the workspace a name (up to 80 characters).");
         return this.core.write(actor, async (w) => {
-            await w.tx.workspaces.put({ ...workspace, name: value });
+            const current = await w.tx.workspaces.get(workspace.id);
+            if (!current) throw notFound("The workspace no longer exists.");
+            await w.tx.workspaces.put({ ...current, name: value });
             await w.audit({
                 workspaceId: workspace.id,
                 kind: "workspace",
                 target: workspace.id,
-                changes: { name: { from: workspace.name, to: value } },
+                changes: { name: { from: current.name, to: value } },
             });
-            return publicWorkspace({ ...workspace, name: value });
+            return publicWorkspace({ ...current, name: value });
         });
     }
 
