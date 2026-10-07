@@ -3,7 +3,7 @@
 // what the server would refuse.
 
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
+import { notFound, useParams } from "@tanstack/react-router";
 import { type Permission, permissionsOf, type Role } from "@triagent/shared";
 import { createContext, use } from "react";
 import { meQuery } from "./queries";
@@ -33,7 +33,8 @@ export function useWorkspace(): WorkspaceAccess {
     const me = useMe();
     const { ws } = useParams({ strict: false }) as { ws?: string };
     const access = ws ? accessFor(me, ws) : null;
-    if (!access) throw new Error("useWorkspace must be used inside a workspace page");
+    // Not (or no longer) a member, e.g. removed while the page was open: the same answer as a missing workspace.
+    if (!access) throw notFound();
     return access;
 }
 

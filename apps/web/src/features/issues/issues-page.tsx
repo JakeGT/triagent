@@ -28,8 +28,12 @@ import { activeFilters, type IssueSearch, issueApiQuery, PAGE_SIZE, withoutFilte
 
 const ROUTE = "/authed/w/$ws/p/$project/issues" as const;
 
-/** Columns hidden while an issue is open beside the list, unless the screen is very wide. */
-const WIDE_ONLY = new Set(["category", "assignee"]);
+/** Columns that give way on narrow screens, and while an issue is open beside the list. */
+function columnClass(id: string, panelOpen: boolean): string | false {
+    if (id === "category" || id === "assignee") return panelOpen ? "hidden 2xl:table-cell" : "hidden md:table-cell";
+    if (id === "flags") return panelOpen ? "hidden xl:table-cell" : "hidden sm:table-cell";
+    return false;
+}
 
 function summaryText(total: number, counts: Record<string, number> | undefined): string {
     const parts = SEVERITIES.filter((s) => counts?.[s]).map((s) => `${counts?.[s]} ${s}`);
@@ -292,7 +296,7 @@ export function IssuesPage() {
                                                     scope="col"
                                                     className={cn(
                                                         "h-8 px-2 text-start font-medium whitespace-nowrap",
-                                                        issueId && WIDE_ONLY.has(h.id) && "hidden 2xl:table-cell",
+                                                        columnClass(h.id, Boolean(issueId)),
                                                     )}
                                                 >
                                                     {flexRender(h.column.columnDef.header, h.getContext())}
@@ -315,10 +319,7 @@ export function IssuesPage() {
                                             {row.getVisibleCells().map((cell) => (
                                                 <td
                                                     key={cell.id}
-                                                    className={cn(
-                                                        "px-2 py-1.5",
-                                                        issueId && WIDE_ONLY.has(cell.column.id) && "hidden 2xl:table-cell",
-                                                    )}
+                                                    className={cn("px-2 py-1.5", columnClass(cell.column.id, Boolean(issueId)))}
                                                 >
                                                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                                 </td>

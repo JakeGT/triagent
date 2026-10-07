@@ -49,5 +49,13 @@ for (const theme of ["light", "dark"] as const) {
         await shot("settings-github");
         await page.goto(`/w/${ws}/agents`);
         await shot("agents");
+
+        // A phone: the rail becomes a menu, and an open issue replaces the list.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(`${base}/issues`);
+        await expect(page.getByTestId("issues-summary")).toHaveText(/^10 issues/);
+        await shot("mobile-issues");
+        await page.goto(`${base}/issues/${first?.id}`);
+        await shot("mobile-issue-detail");
     });
 }
