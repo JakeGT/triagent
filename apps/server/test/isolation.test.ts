@@ -125,9 +125,27 @@ test("the MCP endpoint only reaches the token's own workspace", async () => {
 test("live events only reach subscribers in the same workspace, and admin-only kinds only reach admins", () => {
     const bus = new EventBus();
     const got: Record<string, LiveEvent[]> = { a: [], b: [], viewer: [] };
-    bus.subscribe({ workspaceId: "A", userKey: "a", permissions: new Set(["read", "members"]), send: (e) => got.a?.push(e) });
-    bus.subscribe({ workspaceId: "B", userKey: "b", permissions: new Set(["read", "members"]), send: (e) => got.b?.push(e) });
-    bus.subscribe({ workspaceId: "A", userKey: "viewer", permissions: new Set(["read"]), send: (e) => got.viewer?.push(e) });
+    bus.subscribe({
+        workspaceId: "A",
+        userKey: "a",
+        permissions: new Set(["read", "members"]),
+        send: (e) => got.a?.push(e),
+        close: () => {},
+    });
+    bus.subscribe({
+        workspaceId: "B",
+        userKey: "b",
+        permissions: new Set(["read", "members"]),
+        send: (e) => got.b?.push(e),
+        close: () => {},
+    });
+    bus.subscribe({
+        workspaceId: "A",
+        userKey: "viewer",
+        permissions: new Set(["read"]),
+        send: (e) => got.viewer?.push(e),
+        close: () => {},
+    });
     const row = (kind: string): ActivityRow => ({
         id: "1",
         workspaceId: "A",

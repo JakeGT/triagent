@@ -566,11 +566,15 @@ export const TOOLS: Tool[] = [
                     ([, v]) => v !== undefined,
                 ),
             );
-            const updated = Object.keys(general).length ? await ctx.services.projects.update(ctx.actor, p, general) : publicProject(p);
-            const automation = args.automation
-                ? await ctx.services.settings.setAutomation(ctx.actor, p, args.automation as never)
-                : await ctx.services.settings.automation(ctx.services.store, p);
-            return { text: "Saved.", data: { ...updated, automation } };
+            // Both changes are saved together, or neither is.
+            const data = await ctx.services.store.transaction(async () => {
+                const updated = Object.keys(general).length ? await ctx.services.projects.update(ctx.actor, p, general) : publicProject(p);
+                const automation = args.automation
+                    ? await ctx.services.settings.setAutomation(ctx.actor, p, args.automation as never)
+                    : await ctx.services.settings.automation(ctx.services.store, p);
+                return { ...updated, automation };
+            });
+            return { text: "Saved.", data };
         },
     }),
     tool({

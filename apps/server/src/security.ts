@@ -88,6 +88,12 @@ export class FailureLimiter {
         this.hits.delete(key);
     }
 
+    /** Take back one counted failure (an attempt counted up front that turned out to succeed). */
+    forgive(key: string): void {
+        const hit = this.hits.get(key);
+        if (hit && hit.count > 0) hit.count--;
+    }
+
     sweep(): void {
         const t = Date.now();
         for (const [k, v] of this.hits) if (t > v.resetAt) this.hits.delete(k);

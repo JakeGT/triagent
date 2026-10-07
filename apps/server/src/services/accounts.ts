@@ -17,7 +17,7 @@ import {
     verifyPassword,
 } from "../security.ts";
 import type { ApiToken, Membership, NotifyPrefs, Repos, Session, User, Workspace } from "../store/types.ts";
-import type { Actor, Core } from "./core.ts";
+import type { Actor, Core, Write } from "./core.ts";
 
 export const TOKEN_PREFIX = "tri_";
 const MAX_SESSIONS_PER_USER = 20;
@@ -59,6 +59,8 @@ export class Accounts {
     private readonly pairLimiter = new FailureLimiter(8, 15 * 60_000);
     private readonly userLimiter = new FailureLimiter(100, 15 * 60_000);
     private readonly tokenSeen = new Map<string, number>();
+    /** Addresses each account recently signed in from: guessing elsewhere can't lock them out. */
+    private readonly knownAddresses = new Map<string, Set<string>>();
 
     constructor(core: Core) {
         this.core = core;
@@ -136,22 +138,37 @@ export class Accounts {
     async signIn(username: string, password: string, ip: string): Promise<{ user: User; cookie: string } | { retryAfter: number }> {
         const name = username.toLowerCase();
         const pair = `${name}|${ip}`;
-        const wait = Math.max(this.ipLimiter.retryAfter(ip), this.pairLimiter.retryAfter(pair), this.userLimiter.retryAfter(name));
+        // The per-account limit (distributed guessing) doesn't apply from addresses the account recently
+        // signed in from, so guessing elsewhere can't lock its owner out.
+        const known = this.knownAddresses.get(name)?.has(ip) ?? false;
+        const wait = Math.max(
+            this.ipLimiter.retryAfter(ip),
+            this.pairLimiter.retryAfter(pair),
+            known ? 0 : this.userLimiter.retryAfter(name),
+        );
         if (wait) return { retryAfter: wait };
+        // Counted before checking, so parallel attempts can't all slip under the limits; forgiven on success.
+        this.ipLimiter.fail(ip);
+        this.pairLimiter.fail(pair);
+        this.userLimiter.fail(name);
         const user = await this.repos.users.byUsername(username);
         const ok = await verifyPassword(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
-        if (!user?.passwordHash || !ok) {
-            this.ipLimiter.fail(ip);
-            this.pairLimiter.fail(pair);
-            this.userLimiter.fail(name);
-            return { retryAfter: 0 };
-        }
+        if (!user?.passwordHash || !ok) return { retryAfter: 0 };
+        const cookie = await this.core.store.transaction(async (tx) => {
+            // The password may have changed while we were checking it.
+            const fresh = await tx.users.get(user.id);
+            if (!fresh || fresh.passwordHash !== user.passwordHash) return null;
+            await tx.users.put({ ...fresh, lastLoginAt: now() });
+            return this.startSession(tx, fresh);
+        });
+        if (!cookie) return { retryAfter: 0 };
         this.ipLimiter.clear(ip);
         this.pairLimiter.clear(pair);
-        const cookie = await this.core.store.transaction(async (tx) => {
-            await tx.users.put({ ...user, lastLoginAt: now() });
-            return this.startSession(tx, user);
-        });
+        this.userLimiter.forgive(name);
+        const addresses = this.knownAddresses.get(name) ?? new Set<string>();
+        addresses.add(ip);
+        if (addresses.size > 20) addresses.delete(addresses.values().next().value as string);
+        this.knownAddresses.set(name, addresses);
         return { user, cookie };
     }
 
@@ -194,8 +211,13 @@ export class Accounts {
             await this.repos.sessions.delete(s.idHash);
             return null;
         }
-        // Record activity at most once a minute.
-        if (touch && t - s.lastSeenAt > 60_000) await this.repos.sessions.put({ ...s, lastSeenAt: t });
+        // Record activity at most once a minute, without bringing back a session ended meanwhile.
+        if (touch && t - s.lastSeenAt > 60_000) {
+            await this.core.store.transaction(async (tx) => {
+                const current = await tx.sessions.get(s.idHash);
+                if (current) await tx.sessions.put({ ...current, lastSeenAt: t });
+            });
+        }
         return { kind: "session", user, session: s };
     }
 
@@ -236,9 +258,13 @@ export class Accounts {
         }
         const hash = await hashPassword(next);
         return this.core.write(actor, async (w) => {
-            await w.tx.users.put({ ...user, passwordHash: hash, mustChangePassword: false });
-            // Stay signed in here, but nowhere else.
-            await w.tx.sessions.put({ ...session, credential: sha256(hash) });
+            const fresh = await w.tx.users.get(user.id);
+            if (!fresh || fresh.passwordHash !== user.passwordHash)
+                throw conflict("Your password was changed by another request. Sign in again.");
+            // Stay signed in here (updated first, so this session never looks stale), but nowhere else.
+            const current = await w.tx.sessions.get(session.idHash);
+            if (current) await w.tx.sessions.put({ ...current, credential: sha256(hash) });
+            await w.tx.users.put({ ...fresh, passwordHash: hash, mustChangePassword: false });
             const n = await this.signOutUser(w.tx, user.id, session.idHash);
             await w.audit({ workspaceId: null, kind: "user", target: user.id, changes: { password: "changed", signedOutSessions: n } });
             return { signedOutSessions: n };
@@ -246,9 +272,13 @@ export class Accounts {
     }
 
     async setNotify(user: User, prefs: Partial<NotifyPrefs>): Promise<NotifyPrefs> {
-        const notify = { ...user.notify, ...prefs };
-        await this.repos.users.put({ ...user, notify });
-        return notify;
+        return this.core.store.transaction(async (tx) => {
+            const fresh = await tx.users.get(user.id);
+            if (!fresh) throw notFound("Your account no longer exists.");
+            const notify = { ...fresh.notify, ...prefs };
+            await tx.users.put({ ...fresh, notify });
+            return notify;
+        });
     }
 
     // ---- instance administration (local accounts) ------------------------------------------
@@ -286,7 +316,9 @@ export class Accounts {
         }
         const hash = await hashPassword(value);
         return this.core.write(actor, async (w) => {
-            await w.tx.users.put({ ...user, passwordHash: hash, mustChangePassword: true });
+            const fresh = await w.tx.users.get(user.id);
+            if (!fresh) throw notFound("No local account with that id.");
+            await w.tx.users.put({ ...fresh, passwordHash: hash, mustChangePassword: true });
             const n = await this.signOutUser(w.tx, user.id);
             await w.audit({ workspaceId: null, kind: "user", target: user.id, changes: { password: "reset", signedOutSessions: n } });
             return { password: generated ? value : null, signedOutSessions: n };
@@ -311,7 +343,9 @@ export class Accounts {
                     throw badRequest(`${user.displayName} is the only owner of ${workspace.name}. Make someone else an owner first.`);
                 }
                 await w.tx.memberships.delete(m.workspaceId, userId);
+                await this.revokeTokensOf(w, m.workspaceId, userId);
             }
+            w.afterCommit(() => this.core.events.disconnect(`user:${userId}`));
             await this.signOutUser(w.tx, userId);
             await w.tx.users.delete(userId);
             await w.audit({ workspaceId: null, kind: "user", target: userId, changes: { removed: { username: user.username } } });
@@ -425,6 +459,8 @@ export class Accounts {
             if (!m) throw notFound("That person isn't a member.");
             this.checkRoleChange(this.roleOf(access), m.role, role);
             await w.tx.memberships.put({ ...m, role });
+            // Their live connections pick up the new role when they reconnect.
+            w.afterCommit(() => this.core.events.disconnect(`user:${userId}`, access.workspace.id));
             await w.audit({
                 workspaceId: access.workspace.id,
                 kind: "member",
@@ -443,12 +479,25 @@ export class Accounts {
             if (m.role === "owner" && (await this.owners(w.tx, access.workspace.id)).length <= 1)
                 throw badRequest("A workspace needs at least one owner.");
             await w.tx.memberships.delete(access.workspace.id, userId);
-            // Their tokens here stop acting for them.
-            for (const t of await w.tx.tokens.forWorkspace(access.workspace.id))
-                if (t.ownerUserId === userId) await w.tx.tokens.put({ ...t, ownerUserId: null });
+            const revoked = await this.revokeTokensOf(w, access.workspace.id, userId);
+            w.afterCommit(() => this.core.events.disconnect(`user:${userId}`, access.workspace.id));
+            if (revoked)
+                await w.audit({ workspaceId: access.workspace.id, kind: "token", target: userId, changes: { revokedWithMember: revoked } });
             await w.audit({ workspaceId: access.workspace.id, kind: "member", target: userId, changes: { removed: { role: m.role } } });
             return { removed: true };
         });
+    }
+
+    /** Revoke the tokens that act for someone leaving a workspace: they'd otherwise keep its access. */
+    private async revokeTokensOf(w: Write, workspaceId: string, userId: string): Promise<number> {
+        let n = 0;
+        for (const t of await w.tx.tokens.forWorkspace(workspaceId)) {
+            if (t.ownerUserId !== userId) continue;
+            await w.tx.tokens.delete(t.id);
+            w.afterCommit(() => this.core.events.disconnect(`token:${t.id}`));
+            n++;
+        }
+        return n;
     }
 
     private roleOf(access: Access): Role {
@@ -467,7 +516,12 @@ export class Accounts {
         const last = this.tokenSeen.get(token.id) ?? 0;
         if (Date.now() - last > 600_000) {
             this.tokenSeen.set(token.id, Date.now());
-            await this.repos.tokens.put({ ...token, lastUsedAt: now() }).catch(() => {});
+            await this.core.store
+                .transaction(async (tx) => {
+                    const current = await tx.tokens.get(token.id);
+                    if (current) await tx.tokens.put({ ...current, lastUsedAt: now() });
+                })
+                .catch(() => {});
         }
         const owner = token.ownerUserId ? await this.repos.users.get(token.ownerUserId) : null;
         return { kind: "token", token, owner };
@@ -509,6 +563,10 @@ export class Accounts {
         return this.core.write(actor, async (w) => {
             // By default a token acts for the person creating it.
             const owner = await this.checkOwner(w.tx, workspace, input.ownerUserId === undefined ? actor.userId : input.ownerUserId);
+            // Names show up as the author of an agent's changes, so they're unique in the workspace.
+            if ((await w.tx.tokens.forWorkspace(workspace.id)).some((t) => t.name.toLowerCase() === name.toLowerCase())) {
+                throw conflict(`There's already a token called "${name}" in this workspace.`);
+            }
             const token: ApiToken = {
                 id: randomBytes(6).toString("hex"),
                 workspaceId: workspace.id,
@@ -549,6 +607,7 @@ export class Accounts {
             const token = await w.tx.tokens.get(id);
             if (!token || token.workspaceId !== workspace.id) throw notFound("No such token.");
             await w.tx.tokens.delete(id);
+            w.afterCommit(() => this.core.events.disconnect(`token:${id}`));
             await w.audit({ workspaceId: workspace.id, kind: "token", target: id, changes: { revoked: { name: token.name } } });
             return { revoked: true };
         });

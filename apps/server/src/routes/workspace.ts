@@ -56,43 +56,65 @@ export const workspaceRoutes: Route[] = [
                 principal?.kind === "token"
                     ? `token:${principal.token.id}`
                     : `user:${principal?.kind === "session" ? principal.user.id : "?"}`;
-            const stillValid = async () =>
-                principal?.kind === "token"
-                    ? services.accounts.tokenStillValid(principal.token.id)
-                    : principal?.kind === "session"
-                      ? Boolean(await services.accounts.validSession(principal.session, { touch: false }))
-                      : false;
+            const granted = [...permissionsOf(a.grant)].sort().join(",");
+            // Still signed in, still in this workspace, with the same access as when the stream opened.
+            const stillValid = async () => {
+                const current =
+                    principal?.kind === "token"
+                        ? (await services.accounts.tokenStillValid(principal.token.id))
+                            ? principal
+                            : null
+                        : principal?.kind === "session"
+                          ? await services.accounts.validSession(principal.session, { touch: false })
+                          : null;
+                const now = current && (await services.accounts.access(current, a.workspace.slug));
+                return Boolean(now) && [...permissionsOf((now as Access).grant)].sort().join(",") === granted;
+            };
             const encoder = new TextEncoder();
             let stop = () => {};
+            let closed = false;
             const stream = new ReadableStream<Uint8Array>({
                 start(controller) {
-                    const send = (text: string) => controller.enqueue(encoder.encode(text));
+                    const send = (text: string) => {
+                        if (!closed) controller.enqueue(encoder.encode(text));
+                    };
+                    const end = () => {
+                        if (closed) return;
+                        send("event: bye\ndata: {}\n\n");
+                        stop();
+                        closed = true;
+                        controller.close();
+                    };
                     const unsubscribe = services.events.subscribe({
                         workspaceId: a.workspace.id,
                         userKey,
                         permissions: permissionsOf(a.grant),
                         send: (e: LiveEvent) => send(`id: ${e.seq}\nevent: change\ndata: ${JSON.stringify(e)}\n\n`),
+                        close: end,
                     });
                     if (!unsubscribe) {
                         send('event: error\ndata: {"error":"Too many live connections. Close some tabs."}\n\n');
+                        closed = true;
                         controller.close();
                         return;
                     }
                     send(`retry: 5000\n\nevent: hello\ndata: ${JSON.stringify({ workspace: a.workspace.slug })}\n\n`);
                     const timer = setInterval(async () => {
-                        if (await stillValid()) return send(": ping\n\n");
-                        send("event: bye\ndata: {}\n\n");
-                        stop();
-                        controller.close();
+                        if (await stillValid()) send(": ping\n\n");
+                        else end();
                     }, HEARTBEAT_MS);
                     stop = () => {
                         clearInterval(timer);
                         unsubscribe();
                     };
-                    c.req.raw.signal.addEventListener("abort", () => stop());
+                    c.req.raw.signal.addEventListener("abort", () => {
+                        stop();
+                        closed = true;
+                    });
                 },
                 cancel() {
                     stop();
+                    closed = true;
                 },
             });
             return new Response(stream, {
@@ -127,8 +149,10 @@ export const workspaceRoutes: Route[] = [
         permission: "read",
         tag: "Settings",
         summary: "Members and their roles",
-        async handler({ services, access }) {
-            return json({ items: await services.accounts.members((access as Access).workspace) });
+        async handler({ services, access, can }) {
+            const items = await services.accounts.members((access as Access).workspace);
+            // Email addresses are for the people who manage members.
+            return json({ items: can("members") ? items : items.map((m) => ({ ...m, user: { ...m.user, email: null } })) });
         },
     }),
     route({
@@ -239,8 +263,17 @@ export const workspaceRoutes: Route[] = [
         permission: "read",
         tag: "Settings",
         summary: "The provider and model reviews use, and which providers have a key (never the keys)",
-        async handler({ services, access }) {
-            return json(await services.settings.reviewModel((access as Access).workspace));
+        async handler({ services, access, can }) {
+            const model = await services.settings.reviewModel((access as Access).workspace);
+            if (can("configure")) return json(model);
+            // Without configure access: whether each key is set, not its hint or who set it.
+            return json({
+                ...model,
+                providers: model.providers.map((p) => ({
+                    ...p,
+                    key: { name: p.key.name, set: p.key.set, hint: null, setBy: null, setAt: null },
+                })),
+            });
         },
     }),
     route({

@@ -89,23 +89,27 @@ export class Projects {
     }
 
     async update(actor: Actor, project: Project, input: { name?: string; repoUrl?: string | null; defaultBranch?: string }) {
-        const next: Project = { ...project };
-        const changes: Record<string, unknown> = {};
+        const patch: Partial<Pick<Project, "name" | "repoUrl" | "defaultBranch">> = {};
         if (input.name !== undefined) {
             const name = input.name.trim();
             if (!name || name.length > 80) throw badRequest("Give the project a name (up to 80 characters).");
-            next.name = name;
+            patch.name = name;
         }
-        if (input.repoUrl !== undefined) next.repoUrl = input.repoUrl ? this.repoUrl(input.repoUrl) : null;
+        if (input.repoUrl !== undefined) patch.repoUrl = input.repoUrl ? this.repoUrl(input.repoUrl) : null;
         if (input.defaultBranch !== undefined) {
             const b = input.defaultBranch.trim();
             if (!isValidBranch(b)) throw badRequest(`"${b.slice(0, 100)}" isn't a valid branch name.`);
-            next.defaultBranch = b;
+            patch.defaultBranch = b;
         }
-        for (const k of ["name", "repoUrl", "defaultBranch"] as const)
-            if (next[k] !== project[k]) changes[k] = { from: project[k], to: next[k] };
-        if (!Object.keys(changes).length) return publicProject(project);
         return this.core.write(actor, async (w) => {
+            // Apply only what changed to the project as saved now, so concurrent changes aren't undone.
+            const current = await w.tx.projects.get(project.id);
+            if (!current) throw notFound("The project no longer exists.");
+            const next: Project = { ...current, ...patch };
+            const changes: Record<string, unknown> = {};
+            for (const k of ["name", "repoUrl", "defaultBranch"] as const)
+                if (next[k] !== current[k]) changes[k] = { from: current[k], to: next[k] };
+            if (!Object.keys(changes).length) return publicProject(current);
             await w.tx.projects.put(next);
             await w.audit({ workspaceId: project.workspaceId, kind: "settings", target: `project:${project.slug}`, changes });
             await w.activity(

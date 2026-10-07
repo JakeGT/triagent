@@ -145,16 +145,20 @@ export const reportRoutes: Route[] = [
         summary: "Use an upload link: send the OCR JSON file as the body",
         rawBody: true,
         bodyLimit: REPORT_LIMIT,
-        async handler({ services, params, raw }) {
+        async handler({ services, params, readRaw }) {
+            const token = params.token as string;
+            const gone = () => new ApiError(410, "This upload link has expired or was already used. Ask for a new one.");
+            // Check the link before reading (up to 25 MB of) what's sent to it.
+            if (!/^[\w-]{20,64}$/.test(token) || !(await services.reports.linkExists(token))) throw gone();
+            const raw = await readRaw();
             let report: unknown;
             try {
-                report = JSON.parse((raw as Buffer).toString("utf8"));
+                report = JSON.parse(raw.toString("utf8"));
             } catch {
                 throw new ApiError(400, "The file isn't valid JSON. Send the JSON file Open Code Review wrote.");
             }
-            const token = params.token as string;
-            const out = /^[\w-]{20,64}$/.test(token) ? await services.reports.redeemLink(token, report) : null;
-            if (!out) throw new ApiError(410, "This upload link has expired or was already used. Ask for a new one.");
+            const out = await services.reports.redeemLink(token, report);
+            if (!out) throw gone();
             return json(out);
         },
     }),

@@ -9,7 +9,7 @@ import { cleanText } from "../domain/names.ts";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.ts";
 import { now, randomId } from "../security.ts";
 import type { ItemKind, Note, Project, TriageRecord } from "../store/types.ts";
-import type { Actor, Core, Write } from "./core.ts";
+import { type Actor, authorKey, type Core, type Write } from "./core.ts";
 import type { Reports } from "./reports.ts";
 
 const MAX_NOTES = 200;
@@ -89,7 +89,7 @@ export async function applyChange(
     set("needsDiscussion", change.needsDiscussion);
     if (change.reopened) changes.reopened = change.reopened;
     if (change.note) {
-        const note: Note = { id: `n${randomId(6)}`, at: now(), by: actor.name, text: change.note };
+        const note: Note = { id: `n${randomId(6)}`, at: now(), by: actor.name, authorKey: authorKey(actor), text: change.note };
         next.notes = [...next.notes, note].slice(-MAX_NOTES);
         changes.note = change.note;
     }
@@ -393,7 +393,7 @@ export class Triage {
             const i = record?.notes.findIndex((n) => n.id === noteId) ?? -1;
             if (!record || i === -1) throw notFound(`No note ${noteId} on ${id}.`);
             const before = record.notes[i] as Note;
-            const own = before.by.toLowerCase() === actor.name.toLowerCase();
+            const own = before.authorKey === authorKey(actor);
             if (value === null ? !(own || actor.canModerate) : !own) {
                 throw forbidden(
                     value === null ? "You can only delete your own notes (admins can delete any)." : "You can only edit your own notes.",

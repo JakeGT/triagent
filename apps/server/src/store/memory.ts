@@ -315,6 +315,7 @@ export class MemoryStore implements Store {
 
     uploadLinks: Repos["uploadLinks"] = {
         put: (link) => this.write(() => this.t.uploadLinks.set(link.hash, link)),
+        get: async (hash) => this.t.uploadLinks.get(hash),
         take: async (hash) => {
             const taken: { link: UploadLink | null } = { link: null };
             await this.write(() => {

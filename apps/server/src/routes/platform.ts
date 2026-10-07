@@ -95,10 +95,10 @@ export function platformRoutes(services: Services, all: () => Route[]): Route[] 
             summary: "GitHub webhook deliveries (verified by their X-Hub-Signature-256)",
             rawBody: true,
             bodyLimit: 5 * 1024 * 1024,
-            async handler({ c, services: s, params, raw }) {
+            async handler({ c, services: s, params, readRaw }) {
                 const out = await s.webhooks.deliver(
                     params.webhookId as string,
-                    raw as Buffer,
+                    readRaw,
                     c.req.header("x-hub-signature-256"),
                     c.req.header("x-github-event"),
                 );

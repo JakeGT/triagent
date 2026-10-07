@@ -33,8 +33,8 @@ export interface RequestContext<Q extends Schema, B extends Schema> {
     params: Record<string, string>;
     query: Infer<Q>;
     body: Infer<B>;
-    /** The raw body, for routes declared with `rawBody`. */
-    raw: Buffer | null;
+    /** Read the body's bytes, for routes declared with `rawBody` (call it after checking the request's credential). */
+    readRaw(): Promise<Buffer>;
     ip: string;
     can(permission: Permission): boolean;
 }
@@ -60,7 +60,7 @@ export interface Route<Q extends Schema = Schema, B extends Schema = Schema> {
     body?: B;
     /** Largest accepted body, in bytes. Default 256 KB. */
     bodyLimit?: number;
-    /** The handler gets the body's bytes in `raw` instead (webhooks, upload links). */
+    /** The handler reads the body's bytes itself with `readRaw` (webhooks, upload links). */
     rawBody?: boolean;
     /** What the success response is, for the API document. */
     produces?: "json" | "markdown" | "csv" | "event-stream";

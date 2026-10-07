@@ -3,13 +3,13 @@
 // still contains, and reopens resolved findings it still reports.
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { CATEGORIES, type Category, SEVERITIES, type Severity } from "@triagent/shared";
+import { CATEGORIES, type Category, ROLE_PERMISSIONS, SCOPE_PERMISSIONS, SEVERITIES, type Severity } from "@triagent/shared";
 import { BranchView, compareBranches } from "../domain/branch.ts";
 import { COMMIT, cleanText, isValidBranch } from "../domain/names.ts";
 import { EMPTY_REVIEW, parseReport, type RawComment, type RawReport, type Review, sameFinding, type UploadMeta } from "../domain/report.ts";
 import { ApiError, badRequest, conflict, notFound } from "../errors.ts";
 import { now, sha256 } from "../security.ts";
-import type { Project, Repos, StoredReport } from "../store/types.ts";
+import type { Project, Repos, StoredReport, UploadLink } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
 import { applyChange, type BranchRef } from "./triage.ts";
 
@@ -180,9 +180,11 @@ export class Reports {
             await w.tx.triage.renameBranch(project.id, from, to);
             await w.tx.reports.renameArchive(project.id, from, to);
             // Moving the default branch's report keeps it the default unless told otherwise.
-            const wasDefault = from === project.defaultBranch;
+            // The project as it is now: another change may have saved it since this request loaded it.
+            const current = (await w.tx.projects.get(project.id)) ?? project;
+            const wasDefault = from === current.defaultBranch;
             const makeDefault = input.makeDefault === true || (input.makeDefault === undefined && wasDefault);
-            if (makeDefault) await w.tx.projects.put({ ...project, defaultBranch: to });
+            if (makeDefault) await w.tx.projects.put({ ...current, defaultBranch: to });
             const issues = stored.report.comments.length;
             await w.activity(
                 {
@@ -195,7 +197,7 @@ export class Reports {
                 },
                 project.slug,
             );
-            return { from, to, issues, defaultBranch: makeDefault ? to : project.defaultBranch };
+            return { from, to, issues, defaultBranch: makeDefault ? to : current.defaultBranch };
         });
     }
 
@@ -219,8 +221,17 @@ export class Reports {
                     },
                 );
             }
+            const triage = await w.tx.triage.forBranch(project.id, branch);
             await w.tx.reports.archive(
-                { projectId: project.id, branch, report: stored.report, upload: stored.upload, archivedAt: now(), reason: "deleted" },
+                {
+                    projectId: project.id,
+                    branch,
+                    report: stored.report,
+                    upload: stored.upload,
+                    archivedAt: now(),
+                    reason: "deleted",
+                    triage,
+                },
                 KEEP_ARCHIVED,
             );
             await w.tx.reports.delete(project.id, branch);
@@ -466,6 +477,7 @@ export class Reports {
             fileName: input.fileName ? checkFileName(input.fileName) : null,
             actor: actor.name,
             actorUserId: actor.userId,
+            actorTokenId: actor.tokenId ?? null,
         };
         const token = randomBytes(24).toString("base64url");
         const expiresAt = Date.now() + LINK_TTL_MS;
@@ -482,32 +494,63 @@ export class Reports {
         };
     }
 
-    /** Use up an upload link. Returns null if it's unknown, used or expired. */
-    async redeemLink(token: string, report: unknown) {
-        const link = await this.core.store.uploadLinks.take(sha256(token));
-        if (!link || link.expiresAt <= Date.now()) return null;
-        const project = await this.core.store.projects.get(link.projectId);
-        if (!project) return null;
+    /** Whether an upload link exists and hasn't expired, checked before reading what's uploaded to it. */
+    async linkExists(token: string): Promise<boolean> {
+        const link = await this.core.store.uploadLinks.get(sha256(token));
+        return Boolean(link && link.expiresAt > Date.now());
+    }
+
+    /** Whoever made the link must still be allowed to upload: a revoked token's or removed member's links stop working. */
+    private async linkStillAllowed(tx: Repos, link: UploadLink, project: Project): Promise<boolean> {
         const p = link.params;
-        const actor: Actor = { name: p.actor, userId: p.actorUserId, via: "link" };
-        const out = await this.upload(actor, project, {
-            branch: p.branch,
-            commit: p.commit,
-            confirm: p.confirm,
-            reopen: p.reopen,
-            fileName: p.fileName ?? "code_review.json",
-            report,
+        if (p.actorTokenId) {
+            const t = await tx.tokens.get(p.actorTokenId);
+            if (!t || t.workspaceId !== project.workspaceId || (t.expiresAt && Date.parse(t.expiresAt) < Date.now())) return false;
+            return SCOPE_PERMISSIONS[t.scope].includes("upload");
+        }
+        if (p.actorUserId) {
+            const m = await tx.memberships.get(project.workspaceId, p.actorUserId);
+            return Boolean(m && ROLE_PERMISSIONS[m.role].includes("upload"));
+        }
+        return false;
+    }
+
+    /**
+     * Use up an upload link. Returns null if it's unknown, used, expired or no longer allowed. A refused
+     * upload (needs confirmation, not a report) leaves the link usable, so the caller can fix it and retry.
+     */
+    async redeemLink(token: string, report: unknown) {
+        return this.core.store.transaction(async (tx) => {
+            const link = await tx.uploadLinks.take(sha256(token));
+            if (!link || link.expiresAt <= Date.now()) return null;
+            const project = await tx.projects.get(link.projectId);
+            if (!project || !(await this.linkStillAllowed(tx, link, project))) return null;
+            const p = link.params;
+            const actor: Actor = {
+                name: p.actor,
+                userId: p.actorUserId,
+                ...(p.actorTokenId ? { tokenId: p.actorTokenId } : {}),
+                via: "link",
+            };
+            const out = await this.upload(actor, project, {
+                branch: p.branch,
+                commit: p.commit,
+                confirm: p.confirm,
+                reopen: p.reopen,
+                fileName: p.fileName ?? "code_review.json",
+                report,
+            });
+            return {
+                ok: true,
+                branch: out.branch,
+                issues: out.next.issues,
+                carriedOver: out.carriedOver,
+                added: out.added,
+                removed: out.removed,
+                reopened: (out as { reopened?: number }).reopened ?? 0,
+                keptAdded: out.keptAdded,
+            };
         });
-        return {
-            ok: true,
-            branch: out.branch,
-            issues: out.next.issues,
-            carriedOver: out.carriedOver,
-            added: out.added,
-            removed: out.removed,
-            reopened: (out as { reopened?: number }).reopened ?? 0,
-            keptAdded: out.keptAdded,
-        };
     }
 
     /** Recent activity on a project (all branches unless one is named). */

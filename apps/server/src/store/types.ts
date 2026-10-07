@@ -98,12 +98,17 @@ export interface ArchivedReport {
     upload: UploadMeta;
     archivedAt: string;
     reason: "replaced" | "deleted";
+    /** A deleted branch's triage, kept with its report. */
+    triage?: TriageRecord[];
 }
 
 export interface Note {
     id: string;
     at: string;
+    /** The author's name, as shown. */
     by: string;
+    /** Who the author is (see services/core.ts authorKey): decides who may edit or delete it. */
+    authorKey: string;
     text: string;
     editedAt?: string;
     editedBy?: string;
@@ -170,6 +175,8 @@ export interface UploadLink {
         fileName: string | null;
         actor: string;
         actorUserId: string | null;
+        /** The token that made the link, if one did: the link stops working if it's revoked. */
+        actorTokenId: string | null;
     };
     expiresAt: number;
 }
@@ -276,6 +283,7 @@ export interface Repos {
     };
     uploadLinks: {
         put(link: UploadLink): Promise<void>;
+        get(hash: string): Promise<UploadLink | null>;
         /** Remove and return the link, so it works exactly once. */
         take(hash: string): Promise<UploadLink | null>;
         count(): Promise<number>;
@@ -297,6 +305,9 @@ export interface Store extends Repos {
     /**
      * Run `fn` so that its reads and writes see one consistent state and its writes apply all together:
      * if it throws, nothing it wrote is kept. Transactions don't overlap.
+     *
+     * A transaction started inside another joins it rather than nesting: if the inner one throws, the
+     * outer one must fail too. Never catch an inner failure and carry on.
      */
     transaction<T>(fn: (tx: Repos) => Promise<T>): Promise<T>;
     /** Quick liveness check for /healthz. */

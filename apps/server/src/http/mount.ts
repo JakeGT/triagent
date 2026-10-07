@@ -92,7 +92,13 @@ export async function authenticate(c: Context, services: Services): Promise<Prin
 export function actorOf(principal: Principal | null, via: Actor["via"], ip: string, clientId?: string): Actor {
     if (!principal) return { name: "anonymous", userId: null, via, ip };
     if (principal.kind === "token")
-        return { name: principal.token.name, userId: principal.token.ownerUserId, via: via === "web" ? "token" : via, ip };
+        return {
+            name: principal.token.name,
+            userId: principal.token.ownerUserId,
+            tokenId: principal.token.id,
+            via: via === "web" ? "token" : via,
+            ip,
+        };
     return { name: principal.user.displayName, userId: principal.user.id, via, ip, ...(clientId ? { clientId } : {}) };
 }
 
@@ -164,11 +170,11 @@ export function mount(app: Hono, services: Services, routes: Route[]): void {
 
             const clientId = /^[\w-]{8,64}$/.test(c.req.header("x-client-id") ?? "") ? c.req.header("x-client-id") : undefined;
             const actor = actorOf(principal, principal?.kind === "token" ? "token" : "web", ip, clientId);
-            let raw: Buffer | null = null;
             let body: unknown;
-            if (r.method !== "GET" && r.method !== "DELETE" ? true : Boolean(r.body)) {
-                raw = await readBody(c, r.bodyLimit ?? DEFAULT_BODY_LIMIT);
-                if (!r.rawBody) body = r.body ? r.body.parse(parseJson(raw, c)) : undefined;
+            // Raw-body routes read the body themselves, after checking their own credential.
+            if (!r.rawBody && (r.method !== "GET" && r.method !== "DELETE" ? true : Boolean(r.body))) {
+                const raw = await readBody(c, r.bodyLimit ?? DEFAULT_BODY_LIMIT);
+                body = r.body ? r.body.parse(parseJson(raw, c)) : undefined;
             }
             const query = r.query ? r.query.parse(Object.fromEntries(new URL(c.req.url).searchParams)) : undefined;
             const grant = access?.grant;
@@ -182,7 +188,7 @@ export function mount(app: Hono, services: Services, routes: Route[]): void {
                 params,
                 query: query as undefined,
                 body: body as undefined,
-                raw: r.rawBody ? raw : null,
+                readRaw: () => readBody(c, r.bodyLimit ?? DEFAULT_BODY_LIMIT),
                 ip,
                 can: (p) => Boolean(grant && permissionsOf(grant).has(p) && !(principal?.kind === "token" && BROWSER_ONLY.has(p))),
             };

@@ -25,9 +25,12 @@ const NEEDS: Record<string, Permission> = { settings: "configure", member: "memb
 
 export interface Subscriber {
     workspaceId: string;
+    /** "user:<id>" or "token:<id>". */
     userKey: string;
     permissions: ReadonlySet<Permission>;
     send(event: LiveEvent): void;
+    /** End the stream (the person lost access, or the token was revoked). */
+    close(): void;
 }
 
 export const MAX_SUBSCRIBERS = 1000;
@@ -47,6 +50,19 @@ export class EventBus {
         if (this.subscribers.size >= MAX_SUBSCRIBERS || theirs >= MAX_PER_USER) return null;
         this.subscribers.add(s);
         return () => this.subscribers.delete(s);
+    }
+
+    /** Close the streams of `userKey` (in one workspace, or all); they reconnect with their current access, if any. */
+    disconnect(userKey: string, workspaceId?: string): void {
+        for (const s of [...this.subscribers]) {
+            if (s.userKey !== userKey || (workspaceId && s.workspaceId !== workspaceId)) continue;
+            this.subscribers.delete(s);
+            try {
+                s.close();
+            } catch {
+                // already closed
+            }
+        }
     }
 
     publish(row: ActivityRow, project: string | null, clientId?: string): void {

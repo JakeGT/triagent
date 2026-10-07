@@ -21,11 +21,18 @@ export class Webhooks {
         this.settings = settings;
     }
 
-    async deliver(webhookId: string, body: Buffer, signature: string | undefined, event: string | undefined): Promise<DeliveryResult> {
+    /** `readBody` is only called once the address is known to belong to a project with a secret. */
+    async deliver(
+        webhookId: string,
+        readBody: () => Promise<Buffer>,
+        signature: string | undefined,
+        event: string | undefined,
+    ): Promise<DeliveryResult> {
         const project = await this.core.store.projects.byWebhookId(webhookId);
         if (!project) throw notFound("No project has that webhook address. Check the payload URL on GitHub.");
         const secret = await this.settings.webhookSecret(project);
         if (!secret) throw notFound("Webhooks aren't set up for this project: create a secret in its GitHub settings.");
+        const body = await readBody();
         const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(body).digest("hex")}`);
         const given = Buffer.from(String(signature ?? ""));
         if (given.length !== expected.length || !timingSafeEqual(given, expected)) throw new ApiError(401, "Bad webhook signature.");
