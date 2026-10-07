@@ -9,8 +9,20 @@ Triagent runs [Open Code Review](https://www.npmjs.com/package/@alibaba-group/op
 
 > **Status:** early rebuild. Triagent is being rebuilt from a single-organisation prototype into a self-hostable, multi-workspace app. Nothing here is ready to run yet.
 
+## Development
+
+Needs Node 24 or later and pnpm.
+
+```sh
+pnpm install
+pnpm check        # lint, typecheck and tests
+pnpm format       # apply formatting and safe lint fixes
+```
+
+The contract tests in [`tests/contract`](tests/contract/README.md) pin down how the server must behave, and run against any server that implements their `Target` interface.
+
 ## Licence
 
 Copyright (C) 2026 Jake Talling.
 
-Triagent is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License, version 3, as published by the Free Software Foundation. See [LICENSE](LICENSE). If you run a modified version as a network service, the AGPL requires you to offer its source to that service's users.
+Triagent is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License, version 3, as published by the Free Software Foundation. See [LICENSE](LICENSE). If you run a modified version as a network service, the AGPL requires you to offer its source to that service's users. Third-party software Triagent runs is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
