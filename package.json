@@ -1,0 +1,9 @@
+{
+  "name": "triagent",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Automated Open Code Review runs on GitHub pull requests, with a triage board shared by people and AI agents",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": { "node": ">=24" }
+}

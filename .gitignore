@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.tmp
+*.log
+# Local runtime data and secrets
+data/
+secrets/
+# OCR reports list security weaknesses; upload them through the app instead of committing them.
+code_review.json
+# Local agent/editor state
+.opencode/
+.claude/settings.local.json
+.DS_Store
