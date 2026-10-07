@@ -18,6 +18,9 @@ LEGACY_APP_DIR=../path/to/prototype pnpm test:legacy
 # Against the server in this repository (what CI runs):
 pnpm test:v1
 
+# The same, with the server keeping its data in Postgres (a schema per server, dropped afterwards):
+TRIAGENT_TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:5433/postgres pnpm test:v1
+
 # Without a target, the suites report as skipped:
 pnpm test
 ```

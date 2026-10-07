@@ -1,5 +1,5 @@
-// Records and the storage interface. The in-memory store implements it now; Postgres will implement the
-// same interface, so services never know which they're using. Everything is async for that reason.
+// Records and the storage interface. The in-memory store and the Postgres store both implement it, so
+// services never know which they're using. Everything is async for that reason.
 
 import type { Category, Role, Severity, Status, TokenScope, Via } from "@triagent/shared";
 import type { RawReport, UploadMeta } from "../domain/report.ts";
@@ -228,7 +228,7 @@ export interface Repos {
         bySlug(slug: string): Promise<Workspace | null>;
         list(): Promise<Workspace[]>;
         put(workspace: Workspace): Promise<void>;
-        /** Delete the workspace with its projects, memberships, tokens, settings and secrets. */
+        /** Delete the workspace with its projects, memberships, tokens, settings, secrets and activity (not its audit log). */
         delete(id: string): Promise<void>;
     };
     memberships: {
@@ -304,12 +304,21 @@ export interface Repos {
 export interface Store extends Repos {
     /**
      * Run `fn` so that its reads and writes see one consistent state and its writes apply all together:
-     * if it throws, nothing it wrote is kept. Transactions don't overlap.
+     * if it throws, nothing it wrote is kept. Transactions behave as if they ran one at a time.
+     *
+     * `fn` may be run more than once (Postgres retries a transaction that lost to a concurrent one), so it
+     * must have no effects outside the store: anything that should happen once the change is saved, such
+     * as announcing it, goes through `afterCommit`.
      *
      * A transaction started inside another joins it rather than nesting: if the inner one throws, the
      * outer one must fail too. Never catch an inner failure and carry on.
      */
     transaction<T>(fn: (tx: Repos) => Promise<T>): Promise<T>;
+    /**
+     * Run `fn` once the current transaction (the outermost, if they're joined) is saved, and never if it
+     * fails or is retried. Outside a transaction, run it now.
+     */
+    afterCommit(fn: () => void): void;
     /** Quick liveness check for /healthz. */
     ping(): Promise<void>;
     close(): Promise<void>;

@@ -1,12 +1,47 @@
-// An in-process server for tests: real routes and services over the in-memory store.
+// An in-process server for tests: real routes and services over the in-memory store, or over Postgres
+// when TRIAGENT_TEST_DATABASE_URL names a database to use (each app gets a schema of its own, dropped
+// once the file's tests are done).
 
 import { randomBytes } from "node:crypto";
+import { after } from "node:test";
 import type { Hono } from "hono";
 import { createApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
+import { migrate } from "../src/db/migrate.ts";
 import type { Route } from "../src/http/route.ts";
 import { createServices, type Services } from "../src/services/index.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { connect, type PostgresOptions, PostgresStore } from "../src/store/postgres.ts";
+import type { Store } from "../src/store/types.ts";
+
+export const TEST_DATABASE_URL = process.env.TRIAGENT_TEST_DATABASE_URL || null;
+const opened: PostgresStore[] = [];
+
+/** A Postgres store in a fresh schema of its own. Needs TRIAGENT_TEST_DATABASE_URL. */
+export async function postgresStore(options: Omit<PostgresOptions, "schema"> = {}): Promise<PostgresStore> {
+    if (!TEST_DATABASE_URL) throw new Error("Set TRIAGENT_TEST_DATABASE_URL to test against Postgres.");
+    const schema = `test_${randomBytes(8).toString("hex")}`;
+    const store = new PostgresStore(TEST_DATABASE_URL, { max: 5, idleTimeout: 2, ...options, schema });
+    opened.push(store);
+    await migrate(store.sql, { schema });
+    return store;
+}
+
+/** The store tests run against: Postgres if a test database is set, otherwise memory. */
+export function testStore(): Promise<Store> {
+    return TEST_DATABASE_URL ? postgresStore() : Promise.resolve(new MemoryStore());
+}
+
+after(async () => {
+    if (!TEST_DATABASE_URL || !opened.length) return;
+    await Promise.all(opened.map((s) => s.close()));
+    const sql = connect(TEST_DATABASE_URL, { max: 1 });
+    try {
+        for (const s of opened) await sql`drop schema if exists ${sql(s.schema as string)} cascade`;
+    } finally {
+        await sql.end();
+    }
+});
 
 export const ORIGIN = "http://triagent.test";
 export const ADMIN_PASSWORD = "correct-horse-battery-staple";
@@ -30,7 +65,7 @@ export interface Session {
     csrf: string;
 }
 
-export async function testApp(): Promise<TestApp> {
+export async function testApp(store?: Store): Promise<TestApp> {
     const config = loadConfig({
         PUBLIC_ORIGIN: ORIGIN,
         COOKIE_SECURE: "false",
@@ -39,7 +74,7 @@ export async function testApp(): Promise<TestApp> {
         TRIAGENT_SECRETS_KEY: randomBytes(32).toString("base64"),
         REQUESTS_PER_MINUTE: "1000000",
     });
-    const services = createServices(config, new MemoryStore());
+    const services = createServices(config, store ?? (await testStore()));
     await services.accounts.bootstrap();
     const { app, routes } = createApp(services);
 

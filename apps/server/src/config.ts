@@ -16,6 +16,10 @@ export interface Config {
     bootstrapAdmin: { username: string; password: string } | null;
     /** 32-byte key that encrypts stored secrets, base64. Null only in development. */
     secretsKey: Buffer | null;
+    /** Postgres connection string. Null keeps everything in memory (development only). */
+    databaseUrl: string | null;
+    /** The schema to keep Triagent's tables in, if not the database's default. */
+    databaseSchema: string | null;
     defaultBranch: string;
     requestsPerMinute: number;
     sessionIdleMinutes: number;
@@ -85,6 +89,15 @@ export function loadConfig(env: Env = process.env): Config {
         throw new ConfigError("Set TRIAGENT_SECRETS_KEY_FILE (or TRIAGENT_SECRETS_KEY): the key that encrypts stored secrets.");
     }
 
+    const databaseUrl = secretFromEnv(env, "DATABASE_URL") ?? null;
+    if (databaseUrl && !/^postgres(ql)?:\/\//.test(databaseUrl))
+        throw new ConfigError("DATABASE_URL must be a Postgres connection string, like postgres://triagent:…@db:5432/triagent.");
+    if (!databaseUrl && production)
+        throw new ConfigError("Set DATABASE_URL_FILE (or DATABASE_URL): without a database, everything is lost when the server stops.");
+    const databaseSchema = env.DATABASE_SCHEMA || null;
+    if (databaseSchema && !/^[a-z_][a-z0-9_]{0,62}$/.test(databaseSchema))
+        throw new ConfigError(`DATABASE_SCHEMA must be lower-case letters, digits and underscores, got "${databaseSchema}".`);
+
     return {
         host: env.HOST ?? "127.0.0.1",
         port,
@@ -94,6 +107,8 @@ export function loadConfig(env: Env = process.env): Config {
         authMode,
         bootstrapAdmin: adminUser && adminPassword ? { username: adminUser, password: adminPassword } : null,
         secretsKey,
+        databaseUrl,
+        databaseSchema,
         defaultBranch: env.DEFAULT_BRANCH ?? "main",
         requestsPerMinute: whole(env, "REQUESTS_PER_MINUTE", 600, 10, 1_000_000),
         sessionIdleMinutes: whole(env, "SESSION_IDLE_MINUTES", 480, 5, 525_600),

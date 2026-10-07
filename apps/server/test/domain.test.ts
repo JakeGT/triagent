@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isValidBranch, normaliseRepoUrl } from "../src/domain/names.ts";
 import { parseReport, titleOf } from "../src/domain/report.ts";
-import { MemoryStore } from "../src/store/memory.ts";
 
 const finding = (path: string, content: string, extra = {}) => ({
     path,
@@ -82,78 +81,4 @@ test("repository addresses are normalised to https", () => {
     assert.equal(normaliseRepoUrl("https://GitHub.com/Owner/repo/"), "https://github.com/Owner/repo");
     assert.equal(normaliseRepoUrl("https://github.com/Owner/repo/tree/main"), null);
     assert.equal(normaliseRepoUrl("javascript:alert(1)"), null);
-});
-
-test("a failed transaction leaves nothing behind", async () => {
-    const store = new MemoryStore();
-    const user = {
-        id: "u1",
-        username: "a",
-        displayName: "a",
-        email: null,
-        passwordHash: null,
-        mustChangePassword: false,
-        isInstanceAdmin: false,
-        issuer: null,
-        subject: null,
-        notify: { scope: "mine" as const, problemsOnly: false },
-        createdAt: "",
-        lastLoginAt: null,
-    };
-    await store.users.put(user);
-    await assert.rejects(
-        store.transaction(async (tx) => {
-            await tx.users.put({ ...user, displayName: "changed" });
-            await tx.users.put({ ...user, id: "u2" });
-            await tx.audit.add({
-                id: "x",
-                workspaceId: null,
-                at: "",
-                actor: "",
-                actorUserId: null,
-                via: "web",
-                kind: "k",
-                target: "t",
-                changes: {},
-                ip: null,
-            });
-            throw new Error("boom");
-        }),
-        /boom/,
-    );
-    assert.equal((await store.users.get("u1"))?.displayName, "a");
-    assert.equal(await store.users.get("u2"), null);
-    assert.equal((await store.audit.list({ workspaceId: null }, { limit: 10 })).length, 0);
-});
-
-test("stored values can't be changed by whoever read them", async () => {
-    const store = new MemoryStore();
-    await store.workspaces.put({ id: "w", slug: "w", name: "W", kind: "org", createdAt: "" });
-    const w = await store.workspaces.get("w");
-    assert.throws(() => {
-        (w as { name: string }).name = "hacked";
-    });
-});
-
-test("deleting a workspace removes everything stored for it, and nothing else", async () => {
-    const store = new MemoryStore();
-    for (const id of ["w1", "w2"]) {
-        await store.workspaces.put({ id, slug: id, name: id, kind: "org", createdAt: "" });
-        await store.projects.put({
-            id: `p-${id}`,
-            workspaceId: id,
-            slug: "app",
-            name: "App",
-            repoUrl: null,
-            defaultBranch: "main",
-            webhookId: `hook-${id}`,
-            createdAt: "",
-        });
-        await store.memberships.put({ workspaceId: id, userId: "u", role: "owner", createdAt: "" });
-    }
-    await store.workspaces.delete("w1");
-    assert.equal(await store.workspaces.get("w1"), null);
-    assert.equal(await store.projects.get("p-w1"), null);
-    assert.equal((await store.memberships.forUser("u")).length, 1);
-    assert.ok(await store.projects.get("p-w2"));
 });

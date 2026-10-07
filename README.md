@@ -23,7 +23,20 @@ pnpm test:v1      # also run the contract suite against the server in this repos
 pnpm format       # apply formatting and safe lint fixes
 ```
 
-Until the Postgres store lands, the server keeps everything in memory.
+Without `DATABASE_URL` the server keeps everything in memory, which is fine for trying things out. To keep data, point it at Postgres (15 or later); it applies its migrations at start-up, or run them alone with `pnpm --filter @triagent/server migrate`:
+
+```sh
+docker run -d --name triagent-dev-pg -e POSTGRES_PASSWORD=dev -p 127.0.0.1:5432:5432 postgres:16-alpine
+DATABASE_URL=postgres://postgres:dev@127.0.0.1:5432/postgres TRIAGENT_ADMIN_USER=me TRIAGENT_ADMIN_PASSWORD='a long password' \
+  pnpm --filter @triagent/server dev
+```
+
+To run the server tests and the contract suite against Postgres too, give them a throwaway database. Each test app and contract server gets a schema of its own, dropped when it's done. Turning off `fsync` makes creating those schemas much faster:
+
+```sh
+docker run -d --rm --name triagent-test-pg -e POSTGRES_PASSWORD=test -p 127.0.0.1:5433:5432 postgres:16-alpine -c fsync=off
+TRIAGENT_TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:5433/postgres pnpm test:v1
+```
 
 - [docs/architecture.md](docs/architecture.md): how the server is put together, workspaces and permissions, secrets.
 - [tests/contract](tests/contract/README.md): what any Triagent server must do.

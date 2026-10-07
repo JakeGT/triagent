@@ -1,10 +1,14 @@
-// Start the server: read the configuration, open the store, create the first admin if needed, listen.
+// Start the server: read the configuration, open the store (migrating the database), create the first
+// admin if needed, listen.
 
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { ConfigError, loadConfig } from "./config.ts";
+import { migrate } from "./db/migrate.ts";
 import { createServices } from "./services/index.ts";
 import { MemoryStore } from "./store/memory.ts";
+import { PostgresStore } from "./store/postgres.ts";
+import type { Store } from "./store/types.ts";
 
 let config: ReturnType<typeof loadConfig>;
 try {
@@ -17,9 +21,23 @@ try {
     throw err;
 }
 
-// Postgres arrives in the next phase; until then everything is kept in memory and lost on restart.
-const store = new MemoryStore();
-console.warn("Using the in-memory store: nothing is kept when the server stops.");
+let store: Store;
+if (config.databaseUrl) {
+    const schema = config.databaseSchema ? { schema: config.databaseSchema } : {};
+    const pg = new PostgresStore(config.databaseUrl, schema);
+    try {
+        const applied = await migrate(pg.sql, schema);
+        if (applied.length) console.log(`Applied database migrations: ${applied.join(", ")}.`);
+    } catch (err) {
+        console.error(`Couldn't prepare the database: ${(err as Error).message}`);
+        await pg.close().catch(() => {});
+        process.exit(1);
+    }
+    store = pg;
+} else {
+    store = new MemoryStore();
+    console.warn("Using the in-memory store: nothing is kept when the server stops. Set DATABASE_URL to keep data.");
+}
 const services = createServices(config, store);
 if (!config.secretsKey)
     console.warn(
@@ -43,7 +61,9 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
-        server.close(() => process.exit(0));
+        server.close(() => {
+            store.close().finally(() => process.exit(0));
+        });
         setTimeout(() => process.exit(0), 3000).unref();
     });
 }

@@ -17,6 +17,18 @@ jobs:
     name: Lint, typecheck and test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -27,10 +39,24 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
-      # Server tests, plus the contract suite against the server in this repository.
-      - run: pnpm test
+      # Server tests, plus the contract suite against the server in this repository: once with the
+      # in-memory store, once with Postgres.
+      - name: Test with the in-memory store
+        run: pnpm test
         env:
           TRIAGENT_CONTRACT_TARGET: v1
+      # A throwaway database needn't survive a crash, so skip the disk flushes that slow down creating
+      # each test's schema.
+      - name: Prepare the test database
+        run: >-
+          docker exec ${{ job.services.postgres.id }} psql -U postgres
+          -c "alter system set fsync = off" -c "alter system set synchronous_commit = off"
+          -c "alter system set full_page_writes = off" -c "select pg_reload_conf()"
+      - name: Test with Postgres
+        run: pnpm test
+        env:
+          TRIAGENT_CONTRACT_TARGET: v1
+          TRIAGENT_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres
 
   secrets:
     name: Secret scan

@@ -1,8 +1,11 @@
 // Runs the contract against the rebuilt server (apps/server). Each test file starts its own server; the
 // tests work in an organisation workspace the admin creates, so members can be added with any role.
+// The server keeps its data in memory, or, when TRIAGENT_TEST_DATABASE_URL is set, in a schema of its own
+// in that database, dropped when the server stops.
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,9 +24,23 @@ import type {
     UploadInput,
 } from "./types.ts";
 
-const SERVER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../apps/server/src/main.ts");
+const SERVER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../apps/server");
+const SERVER = path.join(SERVER_DIR, "src/main.ts");
+const DATABASE_URL = process.env.TRIAGENT_TEST_DATABASE_URL || null;
 const ADMIN = "admin";
 const WORKSPACE = "contract";
+
+/** Drop a server's schema. The driver is the server's dependency, so it's loaded from there. */
+async function dropSchema(url: string, schema: string): Promise<void> {
+    type Sql = { unsafe(query: string): Promise<unknown>; end(): Promise<void> };
+    const postgres = createRequire(path.join(SERVER_DIR, "package.json"))("postgres") as (url: string, options: object) => Sql;
+    const sql = postgres(url, { max: 1, onnotice: () => {} });
+    try {
+        await sql.unsafe(`drop schema if exists "${schema}" cascade`);
+    } finally {
+        await sql.end();
+    }
+}
 
 function freePort(): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -57,11 +74,14 @@ export class V1Target implements Target {
     private readonly hooks = new Map<string, string>();
     private seq = 0;
 
-    private constructor(base: string, child: ChildProcess, adminPassword: string, output: string[]) {
+    private readonly schema: string | null;
+
+    private constructor(base: string, child: ChildProcess, adminPassword: string, output: string[], schema: string | null) {
         this.base = base;
         this.child = child;
         this.adminPassword = adminPassword;
         this.output = output;
+        this.schema = schema;
     }
 
     static async start(): Promise<V1Target> {
@@ -69,6 +89,7 @@ export class V1Target implements Target {
         const base = `http://127.0.0.1:${port}`;
         const adminPassword = password();
         const output: string[] = [];
+        const schema = DATABASE_URL ? `contract_${randomBytes(8).toString("hex")}` : null;
         const child = spawn(process.execPath, [SERVER], {
             stdio: ["ignore", "pipe", "pipe"],
             env: {
@@ -81,10 +102,11 @@ export class V1Target implements Target {
                 TRIAGENT_ADMIN_PASSWORD: adminPassword,
                 TRIAGENT_SECRETS_KEY: randomBytes(32).toString("base64"),
                 REQUESTS_PER_MINUTE: "100000",
+                ...(DATABASE_URL && schema ? { DATABASE_URL, DATABASE_SCHEMA: schema } : {}),
             },
         });
         for (const stream of [child.stdout, child.stderr]) stream?.on("data", (d: Buffer) => output.push(d.toString()));
-        const target = new V1Target(base, child, adminPassword, output);
+        const target = new V1Target(base, child, adminPassword, output, schema);
         await target.waitUntilReady();
         const created = await target.request(await target.admin(), "POST", "/api/v1/workspaces", {
             slug: WORKSPACE,
@@ -109,11 +131,13 @@ export class V1Target implements Target {
     }
 
     async close(): Promise<void> {
-        if (this.child.exitCode !== null) return;
-        const exited = new Promise((r) => this.child.once("exit", r));
-        this.child.kill("SIGTERM");
-        await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
-        if (this.child.exitCode === null) this.child.kill("SIGKILL");
+        if (this.child.exitCode === null) {
+            const exited = new Promise((r) => this.child.once("exit", r));
+            this.child.kill("SIGTERM");
+            await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
+            if (this.child.exitCode === null) this.child.kill("SIGKILL");
+        }
+        if (DATABASE_URL && this.schema) await dropSchema(DATABASE_URL, this.schema);
     }
 
     private async request(

@@ -3,6 +3,7 @@
 // Transactions run one at a time. Each write inside one records how to undo it, and if the transaction
 // throws, the undo steps run in reverse, so a failed request leaves nothing half-done. A write made
 // outside a transaction runs as a transaction of its own, so it can't slip between another's steps.
+// Hooks registered with afterCommit run once the outermost transaction has succeeded.
 // Stored values are frozen copies, so a caller can't change what others read.
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -27,6 +28,11 @@ import type {
 } from "./types.ts";
 
 type Undo = () => void;
+
+interface Tx {
+    undo: Undo[];
+    after: (() => void)[];
+}
 
 function freeze<T>(value: T): T {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -95,6 +101,17 @@ class Log<V extends { id: string }> {
         });
     }
 
+    /** Remove matching rows (for deletes that take a log's rows with them). */
+    remove(match: (row: V) => boolean): void {
+        const undo = this.journal();
+        if (!undo) throw new Error("Store writes must run inside a transaction.");
+        const before = [...this.rows];
+        const kept = this.rows.filter((r) => !match(r));
+        if (kept.length === before.length) return;
+        this.rows.splice(0, this.rows.length, ...kept);
+        undo.push(() => this.rows.splice(0, this.rows.length, ...before));
+    }
+
     /** Newest first, starting after the row with id `before`. */
     list(match: (row: V) => boolean, page: Page): V[] {
         const out: V[] = [];
@@ -112,7 +129,7 @@ class Log<V extends { id: string }> {
 }
 
 export class MemoryStore implements Store {
-    private readonly context = new AsyncLocalStorage<Undo[]>();
+    private readonly context = new AsyncLocalStorage<Tx>();
     private queue: Promise<unknown> = Promise.resolve();
     private version = 0;
 
@@ -129,29 +146,43 @@ export class MemoryStore implements Store {
         uploadLinks: this.table<UploadLink>(),
         secrets: this.table<SecretRecord>(),
         settings: this.table<SettingRecord>(),
-        activity: new Log<ActivityRow>(() => this.context.getStore() ?? null),
-        audit: new Log<AuditRow>(() => this.context.getStore() ?? null),
+        activity: new Log<ActivityRow>(() => this.context.getStore()?.undo ?? null),
+        audit: new Log<AuditRow>(() => this.context.getStore()?.undo ?? null),
     };
 
     private table<V>(): Table<V> {
-        return new Table<V>(() => this.context.getStore() ?? null);
+        return new Table<V>(() => this.context.getStore()?.undo ?? null);
     }
 
     async transaction<T>(fn: (tx: Repos) => Promise<T>): Promise<T> {
         // Already inside one: join it (its undo steps cover ours).
         if (this.context.getStore()) return fn(this);
+        const tx: Tx = { undo: [], after: [] };
         const run = async () => {
-            const undo: Undo[] = [];
             try {
-                return await this.context.run(undo, () => fn(this));
+                return await this.context.run(tx, () => fn(this));
             } catch (err) {
-                for (const step of undo.reverse()) step();
+                for (const step of tx.undo.reverse()) step();
                 throw err;
             }
         };
         const result = this.queue.then(run, run);
         this.queue = result.catch(() => {});
-        return result;
+        const value = await result;
+        for (const hook of tx.after) {
+            try {
+                hook();
+            } catch (err) {
+                console.error("A hook run after a saved change failed:", err);
+            }
+        }
+        return value;
+    }
+
+    afterCommit(fn: () => void): void {
+        const tx = this.context.getStore();
+        if (tx) tx.after.push(fn);
+        else fn();
     }
 
     /** Run one write as its own transaction, unless it's already part of one. */
@@ -203,6 +234,7 @@ export class MemoryStore implements Store {
                     if (s.workspaceId === id) this.t.settings.delete(key(id, s.projectId ?? "", s.key));
                 for (const s of this.t.secrets.values())
                     if (s.workspaceId === id) this.t.secrets.delete(key(id, s.projectId ?? "", s.name));
+                this.t.activity.remove((r) => r.workspaceId === id);
                 this.t.workspaces.delete(id);
             }),
     };

@@ -48,10 +48,14 @@ export class Core {
         this.secrets = secrets;
     }
 
-    /** Run `fn` in one transaction; its live updates go out only once everything is saved. */
+    /**
+     * Run `fn` in one transaction; its live updates go out only once everything is saved. The store may run
+     * `fn` again if it collides with another change, so its announcements are held by the store's
+     * transaction (`afterCommit`), not here: a retried attempt's are dropped, and a write joined to an
+     * outer transaction waits for that one to be saved.
+     */
     async write<T>(actor: Actor, fn: (w: Write) => Promise<T>): Promise<T> {
-        const announce: (() => void)[] = [];
-        const out = await this.store.transaction((tx) =>
+        return this.store.transaction((tx) =>
             fn({
                 tx,
                 activity: async (row, project = null) => {
@@ -64,9 +68,9 @@ export class Core {
                         via: actor.via,
                     };
                     await tx.activity.add(full);
-                    announce.push(() => this.events.publish(full, project, actor.clientId));
+                    this.store.afterCommit(() => this.events.publish(full, project, actor.clientId));
                 },
-                afterCommit: (f) => announce.push(f),
+                afterCommit: (f) => this.store.afterCommit(f),
                 audit: async (row) => {
                     await tx.audit.add({
                         ...row,
@@ -80,7 +84,5 @@ export class Core {
                 },
             }),
         );
-        for (const send of announce) send();
-        return out;
     }
 }
