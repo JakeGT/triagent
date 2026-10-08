@@ -66,11 +66,12 @@ RUN apk add --no-cache git \
     && mkdir -p /var/cache/triagent-runner /tmp/triagent-runner \
     && chown node:node /var/cache/triagent-runner /tmp/triagent-runner
 WORKDIR /app
-# Laid out as in the repository: the runner shares its redaction with the server (packages/shared/src/redact.ts).
+# Laid out as in the repository: the runner shares code with the server (redaction, the model hand-over) from
+# packages/shared/src, which has no dependencies of its own.
 COPY apps/runner/package.json apps/runner/
 COPY apps/runner/src apps/runner/src
 COPY packages/shared/package.json packages/shared/
-COPY packages/shared/src/redact.ts packages/shared/src/
+COPY packages/shared/src packages/shared/src
 # Reviews need git 2.42 or later (GIT_ATTR_SOURCE). The runner refuses to start with an older one; so does the build.
 RUN node -e "import('./apps/runner/src/git.ts').then((g) => g.requireGit('git', process.env.PATH))" \
     && node -e "import('./apps/runner/src/runner.ts')"

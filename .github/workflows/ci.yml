@@ -84,6 +84,24 @@ jobs:
             apps/web/test-results
           retention-days: 7
 
+  images:
+    name: Docker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Both images build (each runs its own start-up checks), so a file missing from an image fails here
+      # rather than at deployment. Nothing is pushed.
+      - run: docker build --target server -t triagent-server:ci .
+      - run: docker build --target runner -t triagent-runner:ci .
+      - name: The images start
+        run: |
+          docker run --rm --entrypoint sh triagent-runner:ci -c 'git --version && ocr version'
+          docker run -d --name server-ci -e PUBLIC_ORIGIN=http://localhost -e COOKIE_SECURE=false -e NODE_ENV=development triagent-server:ci
+          for i in $(seq 1 30); do docker exec server-ci wget -qO- http://127.0.0.1:8080/healthz && break; sleep 1; done
+          docker exec server-ci wget -qO- http://127.0.0.1:8080/healthz | grep -q '"ok"'
+          docker rm -f server-ci
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
