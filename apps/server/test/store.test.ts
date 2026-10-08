@@ -6,7 +6,18 @@ import { describe, test } from "node:test";
 import postgres from "postgres";
 import type { RawReport, UploadMeta } from "../src/domain/report.ts";
 import { MemoryStore } from "../src/store/memory.ts";
-import type { ActivityRow, ApiToken, AuditRow, Project, ReviewRecord, Store, TriageRecord, User, Workspace } from "../src/store/types.ts";
+import type {
+    ActivityRow,
+    ApiToken,
+    AuditRow,
+    Invite,
+    Project,
+    ReviewRecord,
+    Store,
+    TriageRecord,
+    User,
+    Workspace,
+} from "../src/store/types.ts";
 import { postgresStore, TEST_DATABASE_URL } from "./helpers.ts";
 
 /** A distinct, increasing timestamp. */
@@ -159,7 +170,7 @@ for (const kind of kinds) {
         test("sessions: listed per user, swept when idle or old, and put is a plain upsert", async () => {
             const store = await kind.make();
             await store.users.put(user("u"));
-            const base = { userId: "u", csrf: "c", credential: null };
+            const base = { userId: "u", csrf: "c", credential: null, authAt: 500 };
             await store.sessions.put({ ...base, idHash: "fresh", createdAt: 10_000, lastSeenAt: 10_000 });
             await store.sessions.put({ ...base, idHash: "idle", createdAt: 9_000, lastSeenAt: 1_000 });
             await store.sessions.put({ ...base, idHash: "old", createdAt: 1_000, lastSeenAt: 9_500 });
@@ -178,6 +189,75 @@ for (const kind of kinds) {
                 if (current) await tx.sessions.put({ ...current, lastSeenAt: 20_000 });
             });
             assert.equal(await store.sessions.get("fresh"), null);
+            // The provider's ID token is kept with the session (only as a sign-out hint).
+            await store.sessions.put({
+                ...base,
+                idHash: "oidc",
+                createdAt: 30_000,
+                lastSeenAt: 30_000,
+                authAt: 29_000,
+                idToken: "eyJ.x.y",
+            });
+            assert.deepEqual(await store.sessions.get("oidc"), {
+                ...base,
+                idHash: "oidc",
+                createdAt: 30_000,
+                lastSeenAt: 30_000,
+                authAt: 29_000,
+                idToken: "eyJ.x.y",
+            });
+        });
+
+        test("users: found by identity provider issuer and subject", async () => {
+            const store = await kind.make();
+            const iss = "https://idp.example/";
+            await store.users.put(user("a", { username: null, issuer: iss, subject: "sub-1", email: "a@example.com" }));
+            await store.users.put(user("b", { username: null, issuer: "https://other.example/", subject: "sub-1" }));
+            assert.equal((await store.users.byIdentity(iss, "sub-1"))?.id, "a");
+            assert.equal((await store.users.byIdentity("https://other.example/", "sub-1"))?.id, "b");
+            assert.equal(await store.users.byIdentity(iss, "sub-2"), null);
+        });
+
+        test("invites: listed per workspace or instance, pending by email, and gone with their workspace", async () => {
+            const store = await kind.make();
+            await store.workspaces.put(workspace("w1"));
+            const invite = (id: string, extra: Partial<Invite> = {}): Invite => ({
+                id,
+                email: "sam@example.com",
+                workspaceId: null,
+                role: null,
+                createdBy: "admin",
+                createdAt: at(),
+                expiresAt: new Date(Date.parse(at()) + 86_400_000).toISOString(),
+                acceptedAt: null,
+                acceptedBy: null,
+                ...extra,
+            });
+            await store.invites.put(invite("i1"));
+            await store.invites.put(invite("i2", { workspaceId: "w1", role: "editor" }));
+            await store.invites.put(invite("i3", { workspaceId: "w1", role: "viewer", email: "kim@example.com" }));
+            assert.deepEqual(
+                (await store.invites.list(null)).map((i) => i.id),
+                ["i1"],
+            );
+            assert.deepEqual(
+                (await store.invites.list("w1")).map((i) => i.id),
+                ["i3", "i2"],
+            );
+            assert.deepEqual((await store.invites.get("i2"))?.role, "editor");
+            assert.deepEqual((await store.invites.pendingFor("SAM@example.com")).map((i) => i.id).sort(), ["i1", "i2"]);
+            const accepted = { ...(await store.invites.get("i1")), acceptedAt: at(), acceptedBy: "u1" } as Invite;
+            await store.invites.put(accepted);
+            assert.deepEqual(await store.invites.get("i1"), accepted);
+            assert.deepEqual(
+                (await store.invites.pendingFor("sam@example.com")).map((i) => i.id),
+                ["i2"],
+            );
+            await store.invites.delete("i3");
+            assert.equal(await store.invites.get("i3"), null);
+            await store.workspaces.delete("w1");
+            assert.equal(await store.invites.get("i2"), null);
+            assert.equal((await store.invites.get("i1"))?.acceptedBy, "u1");
         });
 
         test("workspaces and memberships", async () => {

@@ -6,8 +6,10 @@ import { clientIp, errorResponse, mount } from "./http/mount.ts";
 import type { Route } from "./http/route.ts";
 import { serveWeb, webDistDir } from "./http/static.ts";
 import { accountRoutes } from "./routes/account.ts";
+import { authRoutes } from "./routes/auth.ts";
 import { insightRoutes } from "./routes/insights.ts";
 import { instanceModelRoutes } from "./routes/instance-models.ts";
+import { inviteRoutes } from "./routes/invites.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { platformRoutes } from "./routes/platform.ts";
 import { projectRoutes } from "./routes/projects.ts";
@@ -34,6 +36,8 @@ export function allRoutes(services: Services): Route[] {
     const routes: Route[] = [];
     routes.push(
         ...accountRoutes,
+        ...authRoutes,
+        ...inviteRoutes,
         ...workspaceRoutes,
         ...projectRoutes,
         ...reportRoutes,

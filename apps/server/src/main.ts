@@ -53,7 +53,11 @@ try {
     console.error(`Couldn't create the admin from TRIAGENT_ADMIN_USER/TRIAGENT_ADMIN_PASSWORD: ${(err as Error).message}`);
 }
 if ((await store.users.count()) === 0)
-    console.warn("No accounts yet. Set TRIAGENT_ADMIN_USER and TRIAGENT_ADMIN_PASSWORD (or _FILE) and restart.");
+    console.warn(
+        config.oidc
+            ? `No accounts yet. The first person to sign in through ${config.oidc.providerName} gets one; members of "${config.oidc.adminGroup}" are instance admins.`
+            : "No accounts yet. Set TRIAGENT_ADMIN_USER and TRIAGENT_ADMIN_PASSWORD (or _FILE) and restart.",
+    );
 
 const { app } = createApp(services);
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {

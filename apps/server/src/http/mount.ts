@@ -10,7 +10,7 @@ import { safeEqual } from "../security.ts";
 import type { Access, Principal } from "../services/accounts.ts";
 import type { Actor } from "../services/core.ts";
 import type { Services } from "../services/index.ts";
-import { type HandlerResult, needsBrowser, type RequestContext, type Route } from "./route.ts";
+import { type HandlerResult, needsBrowser, needsRecentSignIn, type RequestContext, type Route } from "./route.ts";
 
 export const DEFAULT_BODY_LIMIT = 256 * 1024;
 
@@ -112,6 +112,19 @@ function refuse(principal: Principal, access: Access, permission: string): ApiEr
     return forbidden(`Your role in this workspace doesn't allow ${permission}.`);
 }
 
+/** Where the web app sends someone to confirm it's them: back through the identity provider, or a password prompt. */
+export function reauthRequired(services: Services): ApiError {
+    const minutes = services.config.reauthMinutes;
+    const message = `Confirm it's you first: this needs a sign-in from the last ${minutes} minutes.`;
+    return new ApiError(401, message, {
+        code: "reauth_required",
+        details:
+            services.config.authMode === "oidc"
+                ? { method: "provider", reauthUrl: "/auth/login?prompt=login&max_age=0&next=%2F" }
+                : { method: "password" },
+    });
+}
+
 export function errorResponse(c: Context, err: unknown): Response {
     if (err instanceof ApiError) {
         return c.json({ error: err.message, ...(err.code ? { code: err.code } : {}), ...err.details }, err.status as 400);
@@ -167,6 +180,9 @@ export function mount(app: Hono, services: Services, routes: Route[]): void {
                 if (!permissionsOf(access.grant).has(r.permission)) throw refuse(principal, access, r.permission);
                 if (r.scope === "project") project = await services.projects.get(services.store, access.workspace, params.project ?? "");
             }
+            // Checked after access, so outsiders still get 404 and people without the permission 403.
+            if (needsRecentSignIn(r) && !(principal?.kind === "session" && services.accounts.recentlyAuthenticated(principal.session)))
+                throw reauthRequired(services);
 
             const clientId = /^[\w-]{8,64}$/.test(c.req.header("x-client-id") ?? "") ? c.req.header("x-client-id") : undefined;
             const actor = actorOf(principal, principal?.kind === "token" ? "token" : "web", ip, clientId);

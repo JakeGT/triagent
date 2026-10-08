@@ -7,7 +7,9 @@ import { Catalogue } from "./catalogue.ts";
 import { Core } from "./core.ts";
 import { EventBus } from "./events.ts";
 import { History } from "./history.ts";
+import { Invites } from "./invites.ts";
 import { Models } from "./models.ts";
+import { Oidc } from "./oidc.ts";
 import { Prices } from "./prices.ts";
 import { Projects } from "./projects.ts";
 import { Reports } from "./reports.ts";
@@ -33,6 +35,9 @@ export interface Services {
     prices: Prices;
     allowances: Allowances;
     analytics: AnalyticsService;
+    invites: Invites;
+    /** The identity provider, when AUTH_MODE=oidc. */
+    oidc: Oidc | null;
 }
 
 /** Test seams: the clock, and how to reach OpenRouter. */
@@ -52,12 +57,13 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
     const catalogue = new Catalogue({ enabled: config.openrouterCatalogue, ...(options.fetch ? { fetch: options.fetch } : {}) });
     const prices = new Prices(core, catalogue);
     const allowances = new Allowances(core, clock);
+    const invites = new Invites(core);
     return {
         core,
         config,
         store,
         events,
-        accounts: new Accounts(core),
+        accounts: new Accounts(core, invites),
         projects,
         reports,
         triage: new Triage(core, reports),
@@ -69,5 +75,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         prices,
         allowances,
         analytics: new AnalyticsService(core, projects, reports, prices, () => clock().getTime()),
+        invites,
+        oidc: config.oidc ? new Oidc(config.oidc, config.publicOrigin, config.secretsKey) : null,
     };
 }

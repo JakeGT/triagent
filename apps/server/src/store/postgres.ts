@@ -19,6 +19,7 @@ import type {
     ApiToken,
     ArchivedReport,
     AuditRow,
+    Invite,
     Membership,
     ModelGrant,
     Project,
@@ -121,6 +122,20 @@ const toSession = (r: Row): Session => ({
     credential: r.credential,
     createdAt: Number(r.created_at),
     lastSeenAt: Number(r.last_seen_at),
+    authAt: Number(r.auth_at),
+    ...(r.id_token ? { idToken: r.id_token } : {}),
+});
+
+const toInvite = (r: Row): Invite => ({
+    id: r.id,
+    email: r.email,
+    workspaceId: r.workspace_id,
+    role: r.role,
+    createdBy: r.created_by,
+    createdAt: iso(r.created_at),
+    expiresAt: iso(r.expires_at),
+    acceptedAt: isoOrNull(r.accepted_at),
+    acceptedBy: r.accepted_by,
 });
 
 const toWorkspace = (r: Row): Workspace => ({ id: r.id, slug: r.slug, name: r.name, kind: r.kind, createdAt: iso(r.created_at) });
@@ -368,6 +383,8 @@ export class PostgresStore implements Store {
         get: async (id) => first(await this.rows((sql) => sql`select * from users where id = ${id}`), toUser),
         byUsername: async (username) =>
             first(await this.rows((sql) => sql`select * from users where lower(username) = lower(${username})`), toUser),
+        byIdentity: async (issuer, subject) =>
+            first(await this.rows((sql) => sql`select * from users where issuer = ${issuer} and subject = ${subject}`), toUser),
         list: async () => (await this.rows((sql) => sql`select * from users order by created_at, id`)).map(toUser),
         count: async () => Number((await this.rows((sql) => sql`select count(*) as n from users`))[0]?.n ?? 0),
         put: (u) =>
@@ -410,6 +427,8 @@ export class PostgresStore implements Store {
                     credential: s.credential,
                     created_at: s.createdAt,
                     last_seen_at: s.lastSeenAt,
+                    auth_at: s.authAt,
+                    id_token: s.idToken ?? null,
                 },
                 ["id_hash"],
             ),
@@ -795,6 +814,43 @@ export class PostgresStore implements Store {
         delete: (workspaceId) =>
             this.write(async (sql) => {
                 await sql`delete from model_grants where workspace_id = ${workspaceId}`;
+            }),
+    };
+
+    invites: Repos["invites"] = {
+        get: async (id) => first(await this.rows((sql) => sql`select * from invites where id = ${id}`), toInvite),
+        list: async (workspaceId) =>
+            (
+                await this.rows(
+                    (sql) => sql`select * from invites where ${same(sql, "workspace_id", workspaceId)} order by created_at desc, id desc`,
+                )
+            ).map(toInvite),
+        pendingFor: async (email) =>
+            (
+                await this.rows(
+                    (sql) =>
+                        sql`select * from invites where email = ${email.toLowerCase()} and accepted_at is null order by created_at, id`,
+                )
+            ).map(toInvite),
+        put: (i) =>
+            this.upsert(
+                "invites",
+                {
+                    id: i.id,
+                    email: i.email,
+                    workspace_id: i.workspaceId,
+                    role: i.role,
+                    created_by: i.createdBy,
+                    created_at: i.createdAt,
+                    expires_at: i.expiresAt,
+                    accepted_at: i.acceptedAt,
+                    accepted_by: i.acceptedBy,
+                },
+                ["id"],
+            ),
+        delete: (id) =>
+            this.write(async (sql) => {
+                await sql`delete from invites where id = ${id}`;
             }),
     };
 }

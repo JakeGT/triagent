@@ -18,6 +18,8 @@ import {
 } from "../security.ts";
 import type { ApiToken, Membership, NotifyPrefs, Repos, Session, User, Workspace } from "../store/types.ts";
 import type { Actor, Core, Write } from "./core.ts";
+import type { Invites } from "./invites.ts";
+import type { Identity } from "./oidc.ts";
 
 export const TOKEN_PREFIX = "tri_";
 const MAX_SESSIONS_PER_USER = 20;
@@ -55,6 +57,7 @@ export function publicWorkspace(w: Workspace, role?: Role) {
 
 export class Accounts {
     private readonly core: Core;
+    private readonly invites: Invites;
     private readonly ipLimiter = new FailureLimiter(20, 15 * 60_000);
     private readonly pairLimiter = new FailureLimiter(8, 15 * 60_000);
     private readonly userLimiter = new FailureLimiter(100, 15 * 60_000);
@@ -62,8 +65,9 @@ export class Accounts {
     /** Addresses each account recently signed in from: guessing elsewhere can't lock them out. */
     private readonly knownAddresses = new Map<string, Set<string>>();
 
-    constructor(core: Core) {
+    constructor(core: Core, invites: Invites) {
         this.core = core;
+        this.invites = invites;
         setInterval(() => {
             this.ipLimiter.sweep();
             this.pairLimiter.sweep();
@@ -120,9 +124,9 @@ export class Accounts {
         return this.core.store.transaction((tx) => this.createLocalUser(tx, { ...admin, isInstanceAdmin: true }));
     }
 
-    private async createPersonalWorkspace(tx: Repos, user: User): Promise<Workspace> {
+    private async createPersonalWorkspace(tx: Repos, user: User, name?: string | null): Promise<Workspace> {
         const base =
-            (user.username ?? user.displayName)
+            (name ?? user.username ?? user.displayName)
                 .toLowerCase()
                 .replace(/[^a-z0-9-]+/g, "-")
                 .replace(/^-+|-+$/g, "")
@@ -136,6 +140,25 @@ export class Accounts {
     }
 
     async signIn(username: string, password: string, ip: string): Promise<{ user: User; cookie: string } | { retryAfter: number }> {
+        const checked = await this.checkPassword(username, password, ip);
+        if (!("user" in checked)) return checked;
+        const { user } = checked;
+        const cookie = await this.core.store.transaction(async (tx) => {
+            // The password may have changed while we were checking it.
+            const fresh = await tx.users.get(user.id);
+            if (!fresh || fresh.passwordHash !== user.passwordHash) return null;
+            await tx.users.put({ ...fresh, lastLoginAt: now() });
+            return this.startSession(tx, fresh);
+        });
+        if (!cookie) return { retryAfter: 0 };
+        return { user, cookie };
+    }
+
+    /**
+     * Check a local account's password, slowed by the sign-in limits. `{ retryAfter: 0 }` means wrong; more
+     * than 0, too many recent failures. Success forgives the attempt and remembers the address.
+     */
+    private async checkPassword(username: string, password: string, ip: string): Promise<{ user: User } | { retryAfter: number }> {
         const name = username.toLowerCase();
         const pair = `${name}|${ip}`;
         // The per-account limit (distributed guessing) doesn't apply from addresses the account recently
@@ -154,14 +177,6 @@ export class Accounts {
         const user = await this.repos.users.byUsername(username);
         const ok = await verifyPassword(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
         if (!user?.passwordHash || !ok) return { retryAfter: 0 };
-        const cookie = await this.core.store.transaction(async (tx) => {
-            // The password may have changed while we were checking it.
-            const fresh = await tx.users.get(user.id);
-            if (!fresh || fresh.passwordHash !== user.passwordHash) return null;
-            await tx.users.put({ ...fresh, lastLoginAt: now() });
-            return this.startSession(tx, fresh);
-        });
-        if (!cookie) return { retryAfter: 0 };
         this.ipLimiter.clear(ip);
         this.pairLimiter.clear(pair);
         this.userLimiter.forgive(name);
@@ -169,11 +184,110 @@ export class Accounts {
         addresses.add(ip);
         if (addresses.size > 20) addresses.delete(addresses.values().next().value as string);
         this.knownAddresses.set(name, addresses);
-        return { user, cookie };
+        return { user };
+    }
+
+    /** Confirm it's still you (local accounts), so steps that need a recent sign-in are allowed for a while. */
+    async reauthenticate(principal: Principal & { kind: "session" }, password: string, ip: string): Promise<void> {
+        const { user, session } = principal;
+        if (!user.username || !user.passwordHash)
+            throw badRequest("This account signs in through its identity provider: sign in there again instead.");
+        const checked = await this.checkPassword(user.username, password, ip);
+        if (!("user" in checked))
+            throw new ApiError(
+                checked.retryAfter ? 429 : 400,
+                checked.retryAfter
+                    ? `Too many failed attempts. Try again in ${Math.ceil(checked.retryAfter / 60)} minute(s).`
+                    : "That password is wrong.",
+            );
+        await this.core.store.transaction(async (tx) => {
+            const current = await tx.sessions.get(session.idHash);
+            const fresh = await tx.users.get(user.id);
+            if (!current || !fresh || fresh.passwordHash !== checked.user.passwordHash)
+                throw new ApiError(401, "Your session ended. Sign in again.");
+            await tx.sessions.put({ ...current, authAt: Date.now() });
+        });
+    }
+
+    /** Has this session signed in (or confirmed it's them) recently enough for steps such as setting secrets? */
+    recentlyAuthenticated(session: Session): boolean {
+        return Date.now() - session.authAt <= this.core.config.reauthMinutes * 60_000;
+    }
+
+    /**
+     * Sign in someone the identity provider vouched for. The account is found by the provider's issuer and
+     * subject, never by email. A first sign-in creates the account (with its personal workspace) only if
+     * sign-up is open, or they have an open invite for their verified email, are in the admin group, or
+     * would be the very first account; otherwise nothing is created. Admin rights follow the admin group
+     * on every sign-in, and open invites for the verified email are accepted.
+     */
+    async signInWithIdentity(
+        identity: Identity,
+        idToken: string,
+        ip: string,
+        replacing: string | null,
+    ): Promise<{ user: User; cookie: string; created: boolean } | { refused: "invite_required" }> {
+        const oidc = this.core.config.oidc;
+        if (!oidc) throw new Error("Signing in with an identity provider needs AUTH_MODE=oidc.");
+        const verifiedEmail = identity.email && (identity.emailVerified || oidc.trustEmail) ? identity.email : null;
+        const isAdmin = identity.groups.includes(oidc.adminGroup);
+        const authAt = Math.min(Date.now(), identity.authTime ?? Date.now());
+        // Filled in once the account is known: audit rows name the person signing in.
+        const actor: Actor = { name: "", userId: null, via: "web", ip };
+        return this.core.write(actor, async (w) => {
+            const existing = await w.tx.users.byIdentity(identity.issuer, identity.subject);
+            const invites = await this.invites.openFor(w.tx, verifiedEmail);
+            const name = (identity.name ?? identity.preferredUsername ?? existing?.displayName ?? verifiedEmail ?? "New user").slice(0, 80);
+            let user: User;
+            if (existing) {
+                user = { ...existing, displayName: name, email: verifiedEmail, isInstanceAdmin: isAdmin, lastLoginAt: now() };
+            } else {
+                const allowed = this.core.config.signupMode === "open" || isAdmin || invites.length > 0 || (await w.tx.users.count()) === 0;
+                if (!allowed) return { refused: "invite_required" as const };
+                user = {
+                    id: randomId(),
+                    username: null,
+                    displayName: name,
+                    email: verifiedEmail,
+                    passwordHash: null,
+                    mustChangePassword: false,
+                    isInstanceAdmin: isAdmin,
+                    issuer: identity.issuer,
+                    subject: identity.subject,
+                    notify: DEFAULT_NOTIFY,
+                    createdAt: now(),
+                    lastLoginAt: now(),
+                };
+            }
+            actor.name = user.displayName;
+            actor.userId = user.id;
+            await w.tx.users.put(user);
+            if (!existing) {
+                await this.createPersonalWorkspace(w.tx, user, identity.preferredUsername ?? verifiedEmail?.split("@")[0]);
+                await w.audit({
+                    workspaceId: null,
+                    kind: "user",
+                    target: user.id,
+                    changes: { created: { via: "oidc", email: verifiedEmail, isInstanceAdmin: isAdmin } },
+                });
+            } else if (existing.isInstanceAdmin !== isAdmin) {
+                await w.audit({
+                    workspaceId: null,
+                    kind: "user",
+                    target: user.id,
+                    changes: { isInstanceAdmin: { from: existing.isInstanceAdmin, to: isAdmin, via: `group ${oidc.adminGroup}` } },
+                });
+            }
+            await this.invites.accept(w, user, invites);
+            // Signing in again (to confirm it's you, or as someone else) replaces this browser's session.
+            if (replacing) await w.tx.sessions.delete(replacing);
+            const cookie = await this.startSession(w.tx, user, { authAt, idToken });
+            return { user, cookie, created: !existing };
+        });
     }
 
     /** A new session; returns the cookie value (only its hash is stored). */
-    private async startSession(tx: Repos, user: User): Promise<string> {
+    private async startSession(tx: Repos, user: User, extra: { authAt?: number; idToken?: string } = {}): Promise<string> {
         const id = randomBytes(32).toString("base64url");
         const t = Date.now();
         // At most MAX_SESSIONS_PER_USER each: signing in again ends the oldest.
@@ -186,6 +300,8 @@ export class Accounts {
             credential: user.passwordHash ? sha256(user.passwordHash) : null,
             createdAt: t,
             lastSeenAt: t,
+            authAt: extra.authAt ?? t,
+            ...(extra.idToken ? { idToken: extra.idToken } : {}),
         });
         return id;
     }
@@ -202,8 +318,11 @@ export class Accounts {
         const { sessionIdleMinutes, sessionMaxHours } = this.core.config;
         const user = await this.repos.users.get(s.userId);
         const credential = user?.passwordHash ? sha256(user.passwordHash) : null;
+        // Each mode only honours its own kind of account: switching to OIDC ends password sessions, and back.
+        const otherMode = user && (this.core.config.authMode === "oidc" ? !user.subject : !user.passwordHash);
         if (
             !user ||
+            otherMode ||
             credential !== s.credential ||
             t - s.lastSeenAt > sessionIdleMinutes * 60_000 ||
             t - s.createdAt > sessionMaxHours * 3_600_000
@@ -242,14 +361,12 @@ export class Accounts {
         const { user, session } = principal;
         if (!user.username || !user.passwordHash)
             throw badRequest("This account signs in through its identity provider, so it has no password here.");
-        const check = await this.signIn(user.username, current, ip);
-        if ("retryAfter" in check)
+        const check = await this.checkPassword(user.username, current, ip);
+        if (!("user" in check))
             throw new ApiError(
                 check.retryAfter ? 429 : 400,
                 check.retryAfter ? "Too many failed attempts. Try again later." : "Your current password is wrong.",
             );
-        // signIn started a session we don't need.
-        await this.repos.sessions.delete(sha256(check.cookie));
         if (next === current) throw badRequest("The new password must be different from the current one.");
         try {
             checkNewPassword(next, user.username);

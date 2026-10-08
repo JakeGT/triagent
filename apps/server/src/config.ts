@@ -11,7 +11,15 @@ export interface Config {
     /** Trust X-Forwarded-* from this many proxies in front (0: trust none). */
     proxyHops: number;
     cookieSecure: boolean;
-    authMode: "local";
+    authMode: "local" | "oidc";
+    /** The identity provider, when AUTH_MODE=oidc. */
+    oidc: OidcConfig | null;
+    /** Who may create an account by signing in: only people with an invite (or in the admin group), or anyone. */
+    signupMode: "invite" | "open";
+    /** Shown with invites and on the "You need an invite" page, e.g. how to get onto the provider's allowlist. */
+    inviteHint: string | null;
+    /** Setting secrets needs a sign-in at most this many minutes old. */
+    reauthMinutes: number;
     /** Created at start-up if no accounts exist yet. */
     bootstrapAdmin: { username: string; password: string } | null;
     /** 32-byte key that encrypts stored secrets, base64. Null only in development. */
@@ -29,6 +37,20 @@ export interface Config {
     /** Fetch OpenRouter's public model catalogue (model names and prices). */
     openrouterCatalogue: boolean;
     production: boolean;
+}
+
+export interface OidcConfig {
+    /** The issuer identifier, exactly as the provider's discovery document gives it. */
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+    scopes: string;
+    /** The sign-in button's label: "Sign in with {providerName}". */
+    providerName: string;
+    /** Members of this group (from the ID token's `groups` claim) are instance administrators. */
+    adminGroup: string;
+    /** Treat the provider's email addresses as verified even without `email_verified: true`. */
+    trustEmail: boolean;
 }
 
 type Env = Record<string, string | undefined>;
@@ -75,13 +97,24 @@ export function loadConfig(env: Env = process.env): Config {
         throw new ConfigError(`PUBLIC_ORIGIN must be a scheme and host, like https://code-review.example.com, got "${publicOrigin}".`);
     if (!publicOrigin && production) throw new ConfigError("Set PUBLIC_ORIGIN, the address people use to reach Triagent.");
 
-    const authMode = env.AUTH_MODE ?? "local";
-    if (authMode !== "local") throw new ConfigError(`AUTH_MODE "${authMode}" isn't available yet. Use "local".`);
+    const authMode = env.AUTH_MODE || "local";
+    if (authMode !== "local" && authMode !== "oidc") throw new ConfigError(`AUTH_MODE must be "local" or "oidc", got "${authMode}".`);
 
     const adminUser = env.TRIAGENT_ADMIN_USER;
     const adminPassword = secretFromEnv(env, "TRIAGENT_ADMIN_PASSWORD");
     if (Boolean(adminUser) !== Boolean(adminPassword))
         throw new ConfigError("Set both TRIAGENT_ADMIN_USER and TRIAGENT_ADMIN_PASSWORD, or neither.");
+    if (authMode === "oidc" && adminUser)
+        throw new ConfigError(
+            "TRIAGENT_ADMIN_USER only applies to AUTH_MODE=local. With OIDC, members of OIDC_ADMIN_GROUP are instance admins: remove it.",
+        );
+    const oidc = authMode === "oidc" ? oidcConfig(env, Boolean(publicOrigin)) : null;
+
+    const signupMode = env.SIGNUP_MODE || "invite";
+    if (signupMode !== "invite" && signupMode !== "open")
+        throw new ConfigError(`SIGNUP_MODE must be "invite" or "open", got "${signupMode}".`);
+    const inviteHint = (env.INVITE_HINT ?? "").trim() || null;
+    if (inviteHint && inviteHint.length > 300) throw new ConfigError("Keep INVITE_HINT under 300 characters.");
 
     const keyText = secretFromEnv(env, "TRIAGENT_SECRETS_KEY");
     let secretsKey: Buffer | null = null;
@@ -109,6 +142,10 @@ export function loadConfig(env: Env = process.env): Config {
         proxyHops: whole(env, "PROXY_HOPS", 0, 0, 10),
         cookieSecure: flag(env, "COOKIE_SECURE", true),
         authMode,
+        oidc,
+        signupMode,
+        inviteHint,
+        reauthMinutes: whole(env, "REAUTH_MINUTES", 15, 1, 1440),
         bootstrapAdmin: adminUser && adminPassword ? { username: adminUser, password: adminPassword } : null,
         secretsKey,
         databaseUrl,
@@ -120,5 +157,48 @@ export function loadConfig(env: Env = process.env): Config {
         webDistDir: env.WEB_DIST_DIR || null,
         openrouterCatalogue: flag(env, "OPENROUTER_CATALOGUE", true),
         production,
+    };
+}
+
+/** Loopback addresses, where a plain-http issuer is allowed (a provider running on the same machine, or tests). */
+const LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/;
+
+function oidcConfig(env: Env, publicOriginSet: boolean): OidcConfig {
+    if (!publicOriginSet)
+        throw new ConfigError(
+            "AUTH_MODE=oidc needs PUBLIC_ORIGIN: the provider sends people back to PUBLIC_ORIGIN/auth/callback, which must match exactly.",
+        );
+    const issuer = env.OIDC_ISSUER ?? "";
+    let url: URL;
+    try {
+        url = new URL(issuer);
+    } catch {
+        throw new ConfigError(
+            `OIDC_ISSUER must be the provider's issuer URL, like https://auth.example.com/application/o/triagent/, got "${issuer}".`,
+        );
+    }
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && LOOPBACK.test(url.hostname)))
+        throw new ConfigError(`OIDC_ISSUER must use https (plain http is only allowed for localhost), got "${issuer}".`);
+    if (url.search || url.hash) throw new ConfigError("OIDC_ISSUER must not have a query string or fragment.");
+    const clientId = env.OIDC_CLIENT_ID ?? "";
+    if (!clientId) throw new ConfigError("Set OIDC_CLIENT_ID: the client ID of Triagent's application at the provider.");
+    const clientSecret = secretFromEnv(env, "OIDC_CLIENT_SECRET");
+    if (!clientSecret) throw new ConfigError("Set OIDC_CLIENT_SECRET_FILE (or OIDC_CLIENT_SECRET): the client secret from the provider.");
+    const scopes = (env.OIDC_SCOPES || "openid email profile").trim().split(/\s+/);
+    if (!scopes.includes("openid")) throw new ConfigError(`OIDC_SCOPES must include "openid", got "${scopes.join(" ")}".`);
+    if (!scopes.every((s) => /^[\x21\x23-\x5b\x5d-\x7e]+$/.test(s)))
+        throw new ConfigError("OIDC_SCOPES must be scope names separated by spaces.");
+    const providerName = (env.OIDC_PROVIDER_NAME || "your identity provider").trim();
+    if (providerName.length > 60) throw new ConfigError("Keep OIDC_PROVIDER_NAME under 60 characters.");
+    const adminGroup = (env.OIDC_ADMIN_GROUP ?? "platform-admin").trim();
+    if (!adminGroup) throw new ConfigError("OIDC_ADMIN_GROUP can't be empty: name the group whose members are instance admins.");
+    return {
+        issuer: url.href,
+        clientId,
+        clientSecret,
+        scopes: scopes.join(" "),
+        providerName,
+        adminGroup,
+        trustEmail: flag(env, "OIDC_TRUST_EMAIL", false),
     };
 }
