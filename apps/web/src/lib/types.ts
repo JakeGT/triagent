@@ -34,10 +34,20 @@ export interface NotifyPrefs {
     problemsOnly: boolean;
 }
 
+export type AuthMode = "local" | "oidc";
+
+/** How people sign in here (GET /auth/config, public). */
+export interface AuthConfig {
+    mode: AuthMode;
+    providerName: string | null;
+    inviteHint: string | null;
+    signupMode: "invite" | "open";
+}
+
 export interface Me {
     kind: "session";
     user: PublicUser;
-    authMode: "local";
+    authMode: AuthMode;
     csrf: string;
     mustChangePassword: boolean;
     notify: NotifyPrefs;
@@ -360,8 +370,27 @@ export interface AuditRow {
 }
 
 export interface InstanceUser extends PublicUser {
+    signsInWith: "password" | "provider";
     mustChangePassword: boolean;
     sessions: number;
+}
+
+export interface Invite {
+    id: string;
+    email: string;
+    /** Null for an invite to have an account (instance invite). */
+    role: Role | null;
+    status: "pending" | "expired" | "accepted";
+    createdAt: string;
+    createdBy: { id: string; displayName: string } | null;
+    expiresAt: string;
+    acceptedAt: string | null;
+    acceptedBy: { id: string; displayName: string } | null;
+}
+
+export interface InviteList {
+    items: Invite[];
+    hint: string | null;
 }
 
 /** A `change` notice from the live event stream. */

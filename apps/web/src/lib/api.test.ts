@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, CLIENT_ID, configureApi, conflictCurrent, isApiError, queryString, setCsrfToken } from "./api";
+import { api, CLIENT_ID, configureApi, conflictCurrent, isApiError, providerSignInUrl, queryString, setCsrfToken } from "./api";
 
 type Call = [string, RequestInit];
 
@@ -11,7 +11,11 @@ const headersOf = (fetchMock: ReturnType<typeof vi.fn>, n = 0) =>
     ((fetchMock.mock.calls[n] as unknown as Call)[1].headers ?? {}) as Record<string, string>;
 
 describe("the API client", () => {
-    const hooks = { onSignedOut: vi.fn(), onPasswordChangeRequired: vi.fn() };
+    const hooks = {
+        onSignedOut: vi.fn(),
+        onPasswordChangeRequired: vi.fn(),
+        onReauthRequired: vi.fn(async (_body: unknown) => false),
+    };
 
     beforeEach(() => {
         configureApi(hooks);
@@ -21,6 +25,7 @@ describe("the API client", () => {
         vi.unstubAllGlobals();
         hooks.onSignedOut.mockReset();
         hooks.onPasswordChangeRequired.mockReset();
+        hooks.onReauthRequired.mockReset();
     });
 
     it("sends the CSRF token and the tab's client id with every write", async () => {
@@ -82,6 +87,46 @@ describe("the API client", () => {
         const err = await api.get("/api/v1/w/acme").catch((e: unknown) => e);
         expect(isApiError(err, 403) && err.code).toBe("password_change_required");
         expect(hooks.onPasswordChangeRequired).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks the person to confirm it's them on reauth_required, then sends the request once more", async () => {
+        const body = { error: "Confirm it's you first.", code: "reauth_required", method: "password" };
+        let calls = 0;
+        const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+            ++calls === 1
+                ? new Response(JSON.stringify(body), { status: 401 })
+                : new Response(JSON.stringify({ set: true }), { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+        hooks.onReauthRequired.mockResolvedValueOnce(true);
+        await expect(api.put("/api/v1/w/acme/settings/review-model/keys/openrouter", { key: "sk-x" })).resolves.toEqual({ set: true });
+        expect(hooks.onReauthRequired).toHaveBeenCalledWith(body);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(JSON.parse((fetchMock.mock.calls[1] as unknown as Call)[1].body as string)).toEqual({ key: "sk-x" });
+        // Still signed in: a step-up refusal never sends people to the sign-in page.
+        expect(hooks.onSignedOut).not.toHaveBeenCalled();
+    });
+
+    it("gives up with the server's message if the person doesn't confirm, and asks only once per request", async () => {
+        const body = { error: "Confirm it's you first.", code: "reauth_required", method: "password" };
+        vi.stubGlobal("fetch", respond(401, body));
+        const err = await api.put("/x", {}).catch((e: unknown) => e);
+        expect(isApiError(err, 401) && err.code).toBe("reauth_required");
+        expect(hooks.onReauthRequired).toHaveBeenCalledTimes(1);
+        // Confirmed, but the server still wants more: no loop.
+        hooks.onReauthRequired.mockResolvedValue(true);
+        await expect(api.put("/x", {})).rejects.toThrow("Confirm it's you first.");
+        expect(hooks.onReauthRequired).toHaveBeenCalledTimes(2);
+        expect(hooks.onSignedOut).not.toHaveBeenCalled();
+    });
+
+    it("builds provider sign-in links that only come back to this site", () => {
+        expect(providerSignInUrl("/w/acme/p/app/issues?branch=main")).toBe(
+            "/auth/login?next=%2Fw%2Facme%2Fp%2Fapp%2Fissues%3Fbranch%3Dmain",
+        );
+        expect(providerSignInUrl("//evil.example")).toBe("/auth/login?next=%2F");
+        expect(providerSignInUrl("https://evil.example")).toBe("/auth/login?next=%2F");
+        expect(providerSignInUrl("/", { prompt: "login" })).toBe("/auth/login?prompt=login&next=%2F");
     });
 
     it("explains server errors that aren't JSON", async () => {

@@ -13,6 +13,7 @@ import { formatDate } from "@/lib/format";
 import { keys, membersQuery } from "@/lib/queries";
 import { useMe, useWorkspace } from "@/lib/session";
 import type { Member } from "@/lib/types";
+import { Invites } from "./invites";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
 const ROLE_INFO: Record<Role, string> = {
@@ -177,7 +178,8 @@ function AddMember() {
 }
 
 export function MembersSettings() {
-    const { ws, workspace, can } = useWorkspace();
+    const me = useMe();
+    const { ws, workspace, can, role: myRole } = useWorkspace();
     const query = useQuery(membersQuery(ws));
     const manage = can("members");
     const personal = workspace.kind === "personal";
@@ -223,7 +225,16 @@ export function MembersSettings() {
                     </div>
                 ))}
             </dl>
-            {manage && !personal && <AddMember />}
+            {manage && !personal && me.authMode === "local" && <AddMember />}
+            {manage && !personal && me.authMode === "oidc" && (
+                <Invites
+                    queryKey={keys.wsSettings(ws, "invites")}
+                    url={`${paths.workspace(ws)}/settings/invites`}
+                    roles={assignable(myRole)}
+                    roleInfo={ROLE_INFO}
+                    description={`Invite someone by email address to join ${workspace.name}. They join with this role when they next sign in with that address, and get an account here if they don't have one.`}
+                />
+            )}
         </SettingsPage>
     );
 }

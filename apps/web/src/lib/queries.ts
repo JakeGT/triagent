@@ -6,6 +6,7 @@ import { api, paths } from "./api";
 import type {
     ApiToken,
     AuditRow,
+    AuthConfig,
     Automation,
     Branches,
     Comparison,
@@ -29,7 +30,9 @@ import type {
 
 export const keys = {
     me: ["me"] as const,
+    authConfig: ["auth-config"] as const,
     instanceUsers: ["instance", "users"] as const,
+    instanceInvites: ["instance", "invites"] as const,
     ws: (ws: string) => ["ws", ws] as const,
     projects: (ws: string) => ["ws", ws, "projects"] as const,
     wsSettings: (ws: string, what: string) => ["ws", ws, "settings", what] as const,
@@ -54,6 +57,13 @@ export const meQuery = queryOptions({
     queryFn: ({ signal }) => api.get<Me>(paths.me, undefined, { signal, quiet401: true }),
     staleTime: 60_000,
     retry: false,
+});
+
+/** How people sign in: public, and fixed while the server runs. */
+export const authConfigQuery = queryOptions({
+    queryKey: keys.authConfig,
+    queryFn: ({ signal }) => api.get<AuthConfig>(paths.authConfig, undefined, { signal, quiet401: true }),
+    staleTime: Number.POSITIVE_INFINITY,
 });
 
 export const workspaceQuery = (ws: string) =>

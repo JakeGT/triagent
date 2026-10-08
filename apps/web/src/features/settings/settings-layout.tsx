@@ -114,7 +114,8 @@ export function SettingsLayout() {
         : [];
     const accountItems: Item[] = [
         wsLink("/notifications", "Notifications", "/w/$ws/settings/notifications"),
-        wsLink("/password", "Password", "/w/$ws/settings/password"),
+        // With an identity provider, it looks after passwords.
+        ...(me.authMode === "local" ? [wsLink("/password", "Password", "/w/$ws/settings/password")] : []),
         wsLink("/appearance", "Appearance", "/w/$ws/settings/appearance"),
     ];
 

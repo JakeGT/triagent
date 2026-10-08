@@ -6,11 +6,13 @@ export function useSignOut() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
     return useMutation({
-        mutationFn: () => request("/auth/logout", { method: "POST", body: {}, quiet401: true }),
+        // `redirect`: the identity provider's sign-out page, which comes back here; null with passwords.
+        mutationFn: () => request<{ ok: boolean; redirect: string | null }>("/auth/logout", { method: "POST", body: {}, quiet401: true }),
         // Signed out either way: forget everything this session loaded.
-        onSettled: async () => {
+        onSettled: async (data) => {
             queryClient.clear();
-            await navigate({ to: "/sign-in" });
+            if (data?.redirect && /^https?:\/\//.test(data.redirect)) window.location.assign(data.redirect);
+            else await navigate({ to: "/sign-in" });
         },
     });
 }
