@@ -23,52 +23,56 @@ test("sign-in page", async ({ page }) => {
     await check(page, "sign-in");
 });
 
+// One test per page: axe takes a second or two a page, and a loop over every page outgrew the timeout.
+const PROJECT_PAGES = [
+    "/overview",
+    "/issues",
+    "/issues/:issue",
+    "/tasks",
+    "/tasks/top-issues-1",
+    "/tasks?tab=summary",
+    "/files",
+    "/branches",
+    "/compare",
+    "/activity",
+];
+
 for (const theme of ["light", "dark"] as const) {
-    test(`project pages in ${theme} mode`, async ({ page, admin }) => {
-        const { ws, project } = await seedProject(admin);
-        const [issue] = await issuesOf(admin, ws, project);
-        await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
-        await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
-        const base = `/w/${ws}/p/${project}`;
-        for (const path of [
-            "/overview",
-            "/issues",
-            `/issues/${issue?.id}`,
-            "/tasks",
-            "/tasks/top-issues-1",
-            "/tasks?tab=summary",
-            "/files",
-            "/branches",
-            "/compare",
-            "/activity",
-        ]) {
-            await page.goto(base + path);
+    for (const path of PROJECT_PAGES) {
+        test(`project page ${path} in ${theme} mode`, async ({ page, admin }) => {
+            const { ws, project } = await seedProject(admin);
+            const [issue] = await issuesOf(admin, ws, project);
+            await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
+            await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+            await page.goto(`/w/${ws}/p/${project}${path.replace(":issue", issue?.id ?? "")}`);
             await expect(page.locator("html")).toHaveClass(new RegExp(theme));
             await check(page, `${path} (${theme})`);
-        }
-    });
+        });
+    }
 }
 
-test("agents and settings pages", async ({ page, admin }) => {
-    const { ws, project } = await seedProject(admin);
-    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
-    for (const path of [
-        "/agents",
-        `/p/${project}/settings/general`,
-        `/p/${project}/settings/automation`,
-        `/p/${project}/settings/github`,
-        "/settings/projects",
-        "/settings/review-model",
-        "/settings/members",
-        "/settings/tokens",
-        "/settings/audit",
-        "/settings/users",
-        "/settings/notifications",
-        "/settings/password",
-        "/settings/appearance",
-        "/settings/tutorial",
-    ]) {
-        await page.goto(`/w/${ws}${path}`);
+const SETTINGS_PAGES = [
+    "/agents",
+    "/p/:project/settings/general",
+    "/p/:project/settings/automation",
+    "/p/:project/settings/github",
+    "/settings/projects",
+    "/settings/review-model",
+    "/settings/members",
+    "/settings/tokens",
+    "/settings/audit",
+    "/settings/users",
+    "/settings/notifications",
+    "/settings/password",
+    "/settings/appearance",
+    "/settings/tutorial",
+];
+
+for (const path of SETTINGS_PAGES) {
+    test(`agents and settings page ${path}`, async ({ page, admin }) => {
+        const { ws, project } = await seedProject(admin);
+        await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+        await page.goto(`/w/${ws}${path.replace(":project", project)}`);
         await check(page, path);
-    }
-});
+    });
+}
