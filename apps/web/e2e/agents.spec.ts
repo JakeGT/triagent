@@ -21,6 +21,7 @@ test("each agent gets MCP and skill instructions, and both sections follow the c
         await expect(skill.locator("pre").nth(1)).toContainText("~/.agents/skills/triagent/SKILL.md");
     }
     // VS Code asks for the token: the file holds its placeholder, not a token.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's placeholder, literally
     await expect(mcp.locator("pre").first()).toContainText('"Authorization": "Bearer ${input:triagent-token}"');
 
     // The skill installs as written.
