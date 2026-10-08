@@ -2,6 +2,7 @@
 // the same person, with a password (AUTH_MODE=local) or by signing in at the provider again (oidc).
 
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { test } from "node:test";
 import { needsRecentSignIn } from "../src/http/route.ts";
 import { sha256 } from "../src/security.ts";
@@ -23,16 +24,24 @@ const concrete = (path: string, ws: string) =>
         .replace("{project}", "app")
         .replace(/\{\w+\}/g, "openrouter");
 
-test("every route that sets secrets needs a recent sign-in, and only those that should", async () => {
+test("every change to secrets, members, tokens, the workspace or the instance's accounts needs a recent sign-in", async () => {
     const t = await testApp();
     const admin = await t.signIn("admin", ADMIN_PASSWORD);
     assert.equal((await t.request("/api/v1/w/admin/projects", { method: "POST", session: admin, body: { slug: "app" } })).status, 201);
     const guarded = t.routes.filter(needsRecentSignIn);
-    assert.ok(guarded.length >= 6, `only ${guarded.length} routes need a recent sign-in`);
-    for (const r of t.routes) if (r.permission === "secrets") assert.ok(guarded.includes(r), `${r.method} ${r.path}`);
-    // Instance-wide secrets (the instance's model keys) too.
+    assert.ok(guarded.length >= 30, `only ${guarded.length} routes need a recent sign-in`);
+    // Changes under a permission that leads to secrets: setting them, or giving someone (or a token) the access to.
     for (const r of t.routes)
-        if (r.path.startsWith("/api/v1/instance/model/keys/")) assert.ok(guarded.includes(r), `${r.method} ${r.path}`);
+        if (r.method !== "GET" && ["secrets", "members", "tokens", "workspace"].includes(r.permission ?? ""))
+            assert.ok(guarded.includes(r), `${r.method} ${r.path}`);
+    // Instance-wide: the instance's model keys, its accounts and invites, and who may spend the instance key.
+    for (const r of t.routes)
+        if (
+            r.method !== "GET" &&
+            /^\/api\/v1\/instance\/(model\/keys|users|invites|workspaces\/\{workspaceId\}\/grant|github-app)/.test(r.path) &&
+            r.path !== "/api/v1/instance/github-app/form"
+        )
+            assert.ok(guarded.includes(r), `${r.method} ${r.path}`);
 
     await age(t.services, admin, 16);
     for (const r of guarded) {
@@ -45,9 +54,11 @@ test("every route that sets secrets needs a recent sign-in, and only those that 
         assert.equal(res.body.code, "reauth_required");
         assert.equal(res.body.method, "password");
     }
-    // Still signed in for everything else.
+    // Still signed in for everything else, reading those settings included.
     assert.equal((await t.request("/api/v1/me", { session: admin })).status, 200);
     assert.equal((await t.request("/api/v1/w/admin/p/app/settings/automation", { session: admin })).status, 200);
+    for (const path of ["/api/v1/w/admin/settings/tokens", "/api/v1/w/admin/settings/invites", "/api/v1/instance/users"])
+        assert.equal((await t.request(path, { session: admin })).status, 200, path);
 
     // A fresh enough sign-in is fine (just inside the window).
     await age(t.services, admin, 14);
@@ -119,4 +130,53 @@ test("with an identity provider, confirming it's you is signing in there again, 
     assert.equal((await t.request(url, { method: "PUT", session: fresh, body: { key: "sk-or-key-1234" } })).status, 200);
     // The old session was replaced, not left behind.
     assert.equal((await t.request("/api/v1/me", { session })).status, 401);
+});
+
+test("a sign-in whose ID token doesn't say when the person authenticated isn't a recent one", async () => {
+    const t = await oidcTestApp();
+    const ada = { sub: "ada", email: "ada@example.com", email_verified: true, preferred_username: "ada", groups: ["platform-admin"] };
+    const first = await t.signIn(ada, { tamper: { authAgo: 3600 } });
+    const url = "/api/v1/w/ada/settings/review-model/keys/openrouter";
+    const key = `sk-or-${randomBytes(12).toString("hex")}`;
+    assert.equal((await t.request(url, { method: "PUT", session: first.session as Session, body: { key } })).status, 401);
+
+    // Someone at an unattended browser signs in again the ordinary way: the provider's single sign-on
+    // answers without asking anything, and without auth_time. That's no proof of a recent sign-in.
+    const silent = await t.signIn(ada, { from: first.session as Session, tamper: { noAuthTime: true } });
+    assert.equal(silent.authorization.get("prompt"), null);
+    assert.equal(silent.authorization.get("max_age"), null);
+    const refused = await t.request(url, { method: "PUT", session: silent.session as Session, body: { key } });
+    assert.equal(refused.status, 401);
+    assert.equal(refused.body.code, "reauth_required");
+
+    // Confirming it's you asks for max_age, so the provider must say when (or the sign-in fails)...
+    const reauth = new URL(refused.body.reauthUrl, "http://x").search.slice(1);
+    const without = await t.signIn(ada, { query: reauth, from: silent.session as Session, tamper: { noAuthTime: true } });
+    assert.equal(without.location, "/sign-in?error=failed");
+    // ...and when it does, it counts.
+    const fresh = await t.signIn(ada, { query: reauth, from: silent.session as Session });
+    assert.equal((await t.request(url, { method: "PUT", session: fresh.session as Session, body: { key } })).status, 200);
+});
+
+test("a token or a member is only given out after a recent sign-in, and the web app's dialog is offered", async () => {
+    const t = await testApp();
+    const admin = await t.signIn("admin", ADMIN_PASSWORD);
+    await age(t.services, admin, 60);
+    for (const [path, body] of [
+        ["/api/v1/w/admin/settings/tokens", { name: "ci", scope: "manage" }],
+        ["/api/v1/w/admin/settings/invites", { email: "kim@example.com", role: "admin" }],
+        ["/api/v1/instance/invites", { email: "lou@example.com" }],
+    ] as const) {
+        const r = await t.request(path, { method: "POST", session: admin, body });
+        assert.equal(r.status, 401, path);
+        assert.equal(r.body.code, "reauth_required");
+        assert.equal(r.body.method, "password");
+    }
+    assert.equal((await t.request("/auth/reauth", { method: "POST", session: admin, body: { password: ADMIN_PASSWORD } })).status, 200);
+    const made = await t.request("/api/v1/w/admin/settings/tokens", {
+        method: "POST",
+        session: admin,
+        body: { name: "ci", scope: "manage" },
+    });
+    assert.equal(made.status, 201, made.text);
 });

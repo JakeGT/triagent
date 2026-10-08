@@ -60,12 +60,21 @@ If people can edit their address, someone could set it to an invited address and
 
 ### Confirming it's you (step-up)
 
-Routes that need the `secrets` permission (GitHub credentials, webhook secrets, model keys), and the instance's own model keys, also need a sign-in from the last `REAUTH_MINUTES` (15 by default). A new route opts in with `recentSignIn: true` when it handles a secret without that permission. An older session gets `401` with `code: "reauth_required"`. The web app then explains and asks:
+Changes that need a recent sign-in, one from the last `REAUTH_MINUTES` (15 by default):
+
+- under the `secrets` permission (GitHub credentials, webhook secrets, model keys), and under those that lead to secrets: `members` (adding someone, or making them an admin or owner, and workspace invites), `tokens` (an API token with `manage` access can do a lot) and `workspace` (renaming it, transferring ownership);
+- instance-wide: the instance's model keys, the GitHub App, accounts (creating, resetting passwords, signing out, removing), instance invites, and which workspaces may spend the instance key.
+
+Reading these settings (the token list, invites, the audit log) doesn't need one. A new route opts in with `recentSignIn: true` when it handles a secret, or gives access to one, without those permissions; a test checks every such route does. An older session gets `401` with `code: "reauth_required"`. The web app then explains and asks:
 
 - **With a provider:** it sends the person to `reauthUrl` (`/auth/login?prompt=login&max_age=0&next=…`), so the provider asks them to authenticate again (including MFA, if the provider requires it). Triagent checks `auth_time` in the new ID token, so a provider that skips the check isn't believed. The person comes back to the same page; anything typed there has to be entered again.
 - **With passwords:** `POST /auth/reauth {password}` (slowed like signing in), and the original request is sent again.
 
-The time comes from the ID token's `auth_time` when present, so signing in through a long-lived single sign-on session at the provider counts from when the person actually authenticated there.
+The time comes from the ID token's `auth_time`, so signing in through a long-lived single sign-on session at the provider counts from when the person actually authenticated there. A provider may leave `auth_time` out when it isn't asked for `max_age`. Then nothing shows the sign-in was recent, so it isn't treated as one: the first step that needs a recent sign-in asks, and that step-up does ask for `max_age=0`, which makes `auth_time` required (a sign-in without it fails). Triagent doesn't ask for `max_age` on every sign-in, because a provider that never sends `auth_time` would then let nobody in at all; ordinary sign-ins work without it, and only the step-up needs it.
+
+### When access changes take effect
+
+Membership of `OIDC_ADMIN_GROUP`, and the profile, are read at each sign-in. Removing someone from the admin group, or from the provider (or from the application's bound groups), takes effect the next time they sign in; a session already open carries on until it ends: after `SESSION_IDLE_MINUTES` without use (8 hours by default) or `SESSION_MAX_HOURS` after it began (72 hours by default), whichever comes first. To end someone's sessions now, an instance administrator signs them out from **Settings → Instance → Users** ("Sign out", `POST /api/v1/instance/users/{userId}/sign-out`); removing them from a workspace's members ends their access to it at once.
 
 ### Settings
 
@@ -82,7 +91,7 @@ The time comes from the ID token's `auth_time` when present, so signing in throu
 | `OIDC_TRUST_EMAIL` | `false` | Treat this provider's addresses as verified even without `email_verified: true`. See above. |
 | `SIGNUP_MODE` | `invite` | `invite` or `open`: who gets an account on first sign-in. |
 | `INVITE_HINT` | (none) | Shown with new invites and on "You need an invite", e.g. "Ask Jake to add your Google address to the sign-in allowlist". |
-| `REAUTH_MINUTES` | `15` | How recent a sign-in must be to change secrets (both modes). |
+| `REAUTH_MINUTES` | `15` | How recent a sign-in must be to change secrets, members, tokens or the workspace (both modes). |
 | `TRIAGENT_SECRETS_KEY_FILE` | (required in production) | Also the source of the key that seals the login cookie. |
 
 `TRIAGENT_ADMIN_USER` is refused in this mode: administrators come from `OIDC_ADMIN_GROUP`.

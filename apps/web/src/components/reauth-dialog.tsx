@@ -1,4 +1,5 @@
-// Confirming it's you before a step that needs a recent sign-in (setting secrets). The API client asks
+// Confirming it's you before a step that needs a recent sign-in (changing secrets, members, API tokens or
+// the workspace, and the instance's accounts and keys). The API client asks
 // through `requestReauth` when the server answers 401 reauth_required; this dialog explains why and
 // either takes the password (local accounts), after which the step is sent again, or sends the person
 // to sign in at the identity provider and back to the same page.
@@ -13,6 +14,9 @@ import { Label } from "@/components/ui/label";
 import { errorMessage, request } from "@/lib/api";
 import { authConfigQuery } from "@/lib/queries";
 import type { ApiErrorBody } from "@/lib/types";
+
+/** What asks: the server's RECENT_SIGN_IN permissions, and the instance's accounts and keys. */
+const WHY = "Changing secrets, members, API tokens or the workspace needs a recent sign-in.";
 
 interface Pending {
     body: ApiErrorBody;
@@ -97,8 +101,8 @@ export function ReauthDialog() {
                     <DialogTitle>Confirm it's you</DialogTitle>
                     <DialogDescription>
                         {provider
-                            ? `Changing secrets needs a recent sign-in. Sign in with ${providerName} again and you'll come back to this page. Anything you typed here will need entering again.`
-                            : "Changing secrets needs a recent sign-in. Enter your password to carry on."}
+                            ? `${WHY} Sign in with ${providerName} again and you'll come back to this page. Anything you typed here will need entering again.`
+                            : `${WHY} Enter your password to carry on.`}
                     </DialogDescription>
                 </DialogHeader>
                 {provider ? (

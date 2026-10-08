@@ -1,6 +1,7 @@
 // Signing in through an identity provider (AUTH_MODE=oidc), against the fake provider started by
 // playwright.config.ts: the sign-in button and the trip there and back, the "You need an invite" page,
-// inviting someone, confirming it's you before changing a secret, and signing out at the provider.
+// inviting someone, confirming it's you before changing a secret or creating a token, and signing out at the
+// provider.
 
 import AxeBuilder from "@axe-core/playwright";
 import type { APIRequestContext, Page } from "@playwright/test";
@@ -116,7 +117,7 @@ test("changing a secret after an old sign-in asks you to confirm it's you, then 
 
     const dialog = page.getByRole("dialog", { name: "Confirm it's you" });
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("Changing secrets needs a recent sign-in");
+    await expect(dialog).toContainText("Changing secrets, members, API tokens or the workspace needs a recent sign-in");
     await accessible(page, "the confirm-it's-you dialog");
 
     // This time the provider checks again (a fresh auth_time).
@@ -127,6 +128,28 @@ test("changing a secret after an old sign-in asks you to confirm it's you, then 
     await again.locator("input").fill("sk-or-e2e-key-0001");
     await again.getByRole("button", { name: "Save" }).click();
     await expect(again).toContainText(/Set by Ada Admin on .+, ends …0001/);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("creating an API token after an old sign-in asks you to confirm it's you too", async ({ page, request }) => {
+    await provide(request, ADMIN, { authAgo: 3600 });
+    await signIn(page, /\/w\/ada$/);
+    await page.goto("/w/ada/settings/tokens");
+    // Reading the list doesn't ask.
+    await expect(page.getByRole("button", { name: "Create token" })).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByLabel("Name").fill("CI uploads");
+    await page.getByRole("button", { name: "Create token" }).click();
+    const dialog = page.getByRole("dialog", { name: "Confirm it's you" });
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId("one-time-reveal")).toHaveCount(0);
+
+    await provide(request, ADMIN);
+    await dialog.getByRole("button", { name: "Sign in with Test ID" }).click();
+    await expect(page).toHaveURL(/\/w\/ada\/settings\/tokens$/);
+    await page.getByLabel("Name").fill("CI uploads");
+    await page.getByRole("button", { name: "Create token" }).click();
+    await expect(page.getByTestId("one-time-reveal")).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 

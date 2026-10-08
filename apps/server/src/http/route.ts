@@ -53,7 +53,7 @@ export interface Route<Q extends Schema = Schema, B extends Schema = Schema> {
     browserOnly?: boolean;
     /** Allowed while the account must still replace a temporary password. */
     duringPasswordChange?: boolean;
-    /** Needs a sign-in within REAUTH_MINUTES (implied by the secrets permission). */
+    /** Needs a sign-in within REAUTH_MINUTES (implied for changes under the permissions in RECENT_SIGN_IN). */
     recentSignIn?: boolean;
     tag: string;
     summary: string;
@@ -78,11 +78,15 @@ export function needsBrowser(r: Route): boolean {
     return Boolean(r.browserOnly) || r.scope === "instance" || (r.permission !== undefined && BROWSER_ONLY.has(r.permission));
 }
 
-/** Permissions whose routes need a recent sign-in: a session left open on someone's desk can't change them. */
-export const RECENT_SIGN_IN: ReadonlySet<Permission> = new Set(["secrets"]);
+/**
+ * Permissions whose changes need a recent sign-in, so a session left open on someone's desk can't use
+ * them: secrets, and what leads to them (adding a member or an owner, an API token, the workspace itself).
+ * Reading these settings doesn't.
+ */
+export const RECENT_SIGN_IN: ReadonlySet<Permission> = new Set(["secrets", "members", "tokens", "workspace"]);
 
 export function needsRecentSignIn(r: Route): boolean {
-    return Boolean(r.recentSignIn) || (r.permission !== undefined && RECENT_SIGN_IN.has(r.permission));
+    return Boolean(r.recentSignIn) || (r.method !== "GET" && r.permission !== undefined && RECENT_SIGN_IN.has(r.permission));
 }
 
 export function grantAllows(grant: Grant, permission: Permission): boolean {

@@ -231,7 +231,8 @@ export class Accounts {
         if (!oidc) throw new Error("Signing in with an identity provider needs AUTH_MODE=oidc.");
         const verifiedEmail = identity.email && (identity.emailVerified || oidc.trustEmail) ? identity.email : null;
         const isAdmin = identity.groups.includes(oidc.adminGroup);
-        const authAt = Math.min(Date.now(), identity.authTime ?? Date.now());
+        // No time from the provider means no proof of a recent sign-in: steps that need one will ask.
+        const authAt = identity.authTime === null ? 0 : Math.min(Date.now(), identity.authTime);
         // Filled in once the account is known: audit rows name the person signing in.
         const actor: Actor = { name: "", userId: null, via: "web", ip };
         return this.core.write(actor, async (w) => {

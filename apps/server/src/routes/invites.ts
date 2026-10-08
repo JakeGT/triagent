@@ -27,6 +27,7 @@ export const inviteRoutes: Route[] = [
         method: "POST",
         path: "/api/v1/instance/invites",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Invite an email address to have an account (AUTH_MODE=oidc)",
         description: "Accepted when someone signs in through the identity provider with that verified email address.",
@@ -39,6 +40,7 @@ export const inviteRoutes: Route[] = [
         method: "DELETE",
         path: "/api/v1/instance/invites/{inviteId}",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Revoke an invite to have an account",
         async handler({ services, params, actor }) {

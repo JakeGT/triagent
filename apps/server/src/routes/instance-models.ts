@@ -68,6 +68,7 @@ export const instanceModelRoutes: Route[] = [
         method: "PUT",
         path: "/api/v1/instance/workspaces/{workspaceId}/grant",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Let a workspace use the instance key, up to a number of tokens each month (UTC)",
         body: z.object({ monthlyTokens: z.number().int() }),
@@ -79,6 +80,7 @@ export const instanceModelRoutes: Route[] = [
         method: "DELETE",
         path: "/api/v1/instance/workspaces/{workspaceId}/grant",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Stop a workspace using the instance key",
         async handler({ services, params, actor }) {

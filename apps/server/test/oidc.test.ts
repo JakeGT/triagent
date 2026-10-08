@@ -146,13 +146,28 @@ test("next must be a path on this site", async () => {
         "/ok\u0000",
         "/\t/evil.example",
         "",
+        // Dot segments that normalise to a protocol-relative address.
+        "/.//evil.example",
+        "/./\\evil.example",
+        "/a/..//evil.example",
+        "/%2e//evil.example",
+        "/..//evil.example/x",
+        "/\n/evil.example",
+        "/\r\n//evil.example",
+        "\t//evil.example",
     ])
         assert.equal(safeNext(bad), "/", JSON.stringify(bad));
+    // Encoded slashes stay encoded: a path on this site, never an address.
+    for (const odd of ["/%2F%2Fevil.example", "/%5Cevil.example"]) {
+        const out = safeNext(odd);
+        assert.ok(out.startsWith("/") && !out.startsWith("//") && !out.startsWith("/\\"), `${odd} gave ${out}`);
+        assert.equal(new URL(out, "https://triagent.test").origin, "https://triagent.test");
+    }
     assert.equal(safeNext("/w/acme/p/app/issues?branch=main#x"), "/w/acme/p/app/issues?branch=main#x");
     assert.equal(safeNext("/%2F%2Fevil.example"), "/%2F%2Fevil.example");
 
     const t = await oidcTestApp();
-    for (const next of ["//evil.example/", "https://evil.example/"]) {
+    for (const next of ["//evil.example/", "https://evil.example/", "/.//evil.example"]) {
         const r = await t.signIn(admin, { next });
         assert.equal(r.location, "/");
     }

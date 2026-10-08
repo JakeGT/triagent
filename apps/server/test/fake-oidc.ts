@@ -27,6 +27,8 @@ export interface Tamper {
     badSignature?: boolean;
     /** Seconds before now that the person "authenticated". */
     authAgo?: number;
+    /** Leave auth_time out of the ID token, as some providers do when not asked for max_age. */
+    noAuthTime?: boolean;
     /** Send this state back instead of the one given. */
     state?: string;
 }
@@ -180,7 +182,7 @@ export class FakeProvider {
             aud: t.aud ?? this.clientId,
             exp: now + (t.expiresIn ?? 300),
             iat: now,
-            auth_time: now - (t.authAgo ?? 0),
+            ...(t.noAuthTime ? {} : { auth_time: now - (t.authAgo ?? 0) }),
             ...(t.azp ? { azp: t.azp } : {}),
             ...((t.nonce ?? grant.nonce) ? { nonce: t.nonce ?? grant.nonce } : {}),
             ...profile,

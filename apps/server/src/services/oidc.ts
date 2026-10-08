@@ -23,7 +23,10 @@ export interface Identity {
     name: string | null;
     preferredUsername: string | null;
     groups: string[];
-    /** When the person actually authenticated at the provider (ms), if it said. */
+    /**
+     * When the person actually authenticated at the provider (ms). Null when the provider didn't say and
+     * wasn't asked (no max_age): then nothing shows the sign-in was recent.
+     */
     authTime: number | null;
 }
 
@@ -59,7 +62,9 @@ export function safeNext(value: unknown): string {
         // Resolved against a dummy origin: still on it means it's a path, not an address.
         const url = new URL(value, "http://triagent.invalid");
         if (url.origin !== "http://triagent.invalid") return "/";
-        return `${url.pathname}${url.search}${url.hash}`;
+        const out = `${url.pathname}${url.search}${url.hash}`;
+        // What's checked is what's returned: normalising can turn "/.//evil" into "//evil".
+        return out.startsWith("/") && !out.startsWith("//") && !out.startsWith("/\\") ? out : "/";
     } catch {
         return "/";
     }
@@ -182,7 +187,8 @@ export class Oidc {
                 name: str(claims.name),
                 preferredUsername: str(claims.preferred_username),
                 groups,
-                authTime: typeof claims.auth_time === "number" ? claims.auth_time * 1000 : null,
+                // With max_age asked for, openid-client has checked auth_time is there and recent enough.
+                authTime: typeof claims.auth_time === "number" ? claims.auth_time * 1000 : state.maxAge !== null ? Date.now() : null,
             },
             idToken,
             next: state.next,

@@ -186,6 +186,7 @@ export const accountRoutes: Route[] = [
         method: "POST",
         path: "/api/v1/instance/users",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Create a local account (it must choose its own password at first sign-in)",
         description: "Leave the password out to have one generated; it's returned this once.",
@@ -203,6 +204,7 @@ export const accountRoutes: Route[] = [
         method: "POST",
         path: "/api/v1/instance/users/{userId}/password",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Reset an account's password (signs it out everywhere)",
         body: z.object({ password: z.string().max(1024).optional() }),
@@ -215,6 +217,7 @@ export const accountRoutes: Route[] = [
         method: "POST",
         path: "/api/v1/instance/users/{userId}/sign-out",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Sign an account out of all its sessions",
         async handler({ services, params, actor }) {
@@ -225,6 +228,7 @@ export const accountRoutes: Route[] = [
         method: "DELETE",
         path: "/api/v1/instance/users/{userId}",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Remove an account",
         async handler({ services, params, actor }) {
