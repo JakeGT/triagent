@@ -3,14 +3,15 @@
 // memory, for that job.
 //
 // OCR gets an explicit environment and nothing else: a throwaway HOME (OCR reads its user config, with
-// any MCP servers and setup commands, and its global rules from ~/.opencodereview, so there are none),
-// the model's settings, and git settings that keep hooks off. Never telemetry settings, nor anything of
-// Anthropic's.
+// any MCP servers and setup commands, and its global rules from ~/.opencodereview, so there are none
+// but what the runner writes there for Amazon Bedrock: a provider, region and model), the model's
+// settings, and git settings that keep hooks off. Never telemetry settings, nor anything of Anthropic's.
 
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { modelSecrets, type RunnerModel } from "../../../packages/shared/src/model.ts";
 import { redactDeep, redactor } from "../../../packages/shared/src/redact.ts";
 import { type ClaimedJob, isLost, type RunnerIdentity, ServerClient, ServerError } from "./client.ts";
 import type { RunnerConfig } from "./config.ts";
@@ -22,6 +23,45 @@ const FLUSH_MS = 1000;
 const HEARTBEAT_MS = 10_000;
 const MAX_BATCH = 500;
 const VERSION = "0.1.0";
+
+/**
+ * The model's part of OCR's environment, by protocol. OCR takes a URL, key, model and protocol from
+ * OCR_LLM_* (its internal/llm/resolver.go, tryOCREnv); OCR_LLM_PROTOCOL wins over OCR_USE_ANTHROPIC,
+ * which is set to agree with it anyway. Its Anthropic client sends the key as a bearer token unless told
+ * otherwise; Anthropic's API takes it as x-api-key. Bedrock can't be given through OCR_LLM_* (OCR refuses
+ * it there): it's a provider in the config file (ocrConfig), signed with AWS credentials from the
+ * environment, and never from the instance's own (no metadata service).
+ */
+function modelEnv(model: RunnerModel): Record<string, string> {
+    if (model.protocol === "anthropic-bedrock") {
+        if (!model.aws) throw new Error("Amazon Bedrock needs an AWS region and access key.");
+        return {
+            AWS_ACCESS_KEY_ID: model.aws.accessKeyId,
+            AWS_SECRET_ACCESS_KEY: model.apiKey,
+            AWS_REGION: model.aws.region,
+            AWS_EC2_METADATA_DISABLED: "true",
+        };
+    }
+    return {
+        OCR_LLM_URL: model.url,
+        OCR_LLM_TOKEN: model.apiKey,
+        OCR_LLM_MODEL: model.model,
+        OCR_LLM_PROTOCOL: model.protocol,
+        OCR_USE_ANTHROPIC: model.protocol === "anthropic" ? "true" : "false",
+        ...(model.protocol === "anthropic" ? { OCR_LLM_AUTH_HEADER: "x-api-key" } : {}),
+    };
+}
+
+/**
+ * OCR's user config (~/.opencodereview/config.json in the job's own HOME), for what its environment
+ * variables can't say, or null when they can. It holds only the provider, region and model: no keys (they're
+ * in the environment), and never MCP servers, setup commands or a key command (api_key_cmd).
+ */
+export function ocrConfig(job: Pick<ClaimedJob, "model">): Record<string, unknown> | null {
+    const m = job.model;
+    if (m.protocol !== "anthropic-bedrock") return null;
+    return { provider: "bedrock", providers: { bedrock: { aws_region: m.aws?.region, model: m.model } } };
+}
 
 /** The environment OCR runs with: built from scratch, never copied from the runner's own. */
 export function ocrEnv(
@@ -41,17 +81,21 @@ export function ocrEnv(
         LANG: "C.UTF-8",
         TZ: "UTC",
         OCR_NO_UPDATE: "1",
-        OCR_LLM_URL: job.model.url,
-        OCR_LLM_TOKEN: job.model.apiKey,
-        OCR_LLM_MODEL: job.model.model,
-        OCR_LLM_PROTOCOL: job.model.protocol,
-        OCR_USE_ANTHROPIC: "false",
+        ...modelEnv(job.model),
         ...(config.llmTimeout ? { OCR_LLM_TIMEOUT: config.llmTimeout } : {}),
         ...Object.fromEntries(Object.entries(git).filter(([k]) => k.startsWith("GIT_"))),
         // For changes under review, every git command OCR runs reads .gitattributes from the base commit:
         // the change's own could mark its files binary (`-diff`), and OCR skips binary files.
         ...(attrSource ? { GIT_ATTR_SOURCE: attrSource } : {}),
     };
+}
+
+/** Write OCR's config into the job's HOME, readable by its owner alone, if the model needs one. */
+export function writeOcrConfig(home: string, job: Pick<ClaimedJob, "model">): void {
+    const config = ocrConfig(job);
+    if (!config) return;
+    mkdirSync(path.join(home, ".opencodereview"), { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(home, ".opencodereview", "config.json"), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 
 /**
@@ -101,7 +145,7 @@ export class JobRun {
         this.job = job;
         this.server = server;
         // The job's own secrets come out before anything leaves the runner (the server redacts again).
-        this.redact = redactor([job.git.token, job.model.apiKey]);
+        this.redact = redactor([job.git.token, ...modelSecrets(job.model)]);
     }
 
     /** Lines waiting to be sent. */
@@ -352,6 +396,7 @@ export class Runner {
                 `Running ocr ${args.join(" ")} with ${job.model.model} via ${job.model.provider}. Time limit: ${job.timeoutMinutes} minutes.`,
             );
             run.setProgress({ phase: "starting" });
+            writeOcrConfig(home, job);
             ocrStarted = true;
             const ocr = start(this.config.ocrBin, args, {
                 cwd: tree,

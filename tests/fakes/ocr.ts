@@ -5,7 +5,8 @@
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
 // (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5", "fake/orphan" (leaves a process behind
 // in its group). It also prints what tests check: its arguments, which environment variables it got,
-// the model key (the server must redact it), and the review rules it found. Like the real one, it leaves
+// the model key (the server must redact it), its user config (~/.opencodereview/config.json, which the
+// runner writes for Amazon Bedrock, taking the model from it as OCR does), and the review rules it found. Like the real one, it leaves
 // out files the root .gitignore matches and files git calls binary, and reads rule files rule.json names.
 
 import { execFileSync, spawn } from "node:child_process";
@@ -16,13 +17,18 @@ if (args[0] === "--version") {
     console.log("ocr version 1.12.12 (fake)");
     process.exit(0);
 }
-const model = process.env.OCR_LLM_MODEL ?? "";
+const userConfigFile = `${process.env.HOME}/.opencodereview/config.json`;
+const userConfig = existsSync(userConfigFile) ? readFileSync(userConfigFile, "utf8") : null;
+const configured = userConfig ? (JSON.parse(userConfig) as { provider: string; providers: Record<string, { model?: string }> }) : null;
+const model = process.env.OCR_LLM_MODEL ?? (configured ? (configured.providers[configured.provider]?.model ?? "") : "");
 const say = (line: string) => process.stderr.write(`${line}\n`);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 say(`[fake-ocr] args: ${args.join(" ")}`);
 say(`[fake-ocr] env: ${Object.keys(process.env).sort().join(",")}`);
-say(`[fake-ocr] key: ${process.env.OCR_LLM_TOKEN ?? "none"}`);
+say(`[fake-ocr] key: ${process.env.OCR_LLM_TOKEN ?? process.env.AWS_SECRET_ACCESS_KEY ?? "none"}`);
+if (process.env.AWS_ACCESS_KEY_ID) say(`[fake-ocr] aws access key id: ${process.env.AWS_ACCESS_KEY_ID}`);
+say(`[fake-ocr] config: ${userConfig ? JSON.stringify(JSON.parse(userConfig)) : "none"}`);
 const rulesFile = ".opencodereview/rule.json";
 const rules = existsSync(rulesFile) ? readFileSync(rulesFile, "utf8").trim() : "none";
 say(`[fake-ocr] rules: ${rules.replace(/\s+/g, " ")}`);
@@ -134,7 +140,7 @@ const report = {
     project_summary: args[0] === "scan" ? "## Top issues\n\n- **Everything**: it's all fake.\n" : "",
     summary: { total_tokens: 1500, input_tokens: 1200, output_tokens: 300, cache_read_tokens: 100, files_reviewed: files.length },
     manifest: { execution: { ocr_version: "v1.12.12-fake" } },
-    llm: { model: process.env.OCR_LLM_MODEL, provider: "openai" },
+    llm: { model, provider: configured?.provider ?? process.env.OCR_LLM_PROTOCOL ?? "openai" },
     tool_calls: { total: files.length, failure: 0, by_tool: { file_read: files.length } },
     groups: [{ name: "src" }],
     warnings: model.includes("partial")

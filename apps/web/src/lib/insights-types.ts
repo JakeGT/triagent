@@ -1,7 +1,7 @@
 // What the analytics, prices, catalogue and allowance endpoints return (see apps/server/src/domain/analytics.ts).
 
 import type { Severity, Via } from "@triagent/shared";
-import type { SecretView } from "./types";
+import type { ReviewModel } from "./types";
 
 export type Days = 7 | 30 | 90 | 365 | 0;
 export type ReviewStatus = "done" | "partial" | "failed" | "cancelled";
@@ -201,12 +201,8 @@ export interface Allowance {
     now: { ready: true; keySource: "workspace" | "instance"; provider: string; model: string } | { ready: false; reason: string };
 }
 
-export interface InstanceModel {
-    provider: string;
-    model: string;
-    ready: boolean;
-    providers: { id: string; name: string; url: string; defaultModel: string; keysUrl: string | null; model: string; key: SecretView }[];
-}
+/** The instance key's provider and model: the same shape as a workspace's. */
+export type InstanceModel = ReviewModel;
 
 export interface InstanceWorkspace {
     id: string;

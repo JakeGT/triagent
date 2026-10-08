@@ -491,21 +491,52 @@ export interface PullRequests {
     refused: RefusedDeliveries | null;
 }
 
+export type ModelProtocol = "openai" | "openai-responses" | "anthropic" | "anthropic-bedrock";
+
+/** A model provider, its settings and whether its secrets are set (never the secrets). */
 export interface Provider {
     id: string;
     name: string;
-    url: string;
-    defaultModel: string;
+    group: string;
+    protocols: ModelProtocol[];
+    protocol: ModelProtocol;
+    /** Where requests go; null until a URL is given (Azure, custom), and for Bedrock (the region decides). */
+    url: string | null;
+    /** The URL given, for providers that take one. */
+    endpoint: string | null;
+    /** Bedrock's AWS region. */
+    region: string | null;
+    docs: string;
+    keyFormat: string | null;
     keysUrl: string | null;
+    keyLabel: string;
+    listsModels: boolean;
+    suggested: string[];
+    fields: ("url" | "region" | "accessKeyId")[];
     model: string;
     key: SecretView;
+    accessKeyId: SecretView | null;
+    ready: boolean;
+    /** What it still needs, as "Add …" would finish it. */
+    missing: string | null;
 }
 
 export interface ReviewModel {
     provider: string;
     model: string | null;
     ready: boolean;
+    missing: string | null;
     providers: Provider[];
+}
+
+/** A provider's models, fetched by the server with the stored key. */
+export interface ModelList {
+    provider: string;
+    source: "provider" | "openrouter" | "none";
+    models: { id: string; name: string | null }[];
+    suggested: string[];
+    fetchedAt: string | null;
+    error: string | null;
 }
 
 export interface Member {

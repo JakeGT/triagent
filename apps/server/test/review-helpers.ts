@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { FakeGitHub } from "../../../tests/fakes/github.ts";
 import { Runner } from "../../runner/src/runner.ts";
+import type { Lookup } from "../src/services/model-urls.ts";
 import type { Store } from "../src/store/types.ts";
 import { ADMIN_PASSWORD, type Session, type TestApp, testApp } from "./helpers.ts";
 
@@ -29,11 +30,12 @@ export interface ReviewEnv {
     close(): Promise<void>;
 }
 
-export async function reviewEnv(options: { store?: Store; env?: Record<string, string> } = {}): Promise<ReviewEnv> {
+export async function reviewEnv(options: { store?: Store; env?: Record<string, string>; lookup?: Lookup } = {}): Promise<ReviewEnv> {
     const fake = await new FakeGitHub().start();
     const secret = randomBytes(32).toString("base64url");
     const t = await testApp(options.store, {
         env: { GITHUB_API_URL: fake.apiUrl, GITHUB_URL: fake.url, TRIAGENT_RUNNER_SECRET: secret, ...options.env },
+        ...(options.lookup ? { lookup: options.lookup } : {}),
     });
     const server = serve({ fetch: t.app.fetch, port: 0, hostname: "127.0.0.1" });
     await new Promise<void>((resolve) => server.once("listening", () => resolve()));

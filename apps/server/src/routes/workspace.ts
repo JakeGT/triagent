@@ -3,11 +3,12 @@
 
 import { permissionsOf } from "@triagent/shared";
 import { z } from "zod";
+import { notFound } from "../errors.ts";
 import { json, type Route, route } from "../http/route.ts";
 import type { Access } from "../services/accounts.ts";
 import type { LiveEvent } from "../services/events.ts";
-import { PROVIDER_IDS } from "../services/settings.ts";
 import { PagingQuery, pageOf, RoleSchema, ScopeSchema, W } from "./common.ts";
+import { ModelChoiceBody } from "./instance-models.ts";
 
 const HEARTBEAT_MS = 25_000;
 
@@ -272,6 +273,13 @@ export const workspaceRoutes: Route[] = [
                 providers: model.providers.map((p) => ({
                     ...p,
                     key: { name: p.key.name, set: p.key.set, hint: null, setBy: null, setAt: null },
+                    accessKeyId: p.accessKeyId && {
+                        name: p.accessKeyId.name,
+                        set: p.accessKeyId.set,
+                        hint: null,
+                        setBy: null,
+                        setAt: null,
+                    },
                 })),
             });
         },
@@ -282,8 +290,8 @@ export const workspaceRoutes: Route[] = [
         scope: "workspace",
         permission: "configure",
         tag: "Settings",
-        summary: "Choose the provider and model reviews use",
-        body: z.object({ provider: z.enum(PROVIDER_IDS as [string, ...string[]]).optional(), model: z.string().max(150).optional() }),
+        summary: "Choose the provider and model reviews use, and that provider's protocol, endpoint URL or AWS region",
+        body: ModelChoiceBody,
         async handler({ services, access, body, actor }) {
             await services.settings.setReviewModel(actor, (access as Access).workspace, body);
             return json(await services.settings.reviewModel((access as Access).workspace));
@@ -310,6 +318,48 @@ export const workspaceRoutes: Route[] = [
         summary: "Forget a provider's API key",
         async handler({ services, access, params, actor }) {
             return json(await services.settings.setModelKey(actor, (access as Access).workspace, params.provider as string, null));
+        },
+    }),
+    route({
+        method: "PUT",
+        path: `${W}/settings/review-model/keys/{provider}/access-key-id`,
+        scope: "workspace",
+        permission: "secrets",
+        tag: "Settings",
+        summary: "Set a provider's AWS access key ID (Amazon Bedrock; stored encrypted, never shown again)",
+        body: z.object({ key: z.string().max(500) }),
+        async handler({ services, access, params, body, actor }) {
+            const ws = (access as Access).workspace;
+            return json(await services.settings.setModelKey(actor, ws, params.provider as string, body.key, "accessKeyId"));
+        },
+    }),
+    route({
+        method: "DELETE",
+        path: `${W}/settings/review-model/keys/{provider}/access-key-id`,
+        scope: "workspace",
+        permission: "secrets",
+        tag: "Settings",
+        summary: "Forget a provider's AWS access key ID",
+        async handler({ services, access, params, actor }) {
+            const ws = (access as Access).workspace;
+            return json(await services.settings.setModelKey(actor, ws, params.provider as string, null, "accessKeyId"));
+        },
+    }),
+    route({
+        method: "GET",
+        path: `${W}/settings/review-model/providers/{provider}/models`,
+        scope: "workspace",
+        permission: "read",
+        tag: "Settings",
+        summary: "A provider's models, fetched by the server with the workspace's key (never returned), plus suggestions",
+        async handler({ services, access, params }) {
+            const view = await services.modelLists.list(
+                services.store,
+                { kind: "workspace", workspace: (access as Access).workspace },
+                params.provider as string,
+            );
+            if (!view) throw notFound("No such provider.");
+            return json(view);
         },
     }),
 

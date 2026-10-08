@@ -36,6 +36,8 @@ export interface Config {
     webDistDir: string | null;
     /** Fetch OpenRouter's public model catalogue (model names and prices). */
     openrouterCatalogue: boolean;
+    /** Let model URLs people give (custom providers, Azure) point at private and loopback addresses. */
+    allowPrivateModelUrls: boolean;
     production: boolean;
     /** How many reviews may run at once on the instance, and in any one workspace. */
     reviewConcurrency: number;
@@ -173,6 +175,7 @@ export function loadConfig(env: Env = process.env): Config {
         sessionMaxHours: whole(env, "SESSION_MAX_HOURS", 72, 1, 8760),
         webDistDir: env.WEB_DIST_DIR || null,
         openrouterCatalogue: flag(env, "OPENROUTER_CATALOGUE", true),
+        allowPrivateModelUrls: flag(env, "ALLOW_PRIVATE_MODEL_URLS", false),
         production,
         reviewConcurrency: whole(env, "REVIEW_CONCURRENCY", 1, 1, 100),
         reviewConcurrencyPerWorkspace: whole(env, "REVIEW_CONCURRENCY_PER_WORKSPACE", 1, 1, 100),

@@ -1,5 +1,7 @@
 // The server's internal runner API, with the shared secret.
 
+import type { RunnerModel } from "../../../packages/shared/src/model.ts";
+
 export interface ClaimedJob {
     id: string;
     kind: "pr" | "changes" | "full";
@@ -13,7 +15,8 @@ export interface ClaimedJob {
     headSha: string | null;
     timeoutMinutes: number;
     maxTokensBudget: number | null;
-    model: { url: string; model: string; apiKey: string; protocol: "openai"; provider: string };
+    /** The protocol OCR speaks to the model, and this job's credentials for it. */
+    model: RunnerModel;
 }
 
 export interface RunnerIdentity {

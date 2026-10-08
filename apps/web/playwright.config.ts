@@ -92,6 +92,8 @@ export default defineConfig({
                 GITHUB_URL: github,
                 TRIAGENT_RUNNER_SECRET: RUNNER_SECRET,
                 REVIEW_CONCURRENCY: "4",
+                // The model provider tests serve a fake provider on 127.0.0.1 (providers.spec.ts).
+                ALLOW_PRIVATE_MODEL_URLS: "true",
             },
         },
         {

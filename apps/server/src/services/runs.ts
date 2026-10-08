@@ -8,6 +8,7 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Severity } from "@triagent/shared";
+import { modelSecrets, type RunnerModel } from "@triagent/shared/model";
 import { redactDeep, redactor } from "@triagent/shared/redact";
 import { parseFilters } from "../domain/filters.ts";
 import { isValidBranch } from "../domain/names.ts";
@@ -101,7 +102,8 @@ export interface ClaimedJob {
     headSha: string | null;
     timeoutMinutes: number;
     maxTokensBudget: number | null;
-    model: { url: string; model: string; apiKey: string; protocol: "openai"; provider: string };
+    /** The protocol OCR speaks to the model and this job's credentials for it. */
+    model: RunnerModel;
 }
 
 type View = ReturnType<Runs["view"]>;
@@ -635,8 +637,15 @@ export class Runs {
             });
             return null;
         }
+        // A URL someone typed in (a custom server, Azure) may resolve somewhere else by now: check it again.
+        const unsafe = await this.models.recheck(model).catch((err: Error) => `Couldn't check the model's URL: ${err.message}`);
+        if (unsafe) {
+            await this.conclude(job.id, runner.id, { status: "failed", error: unsafe });
+            if (revoke) this.revoke(job, token);
+            return null;
+        }
         const scope = { workspaceId: job.workspaceId, projectId: job.projectId };
-        const credentials: JobCredentials = { secrets: [token, model.apiKey], revoke: revoke ? token : null };
+        const credentials: JobCredentials = { secrets: [token, ...modelSecrets(model)], revoke: revoke ? token : null };
         const sealed = this.core.secrets.seal(JSON.stringify(credentials), scope, `job:${job.id}`);
         const stillOurs = await this.store.transaction(async (tx) => {
             const current = await tx.jobs.get(job.id);
@@ -648,7 +657,7 @@ export class Runs {
             this.revoke(job, credentials.revoke);
             return null;
         }
-        this.redactions.set(job.id, redactor([token, model.apiKey]));
+        this.redactions.set(job.id, redactor(credentials.secrets));
         this.announce(job, project, "started");
         if (job.kind === "pr" && job.headSha)
             this.background(`Marking ${job.title} as in review on GitHub`, () =>
@@ -674,7 +683,14 @@ export class Runs {
             headSha: job.headSha,
             timeoutMinutes: job.kind === "full" ? automation.fullScanTimeoutMinutes : automation.reviewTimeoutMinutes,
             maxTokensBudget,
-            model: { url: model.url, model: model.model, apiKey: model.apiKey, protocol: model.protocol, provider: model.provider },
+            model: {
+                provider: model.provider,
+                protocol: model.protocol,
+                url: model.url,
+                model: model.model,
+                apiKey: model.apiKey,
+                ...(model.aws ? { aws: model.aws } : {}),
+            },
         };
     }
 

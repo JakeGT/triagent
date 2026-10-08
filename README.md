@@ -75,6 +75,32 @@ TRIAGENT_SERVER_URL=http://localhost:8080 pnpm dev:runner    # in another termin
 
 Then connect a project to GitHub (Project settings → GitHub: the GitHub App, set up under Settings → GitHub App by an instance admin, or a fine-grained token), add a model key (Settings → Review model & keys), and start a review from Runs, Pull requests or Branches & reports. `apps/runner/.env.example` lists the runner's settings; `REVIEW_CONCURRENCY` (default 1) and `REVIEW_CONCURRENCY_PER_WORKSPACE` (default 1) cap reviews on the server. The tests use a fake GitHub and a fake `ocr` (`tests/fakes`), so they need `git` but nothing else.
 
+### Model providers
+
+Reviews can use any of these. Each workspace chooses one under Settings → Review model & keys (and an instance admin chooses one for the instance key); keys are stored encrypted, per provider, and never shown again. The model list comes from the provider itself, with your key, where it offers one; you can always type any model id. [docs/architecture.md](docs/architecture.md#model-providers) says how each is reached and where each address is documented.
+
+| Provider | Open Code Review protocol | Address | What it needs |
+|---|---|---|---|
+| Anthropic | `anthropic` | `https://api.anthropic.com` | API key |
+| OpenAI | `openai` or `openai-responses` | `https://api.openai.com/v1` | API key; choose Responses for models that need it |
+| Google Gemini | `openai` | `https://generativelanguage.googleapis.com/v1beta/openai` | API key |
+| Mistral | `openai` | `https://api.mistral.ai/v1` | API key |
+| xAI | `openai` | `https://api.x.ai/v1` | API key |
+| DeepSeek | `openai` | `https://api.deepseek.com` | API key |
+| Cohere | `openai` | `https://api.cohere.ai/compatibility/v1` | API key |
+| Moonshot AI (Kimi) | `openai` | `https://api.moonshot.ai/v1` | API key from the global site |
+| Alibaba Cloud (Qwen) | `openai` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | API key for the Singapore region |
+| Meta | `openai` | `https://api.meta.ai/v1` | API key |
+| OpenRouter | `openai` | `https://openrouter.ai/api/v1` | API key |
+| Groq | `openai` | `https://api.groq.com/openai/v1` | API key |
+| Together AI | `openai` | `https://api.together.ai/v1` | API key |
+| Fireworks AI | `openai` | `https://api.fireworks.ai/inference/v1` | API key |
+| Amazon Bedrock | `anthropic-bedrock` | the region's `bedrock-runtime` host | AWS region, access key ID and secret access key (Anthropic models) |
+| Azure OpenAI | `openai-responses` or `openai` | your resource's endpoint + `/openai/v1` | endpoint, API key; the deployment name is the model |
+| Custom | `openai`, `openai-responses` or `anthropic` | the base URL you give | base URL and key (Ollama, LiteLLM, vLLM or a gateway) |
+
+Custom and Azure addresses must use https and resolve only to public addresses, checked when saved and again when each review starts. A self-hosted instance can allow private ones (an Ollama on its own network, plain http included) with `ALLOW_PRIVATE_MODEL_URLS=true` on the server.
+
 ### Running it with Docker
 
 One `Dockerfile` builds both images: `--target server` (the API and the web app) and `--target runner` (git and a pinned Open Code Review). [deploy/compose.example.yml](deploy/compose.example.yml) runs the server, a runner and Postgres, with secrets as files and the runner on a private network with outbound access only. Whatever proxy is in front must not pass `/internal/` (the runner API) through.
