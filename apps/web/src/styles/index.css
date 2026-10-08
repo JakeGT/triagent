@@ -179,6 +179,14 @@
     html {
         @apply overflow-x-hidden;
     }
+    /* Browsers draw an open select's list from its options' colours, falling back to the select's. The
+       select's see-through dark background turns near-white there, under white text, so options get
+       solid colours of their own. */
+    select option,
+    select optgroup {
+        background-color: var(--popover);
+        color: var(--popover-foreground);
+    }
     body {
         @apply min-h-svh w-full bg-background font-sans text-foreground antialiased;
         font-size: 0.875rem;

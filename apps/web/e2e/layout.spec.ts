@@ -146,3 +146,65 @@ test("no page is wider than a phone", async ({ page, admin }) => {
     await page.getByLabel("Provider").selectOption({ label: "Amazon Bedrock" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth), "width of the review model page").toBeLessThanOrEqual(390);
 });
+
+/**
+ * The colours an open select's list is drawn in: the option's own background when it has a solid one,
+ * otherwise the select's, laid over white as browsers do for the list (a see-through dark background
+ * there becomes near-white). Returns the worst contrast ratio between option text and that background.
+ */
+async function worstOptionContrast(page: Page) {
+    return page.locator("select").evaluateAll((selects) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
+        // Any CSS colour (oklch included) to RGBA, laid over `under`.
+        const rgba = (colour: string, under = "#ffffff") => {
+            ctx.clearRect(0, 0, 1, 1);
+            ctx.fillStyle = under;
+            ctx.fillRect(0, 0, 1, 1);
+            ctx.fillStyle = colour;
+            ctx.fillRect(0, 0, 1, 1);
+            const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+            return [r, g, b] as [number, number, number];
+        };
+        const alpha = (colour: string) => {
+            ctx.clearRect(0, 0, 1, 1);
+            ctx.fillStyle = colour;
+            ctx.fillRect(0, 0, 1, 1);
+            return (ctx.getImageData(0, 0, 1, 1).data[3] ?? 0) / 255;
+        };
+        const lum = ([r, g, b]: [number, number, number]) => {
+            const c = [r, g, b].map((v) => {
+                const s = v / 255;
+                return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+            });
+            return 0.2126 * (c[0] ?? 0) + 0.7152 * (c[1] ?? 0) + 0.0722 * (c[2] ?? 0);
+        };
+        let worst = Number.POSITIVE_INFINITY;
+        for (const select of selects) {
+            for (const option of (select as HTMLSelectElement).options) {
+                const o = getComputedStyle(option);
+                const s = getComputedStyle(select);
+                const background = alpha(o.backgroundColor) === 1 ? rgba(o.backgroundColor) : rgba(s.backgroundColor);
+                const text = rgba(o.color, `rgb(${background.join(",")})`);
+                const [a, b] = [lum(background), lum(text)].sort((x, y) => y - x);
+                worst = Math.min(worst, ((a ?? 0) + 0.05) / ((b ?? 0) + 0.05));
+            }
+        }
+        return worst;
+    });
+}
+
+test("drop-down options are readable in light and dark mode", async ({ page, admin }) => {
+    const { ws } = await seedProject(admin);
+    for (const theme of ["dark", "light"]) {
+        await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
+        await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+        for (const path of ["/settings/tokens", "/settings/review-model"]) {
+            await page.goto(`/w/${ws}${path}`);
+            await expect(page.locator("select").first()).toBeVisible();
+            expect(await worstOptionContrast(page), `option contrast on ${path} (${theme})`).toBeGreaterThanOrEqual(4.5);
+        }
+        await page.context().clearCookies();
+    }
+});
