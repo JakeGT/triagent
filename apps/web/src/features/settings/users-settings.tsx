@@ -1,16 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useId, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
-import { Field, FieldError } from "@/components/field";
+import { CheckField, Field, FieldError, FieldRow } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { OneTimeReveal } from "@/components/one-time-reveal";
 import { PasswordInput } from "@/components/password-input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDate, timeAgo } from "@/lib/format";
 import { instanceUsersQuery, keys } from "@/lib/queries";
@@ -26,7 +26,6 @@ interface Revealed {
 
 function CreateAccount({ onPassword }: { onPassword(r: Revealed): void }) {
     const queryClient = useQueryClient();
-    const adminId = useId();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [isAdmin, setIsAdmin] = useState(false);
@@ -52,13 +51,13 @@ function CreateAccount({ onPassword }: { onPassword(r: Revealed): void }) {
             description="The person signs in with this username and a temporary password, and must choose their own straight away. Add them to workspaces under Members."
         >
             <form
-                className="grid gap-4"
+                className="grid gap-form"
                 onSubmit={(e) => {
                     e.preventDefault();
                     create.mutate();
                 }}
             >
-                <div className="grid gap-4 sm:grid-cols-2">
+                <FieldRow>
                     <Field label="Username" hint="Letters, numbers and . _ @ -">
                         {(p) => (
                             <Input
@@ -81,17 +80,16 @@ function CreateAccount({ onPassword }: { onPassword(r: Revealed): void }) {
                             />
                         )}
                     </Field>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Checkbox id={adminId} checked={isAdmin} onCheckedChange={(v) => setIsAdmin(v === true)} />
-                    <Label htmlFor={adminId}>Instance administrator (can manage every account)</Label>
-                </div>
+                </FieldRow>
+                <CheckField label="Instance administrator" hint="Can manage every account on this Triagent.">
+                    {(p) => <Checkbox {...p} checked={isAdmin} onCheckedChange={(v) => setIsAdmin(v === true)} />}
+                </CheckField>
                 <FieldError message={create.error ? errorMessage(create.error) : null} />
-                <div>
+                <FormActions>
                     <Button type="submit" disabled={create.isPending || !username.trim()}>
                         {create.isPending ? "Creating…" : "Create account"}
                     </Button>
-                </div>
+                </FormActions>
             </form>
         </SettingsSection>
     );
@@ -215,7 +213,7 @@ export function UsersSettings() {
             ) : query.isPending ? (
                 <LoadingRows rows={3} />
             ) : (
-                <div className="rounded-md border">
+                <TableFrame>
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -255,7 +253,7 @@ export function UsersSettings() {
                             ))}
                         </TableBody>
                     </Table>
-                </div>
+                </TableFrame>
             )}
             {provider ? (
                 <Invites

@@ -10,7 +10,7 @@ import { LoadError, LoadingRows } from "@/components/load-state";
 import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { keys, pullRequestsQuery, runListQuery } from "@/lib/queries";
@@ -39,9 +39,9 @@ export function Refused({ refused }: { refused: RefusedDeliveries | null }) {
 export function Deliveries({ items }: { items: GithubDelivery[] }) {
     if (!items.length) return <p className="text-sm text-muted-foreground">None received yet.</p>;
     return (
-        <div className="rounded-md border">
+        <TableFrame>
             <Table>
-                <TableHeader className="bg-muted/50 text-xs">
+                <TableHeader>
                     <TableRow>
                         <TableHead scope="col">Received</TableHead>
                         <TableHead scope="col">Event</TableHead>
@@ -74,7 +74,7 @@ export function Deliveries({ items }: { items: GithubDelivery[] }) {
                     ))}
                 </TableBody>
             </Table>
-        </div>
+        </TableFrame>
     );
 }
 
@@ -167,9 +167,9 @@ export function PullRequestsPage() {
                                 : "GitHub hasn't been checked yet. Check now to list them."}
                         </EmptyState>
                     ) : (
-                        <div className="rounded-md border">
+                        <TableFrame>
                             <Table>
-                                <TableHeader className="bg-muted/50 text-xs">
+                                <TableHeader>
                                     <TableRow>
                                         <TableHead scope="col">Pull request</TableHead>
                                         <TableHead scope="col">Branch</TableHead>
@@ -261,10 +261,10 @@ export function PullRequestsPage() {
                                     })}
                                 </TableBody>
                             </Table>
-                        </div>
+                        </TableFrame>
                     )}
                     <section aria-labelledby="deliveries-heading" className="grid gap-2">
-                        <h2 id="deliveries-heading" className="font-semibold">
+                        <h2 id="deliveries-heading" className="section-title">
                             Webhook deliveries
                         </h2>
                         <p className="text-sm text-muted-foreground">What GitHub sent lately, and what Triagent did with it.</p>

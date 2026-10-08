@@ -14,7 +14,6 @@ export function CopyButton({ value, label = "Copy", className }: { value: string
         <Button
             type="button"
             variant="outline"
-            size="sm"
             className={className}
             onClick={async () => {
                 try {

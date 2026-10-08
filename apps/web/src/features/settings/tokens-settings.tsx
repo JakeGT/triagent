@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SCOPE_INFO, TOKEN_SCOPES, type TokenScope } from "@triagent/shared";
-import { useCallback, useId, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
-import { Field, FieldError, NativeSelect } from "@/components/field";
+import { ChoiceField, Field, FieldError, FieldRow, NativeSelect } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { OneTimeReveal } from "@/components/one-time-reveal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDate, timeAgo } from "@/lib/format";
 import { keys, membersQuery, tokensQuery } from "@/lib/queries";
@@ -21,7 +22,6 @@ function CreateToken({ onCreated }: { onCreated(token: string): void }) {
     const { ws } = useWorkspace();
     const queryClient = useQueryClient();
     const members = useQuery(membersQuery(ws));
-    const scopeId = useId();
     const [name, setName] = useState("");
     const [scope, setScope] = useState<TokenScope>("full");
     const [days, setDays] = useState("90");
@@ -43,7 +43,7 @@ function CreateToken({ onCreated }: { onCreated(token: string): void }) {
     return (
         <SettingsSection title="Create a token" description="For an agent, a CI job or a script. A token belongs to this workspace only.">
             <form
-                className="grid gap-4"
+                className="grid gap-form"
                 onSubmit={(e) => {
                     e.preventDefault();
                     create.mutate();
@@ -54,30 +54,23 @@ function CreateToken({ onCreated }: { onCreated(token: string): void }) {
                         <Input {...p} value={name} onChange={(e) => setName(e.target.value)} required maxLength={64} autoComplete="off" />
                     )}
                 </Field>
-                <fieldset className="grid gap-1.5">
-                    <legend className="mb-1 text-sm font-medium">Access</legend>
-                    {TOKEN_SCOPES.map((s) => (
-                        <label key={s} htmlFor={`${scopeId}-${s}`} className="flex items-start gap-2 text-sm">
-                            <input
-                                type="radio"
-                                id={`${scopeId}-${s}`}
-                                name="scope"
-                                value={s}
-                                checked={scope === s}
-                                onChange={() => setScope(s)}
-                                className="mt-1 accent-primary"
-                            />
-                            <span>
+                <ChoiceField
+                    legend="Access"
+                    name="scope"
+                    value={scope}
+                    onChange={setScope}
+                    choices={TOKEN_SCOPES.map((s) => ({
+                        value: s,
+                        label: (
+                            <>
                                 <span className="font-mono">{s}</span>: {SCOPE_INFO[s]}
-                            </span>
-                        </label>
-                    ))}
-                    <p className="text-xs text-muted-foreground">
-                        No token can manage members or tokens, or set secrets: those stay with people signed in here.
-                    </p>
-                </fieldset>
-                <div className="grid gap-4 sm:grid-cols-2">
-                    <Field label="Expires after (days)" hint="Empty for a token that never expires.">
+                            </>
+                        ),
+                    }))}
+                    hint="No token can manage members or tokens, or set secrets: those stay with people signed in here."
+                />
+                <FieldRow>
+                    <Field label="Expires after (days)" hint="Empty for a token that never expires." width="xs">
                         {(p) => <Input {...p} type="number" min={1} max={3650} value={days} onChange={(e) => setDays(e.target.value)} />}
                     </Field>
                     <Field label="Acts for" hint="Who hears about the reviews it starts. Revoked if they leave the workspace.">
@@ -93,13 +86,13 @@ function CreateToken({ onCreated }: { onCreated(token: string): void }) {
                             </NativeSelect>
                         )}
                     </Field>
-                </div>
+                </FieldRow>
                 <FieldError message={create.error ? errorMessage(create.error) : null} />
-                <div>
+                <FormActions>
                     <Button type="submit" disabled={create.isPending || !name.trim()}>
                         {create.isPending ? "Creating…" : "Create token"}
                     </Button>
-                </div>
+                </FormActions>
             </form>
         </SettingsSection>
     );
@@ -141,7 +134,7 @@ export function TokensSettings() {
             ) : query.data.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No tokens yet.</p>
             ) : (
-                <div className="rounded-md border">
+                <TableFrame>
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -195,7 +188,7 @@ export function TokensSettings() {
                             ))}
                         </TableBody>
                     </Table>
-                </div>
+                </TableFrame>
             )}
             <CreateToken onCreated={setCreated} />
         </SettingsPage>

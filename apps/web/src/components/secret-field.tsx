@@ -4,7 +4,8 @@
 
 import { useId, useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
-import { FieldError } from "@/components/field";
+import { ControlGroup, FieldError, FieldHint } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -63,65 +64,63 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
     };
 
     return (
-        <div className="grid gap-2" data-testid="secret-field">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <Label htmlFor={showInput ? id : undefined} id={`${id}-label`}>
+        <div className="grid gap-field" data-testid="secret-field">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <Label htmlFor={showInput ? id : undefined} id={`${id}-label`} className="leading-snug">
                     {label}
                 </Label>
                 <p className="text-sm text-muted-foreground" id={`${id}-status`}>
                     {describeSecret(secret)}
                 </p>
             </div>
-            {hint && (
-                <p className="text-xs text-muted-foreground" id={`${id}-hint`}>
-                    {hint}
-                </p>
-            )}
             {showInput ? (
                 <form
-                    className="flex flex-wrap gap-2"
                     onSubmit={(e) => {
                         e.preventDefault();
                         void save();
                     }}
                 >
-                    <Input
-                        id={id}
-                        type="password"
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                        autoComplete="new-password"
-                        spellCheck={false}
-                        aria-describedby={[`${id}-status`, hint ? `${id}-hint` : "", error ? `${id}-error` : ""].filter(Boolean).join(" ")}
-                        aria-invalid={error ? true : undefined}
-                        className="min-w-0 flex-1 font-mono"
-                    />
-                    <Button type="submit" disabled={busy}>
-                        {busy ? "Saving…" : secret.set ? "Save new value" : "Save"}
-                    </Button>
-                    {editing && (
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            onClick={() => {
-                                setEditing(false);
-                                setValue("");
-                                setError(null);
-                            }}
-                        >
-                            Cancel
+                    <ControlGroup>
+                        <Input
+                            id={id}
+                            type="password"
+                            value={value}
+                            onChange={(e) => setValue(e.target.value)}
+                            autoComplete="new-password"
+                            spellCheck={false}
+                            aria-describedby={[`${id}-status`, hint ? `${id}-hint` : "", error ? `${id}-error` : ""]
+                                .filter(Boolean)
+                                .join(" ")}
+                            aria-invalid={error ? true : undefined}
+                            className="font-mono"
+                        />
+                        <Button type="submit" disabled={busy}>
+                            {busy ? "Saving…" : secret.set ? "Save new value" : "Save"}
                         </Button>
-                    )}
+                        {editing && (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() => {
+                                    setEditing(false);
+                                    setValue("");
+                                    setError(null);
+                                }}
+                            >
+                                Cancel
+                            </Button>
+                        )}
+                    </ControlGroup>
                 </form>
             ) : (
                 canEdit && (
-                    <div className="flex flex-wrap gap-2">
-                        <Button type="button" variant="outline" size="sm" onClick={() => setEditing(true)}>
+                    <FormActions>
+                        <Button type="button" variant="outline" onClick={() => setEditing(true)}>
                             Replace
                         </Button>
                         <ConfirmAction
                             trigger={
-                                <Button type="button" variant="outline" size="sm">
+                                <Button type="button" variant="outline">
                                     Clear
                                 </Button>
                             }
@@ -130,9 +129,10 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
                             confirmLabel="Clear"
                             onConfirm={onClear}
                         />
-                    </div>
+                    </FormActions>
                 )
             )}
+            {hint && <FieldHint id={`${id}-hint`}>{hint}</FieldHint>}
             <FieldError id={`${id}-error`} message={error} />
         </div>
     );

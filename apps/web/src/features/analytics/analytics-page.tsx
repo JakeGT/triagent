@@ -3,7 +3,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { Field, NativeSelect } from "@/components/field";
+import { Field, FieldRow, NativeSelect } from "@/components/field";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Page, PageHeader, PageMeta } from "@/components/page";
 import { analyticsQuery } from "@/lib/insights-queries";
@@ -40,52 +40,54 @@ export function AnalyticsPage() {
             <PageMeta title="Analytics" />
             <PageHeader title="Analytics" description={`Reviews, findings and triage in ${workspace.name}: ${scope}.`} />
 
-            <form className="flex flex-wrap items-end gap-3" aria-label="What to show" onSubmit={(e) => e.preventDefault()}>
-                <Field label="Project" className="w-56">
-                    {(p) => (
-                        <NativeSelect
-                            {...p}
-                            value={search.project ?? ""}
-                            onChange={(e) => set({ project: e.target.value || undefined, branch: undefined })}
-                        >
-                            <option value="">All projects</option>
-                            {(projects.data ?? []).map((p) => (
-                                <option key={p.slug} value={p.slug}>
-                                    {p.name}
-                                </option>
-                            ))}
-                        </NativeSelect>
-                    )}
-                </Field>
-                <Field label="Branch" className="w-56">
-                    {(p) => (
-                        <NativeSelect
-                            {...p}
-                            value={search.branch ?? ""}
-                            disabled={!search.project}
-                            title={search.project ? undefined : "Choose a project to pick one of its branches"}
-                            onChange={(e) => set({ branch: e.target.value || undefined })}
-                        >
-                            <option value="">All branches</option>
-                            {(branches.data?.items ?? []).map((b) => (
-                                <option key={b.name} value={b.name}>
-                                    {b.name}
-                                </option>
-                            ))}
-                        </NativeSelect>
-                    )}
-                </Field>
-                <Field label="Range" className="w-44">
-                    {(p) => (
-                        <NativeSelect {...p} value={String(days)} onChange={(e) => set({ days: Number(e.target.value) as Days })}>
-                            {RANGES.map((r) => (
-                                <option key={r.days} value={r.days}>
-                                    {r.label}
-                                </option>
-                            ))}
-                        </NativeSelect>
-                    )}
-                </Field>
+            <form className="grid" aria-label="What to show" onSubmit={(e) => e.preventDefault()}>
+                <FieldRow columns="auto">
+                    <Field label="Project" width="md">
+                        {(p) => (
+                            <NativeSelect
+                                {...p}
+                                value={search.project ?? ""}
+                                onChange={(e) => set({ project: e.target.value || undefined, branch: undefined })}
+                            >
+                                <option value="">All projects</option>
+                                {(projects.data ?? []).map((p) => (
+                                    <option key={p.slug} value={p.slug}>
+                                        {p.name}
+                                    </option>
+                                ))}
+                            </NativeSelect>
+                        )}
+                    </Field>
+                    <Field label="Branch" width="md">
+                        {(p) => (
+                            <NativeSelect
+                                {...p}
+                                value={search.branch ?? ""}
+                                disabled={!search.project}
+                                title={search.project ? undefined : "Choose a project to pick one of its branches"}
+                                onChange={(e) => set({ branch: e.target.value || undefined })}
+                            >
+                                <option value="">All branches</option>
+                                {(branches.data?.items ?? []).map((b) => (
+                                    <option key={b.name} value={b.name}>
+                                        {b.name}
+                                    </option>
+                                ))}
+                            </NativeSelect>
+                        )}
+                    </Field>
+                    <Field label="Range" width="sm">
+                        {(p) => (
+                            <NativeSelect {...p} value={String(days)} onChange={(e) => set({ days: Number(e.target.value) as Days })}>
+                                {RANGES.map((r) => (
+                                    <option key={r.days} value={r.days}>
+                                        {r.label}
+                                    </option>
+                                ))}
+                            </NativeSelect>
+                        )}
+                    </Field>
+                </FieldRow>
             </form>
 
             <nav aria-label="Sections" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">

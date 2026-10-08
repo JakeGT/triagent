@@ -32,7 +32,7 @@ function ProviderSignIn({ config, redirect, error }: { config: AuthConfig; redir
     const provider = config.providerName ?? "your identity provider";
     return (
         <AuthLayout title="Sign in" description={`Use your ${provider} account.`}>
-            <div className="grid gap-4">
+            <div className="grid gap-form">
                 <FieldError message={error ? signInErrorMessage(error, provider) : null} />
                 {/* A plain link, not a form: the server redirects to the provider, which a form's CSP (form-action 'self') would block. */}
                 <Button asChild>
@@ -79,7 +79,7 @@ function PasswordSignIn({ redirect }: { redirect?: string }) {
 
     return (
         <AuthLayout title="Sign in" description="Use the account an administrator created for you.">
-            <form action={signIn} className="grid gap-4" noValidate>
+            <form action={signIn} className="grid gap-form" noValidate>
                 <Field label="Username">
                     {(p) => <Input {...p} name="username" autoComplete="username" defaultValue={state.username} required autoFocus />}
                 </Field>

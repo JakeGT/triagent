@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Field, FieldError } from "@/components/field";
+import { Field, FieldError, FieldRow } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, paths } from "@/lib/api";
 import { keys, projectsQuery } from "@/lib/queries";
 import { safeHref } from "@/lib/safe-href";
@@ -39,57 +40,63 @@ function CreateProject() {
     return (
         <SettingsSection title="Create a project" description="One project per codebase. You can upload reports to it straight away.">
             <form
-                className="grid gap-4 sm:grid-cols-2"
+                className="grid gap-form"
                 onSubmit={(e) => {
                     e.preventDefault();
                     create.mutate();
                 }}
             >
-                <Field label="Name">
-                    {(p) => <Input {...p} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={80} />}
-                </Field>
-                <Field label="Project id" hint="Used in addresses: lower-case letters, numbers and dashes.">
-                    {(p) => (
-                        <Input
-                            {...p}
-                            value={form.slug}
-                            onChange={(e) => setForm({ ...form, slug: e.target.value })}
-                            required
-                            maxLength={40}
-                            spellCheck={false}
-                            autoComplete="off"
-                            className="font-mono"
-                        />
-                    )}
-                </Field>
-                <Field label="Repository URL" hint="Optional, e.g. https://github.com/acme/app">
-                    {(p) => (
-                        <Input
-                            {...p}
-                            type="url"
-                            value={form.repoUrl}
-                            onChange={(e) => setForm({ ...form, repoUrl: e.target.value })}
-                            maxLength={300}
-                        />
-                    )}
-                </Field>
-                <Field label="Default branch" hint="Optional; main if left empty.">
-                    {(p) => (
-                        <Input
-                            {...p}
-                            value={form.defaultBranch}
-                            onChange={(e) => setForm({ ...form, defaultBranch: e.target.value })}
-                            maxLength={200}
-                            className="font-mono"
-                        />
-                    )}
-                </Field>
-                <FieldError message={create.error ? errorMessage(create.error) : null} className="sm:col-span-2" />
-                <div className="sm:col-span-2">
+                <FieldRow>
+                    <Field label="Name">
+                        {(p) => (
+                            <Input {...p} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={80} />
+                        )}
+                    </Field>
+                    <Field label="Project id" hint="Used in addresses: lower-case letters, numbers and dashes.">
+                        {(p) => (
+                            <Input
+                                {...p}
+                                value={form.slug}
+                                onChange={(e) => setForm({ ...form, slug: e.target.value })}
+                                required
+                                maxLength={40}
+                                spellCheck={false}
+                                autoComplete="off"
+                                className="font-mono"
+                            />
+                        )}
+                    </Field>
+                </FieldRow>
+                <FieldRow>
+                    <Field label="Repository URL" hint="Optional, e.g. https://github.com/acme/app">
+                        {(p) => (
+                            <Input
+                                {...p}
+                                type="url"
+                                value={form.repoUrl}
+                                onChange={(e) => setForm({ ...form, repoUrl: e.target.value })}
+                                maxLength={300}
+                            />
+                        )}
+                    </Field>
+                    <Field label="Default branch" hint="Optional; main if left empty.">
+                        {(p) => (
+                            <Input
+                                {...p}
+                                value={form.defaultBranch}
+                                onChange={(e) => setForm({ ...form, defaultBranch: e.target.value })}
+                                maxLength={200}
+                                className="font-mono"
+                            />
+                        )}
+                    </Field>
+                </FieldRow>
+                <FieldError message={create.error ? errorMessage(create.error) : null} />
+                <FormActions>
                     <Button type="submit" disabled={create.isPending || !form.slug.trim()}>
                         {create.isPending ? "Creating…" : "Create project"}
                     </Button>
-                </div>
+                </FormActions>
             </form>
         </SettingsSection>
     );
@@ -107,7 +114,7 @@ export function ProjectsSettings() {
             ) : query.data.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No projects yet.</p>
             ) : (
-                <div className="rounded-md border">
+                <TableFrame>
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -162,7 +169,7 @@ export function ProjectsSettings() {
                             })}
                         </TableBody>
                     </Table>
-                </div>
+                </TableFrame>
             )}
             {can("configure") ? <CreateProject /> : <ReadOnlyNote>Only admins of this workspace can create projects.</ReadOnlyNote>}
         </SettingsPage>

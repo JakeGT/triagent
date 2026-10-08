@@ -3,11 +3,12 @@ import { ROLES, type Role } from "@triagent/shared";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
-import { Field, FieldError, NativeSelect } from "@/components/field";
+import { Field, FieldError, FieldRow, NativeSelect } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { keys, membersQuery } from "@/lib/queries";
@@ -135,13 +136,13 @@ function AddMember() {
             description="They need an account on this Triagent first: an instance administrator creates it under Users."
         >
             <form
-                className="grid gap-4"
+                className="grid gap-form"
                 onSubmit={(e) => {
                     e.preventDefault();
                     add.mutate();
                 }}
             >
-                <div className="grid gap-4 sm:grid-cols-2">
+                <FieldRow>
                     <Field label="Username">
                         {(p) => (
                             <Input
@@ -165,13 +166,13 @@ function AddMember() {
                             </NativeSelect>
                         )}
                     </Field>
-                </div>
+                </FieldRow>
                 <FieldError message={add.error ? errorMessage(add.error) : null} />
-                <div>
+                <FormActions>
                     <Button type="submit" disabled={add.isPending || !username.trim()}>
                         Add member
                     </Button>
-                </div>
+                </FormActions>
             </form>
         </SettingsSection>
     );
@@ -197,7 +198,7 @@ export function MembersSettings() {
             ) : query.isPending ? (
                 <LoadingRows rows={3} />
             ) : (
-                <div className="rounded-md border">
+                <TableFrame>
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -215,7 +216,7 @@ export function MembersSettings() {
                             ))}
                         </TableBody>
                     </Table>
-                </div>
+                </TableFrame>
             )}
             <dl className="grid gap-1 text-xs text-muted-foreground">
                 {ROLES.map((r) => (

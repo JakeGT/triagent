@@ -143,7 +143,10 @@ src/lib/session.ts   Who's signed in, and what their role allows, from packages/
 src/components/reauth-dialog.tsx   "Confirm it's you" before steps that need a recent sign-in; retries the step
 src/features/*       Pages: issues, tasks, overview, files, branches, compare, activity, agents, settings
 src/components/*     Shared pieces: SecretField, OneTimeReveal, ConfirmAction, notes, Markdown, code diffs
+src/components/field.tsx, form.tsx   Form layout: Field, FieldRow, CheckField, ChoiceField, FormSection, FormActions
 ```
+
+- **Forms** follow one rule (`components/field.tsx`): the label above the control, the description below it, then the error, each tied to the control by `htmlFor` and `aria-describedby`. Fields side by side go in a `FieldRow`, a CSS grid whose fields share its lines through `subgrid`, so their controls line up however long a label or description is (`e2e/layout.spec.ts` checks it). Spacing and widths are tokens in `styles/index.css` (`gap-field`, `gap-form`, `gap-section`, `p-inset`, `max-w-narrow`, `w-control-sm` and so on), not one-off values.
 
 - **Server state** is TanStack Query's cache; nothing polls. A live notice from another tab or agent invalidates the queries it affects. Notices carrying this tab's client id are our own changes, already applied.
 - **Never clobber input.** A form being edited, or an issue with a note half-typed, holds still when the server's copy changes and shows a "changed elsewhere" banner instead (`lib/drafts.ts`). Writes send the `rev` that was on screen; a 409 shows what the other person changed.

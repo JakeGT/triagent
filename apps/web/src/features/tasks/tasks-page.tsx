@@ -43,7 +43,7 @@ export function TasksPage() {
     const items = tasks.data?.items ?? [];
 
     return (
-        <div className={cn("grid min-h-0 flex-1", taskId && "lg:grid-cols-[minmax(0,1fr)_minmax(26rem,0.95fr)]")}>
+        <div className={cn("grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)]", taskId && "lg:grid-cols-[minmax(0,1fr)_minmax(26rem,0.95fr)]")}>
             <PageMeta title={`Tasks · ${project.name}`} />
             <section
                 aria-labelledby="tasks-heading"
@@ -88,7 +88,7 @@ export function TasksPage() {
                                     if (!inSection.length) return null;
                                     return (
                                         <section key={s.id} aria-labelledby={`section-${s.id}`} className="grid gap-1.5">
-                                            <h2 id={`section-${s.id}`} className="text-sm font-semibold">
+                                            <h2 id={`section-${s.id}`} className="section-title">
                                                 {s.title}
                                             </h2>
                                             <ul className="divide-y rounded-md border">

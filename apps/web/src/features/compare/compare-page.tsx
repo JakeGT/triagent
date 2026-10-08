@@ -3,13 +3,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useId, useState } from "react";
-import { NativeSelect } from "@/components/field";
+import { Field, FieldError, FieldRow, FieldRowActions, NativeSelect } from "@/components/field";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { InlineCode } from "@/components/markdown";
 import { SeverityBar, SeverityMark, StatusMark } from "@/components/marks";
 import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { lines, plural } from "@/lib/format";
 import { branchesQuery, compareQuery } from "@/lib/queries";
 import { useProject } from "@/lib/session";
@@ -19,8 +18,6 @@ export function ComparePage() {
     const { ws, slug, project } = useProject();
     const search = useSearch({ from: "/authed/w/$ws/p/$project/compare" });
     const navigate = useNavigate();
-    const baseId = useId();
-    const headId = useId();
     const branches = useQuery(branchesQuery(ws, slug));
     const names = (branches.data?.items ?? []).map((b) => b.name);
     const defaultBase = project.defaultBranch;
@@ -48,47 +45,43 @@ export function ComparePage() {
                 </EmptyState>
             ) : (
                 <form
-                    className="flex flex-wrap items-end gap-3"
+                    className="grid gap-field"
                     onSubmit={(e) => {
                         e.preventDefault();
                         setDraft({});
                         void navigate({ to: ".", search: { base: chosenBase, head: chosenHead } });
                     }}
                 >
-                    <div className="grid gap-1.5">
-                        <Label htmlFor={baseId}>Compare with</Label>
-                        <NativeSelect
-                            id={baseId}
-                            value={chosenBase}
-                            onChange={(e) => setDraft({ ...draft, base: e.target.value })}
-                            className="w-56"
-                        >
-                            {names.map((n) => (
-                                <option key={n} value={n}>
-                                    {n}
-                                </option>
-                            ))}
-                        </NativeSelect>
-                    </div>
-                    <div className="grid gap-1.5">
-                        <Label htmlFor={headId}>Branch</Label>
-                        <NativeSelect
-                            id={headId}
-                            value={chosenHead}
-                            onChange={(e) => setDraft({ ...draft, head: e.target.value })}
-                            className="w-56"
-                        >
-                            {names.map((n) => (
-                                <option key={n} value={n}>
-                                    {n}
-                                </option>
-                            ))}
-                        </NativeSelect>
-                    </div>
-                    <Button type="submit" disabled={!chosenBase || !chosenHead || chosenBase === chosenHead}>
-                        Compare
-                    </Button>
-                    {chosenBase && chosenBase === chosenHead && <p className="text-sm text-destructive">Pick two different branches.</p>}
+                    <FieldRow columns="auto">
+                        <Field label="Compare with" width="md">
+                            {(p) => (
+                                <NativeSelect {...p} value={chosenBase} onChange={(e) => setDraft({ ...draft, base: e.target.value })}>
+                                    {names.map((n) => (
+                                        <option key={n} value={n}>
+                                            {n}
+                                        </option>
+                                    ))}
+                                </NativeSelect>
+                            )}
+                        </Field>
+                        <Field label="Branch" width="md">
+                            {(p) => (
+                                <NativeSelect {...p} value={chosenHead} onChange={(e) => setDraft({ ...draft, head: e.target.value })}>
+                                    {names.map((n) => (
+                                        <option key={n} value={n}>
+                                            {n}
+                                        </option>
+                                    ))}
+                                </NativeSelect>
+                            )}
+                        </Field>
+                        <FieldRowActions>
+                            <Button type="submit" disabled={!chosenBase || !chosenHead || chosenBase === chosenHead}>
+                                Compare
+                            </Button>
+                        </FieldRowActions>
+                    </FieldRow>
+                    <FieldError message={chosenBase && chosenBase === chosenHead ? "Pick two different branches." : null} />
                 </form>
             )}
 
@@ -176,7 +169,7 @@ function IssueList({
     const headingId = useId();
     return (
         <section aria-labelledby={headingId} className="grid content-start gap-2">
-            <h2 id={headingId} className="font-semibold">
+            <h2 id={headingId} className="section-title">
                 {title} <span className="font-normal text-muted-foreground">({plural(items.length, "finding")})</span>
             </h2>
             {items.length === 0 ? (

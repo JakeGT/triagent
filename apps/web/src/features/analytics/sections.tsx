@@ -46,7 +46,7 @@ function Stats({ children }: { children: ReactNode }) {
 function Card({ title, children }: { title: string; children: ReactNode }) {
     return (
         <div className="grid min-w-0 content-start gap-3 rounded-lg border bg-card p-4">
-            <h3 className="font-medium">{title}</h3>
+            <h3 className="section-title">{title}</h3>
             {children}
         </div>
     );

@@ -9,6 +9,17 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
     );
 }
 
+/** A table on its own on a page: framed, with quieter column headings. */
+function TableFrame({ className, ...props }: React.ComponentProps<"div">) {
+    return (
+        <div
+            data-slot="table-frame"
+            className={cn("min-w-0 rounded-md border [&_thead]:bg-muted/50 [&_thead_th]:text-xs", className)}
+            {...props}
+        />
+    );
+}
+
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
     return <thead data-slot="table-header" className={cn("[&_tr]:border-b", className)} {...props} />;
 }
@@ -60,4 +71,4 @@ function TableCaption({ className, ...props }: React.ComponentProps<"caption">) 
     return <caption data-slot="table-caption" className={cn("mt-4 text-sm text-muted-foreground", className)} {...props} />;
 }
 
-export { Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow };
+export { Table, TableBody, TableCaption, TableCell, TableFooter, TableFrame, TableHead, TableHeader, TableRow };

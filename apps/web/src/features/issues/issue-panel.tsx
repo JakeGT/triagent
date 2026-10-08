@@ -247,9 +247,9 @@ function IssueView({ id }: { id: string }) {
             <FieldError message={error} />
 
             {canTriage && (
-                <div className="grid gap-3 rounded-lg border bg-background p-3" data-testid="triage">
-                    <fieldset className="grid gap-1.5">
-                        <legend className="mb-1.5 text-xs font-medium text-muted-foreground">Status</legend>
+                <div className="grid gap-form rounded-lg border bg-background p-3" data-testid="triage">
+                    <fieldset className="grid gap-field">
+                        <legend className="mb-field text-xs font-medium text-muted-foreground">Status</legend>
                         <div className="flex flex-wrap gap-1">
                             {STATUSES.map((s: Status, i) => (
                                 <Button
@@ -270,7 +270,7 @@ function IssueView({ id }: { id: string }) {
                     </fieldset>
 
                     <form
-                        className="grid gap-1.5"
+                        className="grid gap-field"
                         onSubmit={async (e) => {
                             e.preventDefault();
                             const name = (assignee ?? "").trim();
@@ -328,102 +328,111 @@ function IssueView({ id }: { id: string }) {
                         </div>
                     </form>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-medium text-muted-foreground">Rating</span>
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button size="sm" variant="outline">
-                                    Correct the rating <ChevronDown />
+                    <fieldset className="grid gap-field">
+                        <legend className="mb-field text-xs font-medium text-muted-foreground">Rating</legend>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button size="sm" variant="outline">
+                                        Correct the rating <ChevronDown />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start">
+                                    <DropdownMenuLabel className="text-xs text-muted-foreground">Severity</DropdownMenuLabel>
+                                    <DropdownMenuRadioGroup
+                                        value={issue.severity}
+                                        onValueChange={(v) =>
+                                            v !== issue.severity &&
+                                            void change(
+                                                {
+                                                    severity:
+                                                        v === (issue.reviewerSeverity ?? issue.severity) && issue.reviewerSeverity
+                                                            ? "reviewer"
+                                                            : (v as Severity),
+                                                },
+                                                `Rated ${v}.`,
+                                            )
+                                        }
+                                    >
+                                        {SEVERITIES.map((s) => (
+                                            <DropdownMenuRadioItem key={s} value={s}>
+                                                <span className={`sev sev-${s}`}>{SEVERITY_LABEL[s]}</span>
+                                            </DropdownMenuRadioItem>
+                                        ))}
+                                    </DropdownMenuRadioGroup>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuLabel className="text-xs text-muted-foreground">Category</DropdownMenuLabel>
+                                    <DropdownMenuRadioGroup
+                                        value={issue.category}
+                                        onValueChange={(v) =>
+                                            v !== issue.category &&
+                                            void change(
+                                                {
+                                                    category:
+                                                        v === (issue.reviewerCategory ?? issue.category) && issue.reviewerCategory
+                                                            ? "reviewer"
+                                                            : (v as Category),
+                                                },
+                                                `Filed under ${CATEGORY_LABEL[v as Category].toLowerCase()}.`,
+                                            )
+                                        }
+                                    >
+                                        {CATEGORIES.map((c) => (
+                                            <DropdownMenuRadioItem key={c} value={c}>
+                                                {CATEGORY_LABEL[c]}
+                                            </DropdownMenuRadioItem>
+                                        ))}
+                                    </DropdownMenuRadioGroup>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                            {(issue.reviewerSeverity || issue.reviewerCategory) && (
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() =>
+                                        void change(
+                                            {
+                                                ...(issue.reviewerSeverity ? { severity: "reviewer" as const } : {}),
+                                                ...(issue.reviewerCategory ? { category: "reviewer" as const } : {}),
+                                            },
+                                            "Reviewer's rating restored.",
+                                        )
+                                    }
+                                >
+                                    <RotateCcw /> Restore the reviewer's rating
                                 </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start">
-                                <DropdownMenuLabel className="text-xs text-muted-foreground">Severity</DropdownMenuLabel>
-                                <DropdownMenuRadioGroup
-                                    value={issue.severity}
-                                    onValueChange={(v) =>
-                                        v !== issue.severity &&
-                                        void change(
-                                            {
-                                                severity:
-                                                    v === (issue.reviewerSeverity ?? issue.severity) && issue.reviewerSeverity
-                                                        ? "reviewer"
-                                                        : (v as Severity),
-                                            },
-                                            `Rated ${v}.`,
-                                        )
-                                    }
-                                >
-                                    {SEVERITIES.map((s) => (
-                                        <DropdownMenuRadioItem key={s} value={s}>
-                                            <span className={`sev sev-${s}`}>{SEVERITY_LABEL[s]}</span>
-                                        </DropdownMenuRadioItem>
-                                    ))}
-                                </DropdownMenuRadioGroup>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuLabel className="text-xs text-muted-foreground">Category</DropdownMenuLabel>
-                                <DropdownMenuRadioGroup
-                                    value={issue.category}
-                                    onValueChange={(v) =>
-                                        v !== issue.category &&
-                                        void change(
-                                            {
-                                                category:
-                                                    v === (issue.reviewerCategory ?? issue.category) && issue.reviewerCategory
-                                                        ? "reviewer"
-                                                        : (v as Category),
-                                            },
-                                            `Filed under ${CATEGORY_LABEL[v as Category].toLowerCase()}.`,
-                                        )
-                                    }
-                                >
-                                    {CATEGORIES.map((c) => (
-                                        <DropdownMenuRadioItem key={c} value={c}>
-                                            {CATEGORY_LABEL[c]}
-                                        </DropdownMenuRadioItem>
-                                    ))}
-                                </DropdownMenuRadioGroup>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                        {(issue.reviewerSeverity || issue.reviewerCategory) && (
-                            <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() =>
-                                    void change(
-                                        {
-                                            ...(issue.reviewerSeverity ? { severity: "reviewer" as const } : {}),
-                                            ...(issue.reviewerCategory ? { category: "reviewer" as const } : {}),
-                                        },
-                                        "Reviewer's rating restored.",
-                                    )
-                                }
-                            >
-                                <RotateCcw /> Restore the reviewer's rating
-                            </Button>
-                        )}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                        <div className="flex items-center gap-2">
-                            <Switch
-                                id={`${assigneeId}-discuss`}
-                                checked={issue.needsDiscussion}
-                                onCheckedChange={(v) =>
-                                    void change({ needsDiscussion: v }, v ? "Flagged for discussion." : "Discussion flag cleared.")
-                                }
-                            />
-                            <Label htmlFor={`${assigneeId}-discuss`}>Needs discussion</Label>
+                            )}
                         </div>
-                        {issue.duplicateOf ? (
-                            <Button size="sm" variant="ghost" onClick={() => void change({ duplicateOf: null }, "No longer a duplicate.")}>
-                                Not a duplicate
-                            </Button>
-                        ) : (
-                            <Button size="sm" variant="outline" onClick={() => setPickingDuplicate(true)}>
-                                Mark as a duplicate…
-                            </Button>
-                        )}
-                    </div>
+                    </fieldset>
+
+                    <fieldset className="grid gap-field">
+                        <legend className="mb-field text-xs font-medium text-muted-foreground">Flags</legend>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                            <div className="flex items-center gap-2">
+                                <Switch
+                                    id={`${assigneeId}-discuss`}
+                                    checked={issue.needsDiscussion}
+                                    onCheckedChange={(v) =>
+                                        void change({ needsDiscussion: v }, v ? "Flagged for discussion." : "Discussion flag cleared.")
+                                    }
+                                />
+                                <Label htmlFor={`${assigneeId}-discuss`}>Needs discussion</Label>
+                            </div>
+                            {issue.duplicateOf ? (
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => void change({ duplicateOf: null }, "No longer a duplicate.")}
+                                >
+                                    Not a duplicate
+                                </Button>
+                            ) : (
+                                <Button size="sm" variant="outline" onClick={() => setPickingDuplicate(true)}>
+                                    Mark as a duplicate…
+                                </Button>
+                            )}
+                        </div>
+                    </fieldset>
                     <DuplicatePicker
                         open={pickingDuplicate}
                         onOpenChange={setPickingDuplicate}

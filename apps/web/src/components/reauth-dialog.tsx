@@ -121,7 +121,7 @@ export function ReauthDialog() {
                         </Button>
                     </DialogFooter>
                 ) : (
-                    <form onSubmit={confirm} className="grid gap-4" noValidate>
+                    <form onSubmit={confirm} className="grid gap-form" noValidate>
                         <div className="grid gap-1.5">
                             <Label htmlFor="reauth-password">Password</Label>
                             <PasswordInput

@@ -3,20 +3,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { SEVERITIES, STATUSES } from "@triagent/shared";
-import { useDeferredValue, useId, useState } from "react";
+import { useDeferredValue, useState } from "react";
+import { Field } from "@/components/field";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { SeverityBar } from "@/components/marks";
 import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { plural, SEVERITY_LABEL, STATUS_LABEL } from "@/lib/format";
 import { filesQuery } from "@/lib/queries";
 import { useProject } from "@/lib/session";
 
 export function FilesPage() {
     const { ws, slug, project, branch, branchParam } = useProject();
-    const filterId = useId();
     const [filter, setFilter] = useState("");
     const deferred = useDeferredValue(filter.trim().toLowerCase());
     const query = useQuery(filesQuery(ws, slug, branch));
@@ -34,10 +33,9 @@ export function FilesPage() {
                     </>
                 }
             />
-            <div className="grid max-w-sm gap-1.5">
-                <Label htmlFor={filterId}>Show files whose path contains</Label>
-                <Input id={filterId} type="search" value={filter} onChange={(e) => setFilter(e.target.value)} className="font-mono" />
-            </div>
+            <Field label="Show files whose path contains" width="lg">
+                {(p) => <Input {...p} type="search" value={filter} onChange={(e) => setFilter(e.target.value)} className="font-mono" />}
+            </Field>
             {query.isPending ? (
                 <LoadingRows rows={8} />
             ) : query.isError ? (
@@ -49,9 +47,9 @@ export function FilesPage() {
                     <p className="text-sm text-muted-foreground" aria-live="polite">
                         {deferred ? `${items.length} of ${plural(all.length, "file")}` : plural(all.length, "file")}
                     </p>
-                    <div className="rounded-md border">
+                    <TableFrame>
                         <Table>
-                            <TableHeader className="bg-muted/50 text-xs">
+                            <TableHeader>
                                 <TableRow>
                                     <TableHead scope="col">File</TableHead>
                                     <TableHead scope="col" className="text-end">
@@ -107,7 +105,7 @@ export function FilesPage() {
                                 ))}
                             </TableBody>
                         </Table>
-                    </div>
+                    </TableFrame>
                 </>
             )}
         </Page>

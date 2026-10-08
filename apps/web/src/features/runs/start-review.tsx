@@ -6,7 +6,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Play } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { toast } from "sonner";
-import { Field, FieldError } from "@/components/field";
+import { type Choice, ChoiceField, Field, FieldError } from "@/components/field";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -22,7 +22,7 @@ export interface StartReviewDefaults {
     base?: string;
 }
 
-const KINDS: { value: RunKind; label: string; hint: string }[] = [
+const KINDS: readonly Choice<RunKind>[] = [
     { value: "pr", label: "A pull request", hint: "Only what the pull request changes." },
     { value: "changes", label: "A branch's changes", hint: "What the branch changed since it left its base." },
     { value: "full", label: "A whole branch", hint: "Every file: slower, and uses more of the model." },
@@ -86,7 +86,7 @@ export function StartReview({
             </DialogTrigger>
             <DialogContent>
                 <form
-                    className="grid gap-4"
+                    className="grid gap-form"
                     onSubmit={(e) => {
                         e.preventDefault();
                         if (ready) start.mutate();
@@ -98,37 +98,11 @@ export function StartReview({
                             Open Code Review runs on {project.name}'s code from GitHub. The findings go to the branch's report here.
                         </DialogDescription>
                     </DialogHeader>
-                    <fieldset className="grid gap-2">
-                        <legend className="mb-1 text-sm font-medium">What to review</legend>
-                        {KINDS.map((k) => (
-                            <label key={k.value} htmlFor={`${id}-${k.value}`} className="flex items-start gap-2 text-sm">
-                                <input
-                                    type="radio"
-                                    id={`${id}-${k.value}`}
-                                    name="kind"
-                                    value={k.value}
-                                    checked={kind === k.value}
-                                    onChange={() => setKind(k.value)}
-                                    className="mt-1 accent-primary"
-                                />
-                                <span>
-                                    <span className="font-medium">{k.label}</span>
-                                    <span className="block text-xs text-muted-foreground">{k.hint}</span>
-                                </span>
-                            </label>
-                        ))}
-                    </fieldset>
+                    <ChoiceField legend="What to review" name={`${id}-kind`} value={kind} onChange={setKind} choices={KINDS} />
                     {kind === "pr" ? (
-                        <Field label="Pull request number">
+                        <Field label="Pull request number" width="sm">
                             {(p) => (
-                                <Input
-                                    {...p}
-                                    inputMode="numeric"
-                                    value={number}
-                                    onChange={(e) => setNumber(e.target.value)}
-                                    className="w-40"
-                                    required
-                                />
+                                <Input {...p} inputMode="numeric" value={number} onChange={(e) => setNumber(e.target.value)} required />
                             )}
                         </Field>
                     ) : (

@@ -1,16 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useId, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
 import { CopyButton } from "@/components/copy-button";
-import { FieldError } from "@/components/field";
+import { ControlGroup, Field, FieldError } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { OneTimeReveal } from "@/components/one-time-reveal";
 import { SecretField } from "@/components/secret-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { githubQuery, keys } from "@/lib/queries";
@@ -22,7 +22,6 @@ export function ProjectGithub() {
     const { ws, slug, project } = useProject();
     const can = useCan();
     const queryClient = useQueryClient();
-    const urlId = useId();
     const query = useQuery({ ...githubQuery(ws, slug), enabled: can("configure") });
     const [secret, setSecret] = useState<string | null>(null);
     const dismiss = useCallback(() => setSecret(null), []);
@@ -104,13 +103,14 @@ export function ProjectGithub() {
                                 : "Lets GitHub tell Triagent about new pull requests and pushes straight away, instead of Triagent checking every few minutes."
                         }
                     >
-                        <div className="grid gap-1.5">
-                            <Label htmlFor={urlId}>Payload URL</Label>
-                            <div className="flex flex-wrap gap-2">
-                                <Input id={urlId} readOnly value={data.webhook.url} className="min-w-0 flex-1 font-mono text-xs" />
-                                <CopyButton value={data.webhook.url} />
-                            </div>
-                        </div>
+                        <Field label="Payload URL">
+                            {(p) => (
+                                <ControlGroup>
+                                    <Input {...p} readOnly value={data.webhook.url} className="font-mono text-xs" />
+                                    <CopyButton value={data.webhook.url} />
+                                </ControlGroup>
+                            )}
+                        </Field>
                         <ol className="list-decimal space-y-1 ps-5 text-sm text-muted-foreground">
                             <li>In the repository on GitHub, open Settings → Webhooks → Add webhook.</li>
                             <li>Paste the payload URL above, and set the content type to application/json.</li>
@@ -135,7 +135,7 @@ export function ProjectGithub() {
                             />
                         )}
                         {canSecrets && (
-                            <div className="flex flex-wrap gap-2">
+                            <FormActions>
                                 {data.webhook.secretSet ? (
                                     <ConfirmAction
                                         trigger={<Button variant="outline">Generate a new secret</Button>}
@@ -164,7 +164,7 @@ export function ProjectGithub() {
                                         }}
                                     />
                                 )}
-                            </div>
+                            </FormActions>
                         )}
                         <FieldError message={generate.error ? errorMessage(generate.error) : null} />
                     </SettingsSection>

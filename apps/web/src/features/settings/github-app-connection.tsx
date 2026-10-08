@@ -7,7 +7,8 @@ import { Link, useLocation } from "@tanstack/react-router";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
-import { FieldError, NativeSelect } from "@/components/field";
+import { ControlGroup, FieldError, NativeSelect } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadingRows } from "@/components/load-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -138,17 +139,17 @@ export function GithubAppConnection({ data }: { data: GithubSettings }) {
                     </ul>
                 )}
                 {can("secrets") && (
-                    <div>
+                    <FormActions>
                         <Button variant="outline" onClick={() => install.mutate()} disabled={install.isPending}>
                             Install on GitHub…
                         </Button>
                         <FieldError message={install.error ? errorMessage(install.error) : null} />
-                    </div>
+                    </FormActions>
                 )}
             </div>
             {data.installations.length > 0 && can("configure") && (
                 <form
-                    className="grid gap-2"
+                    className="grid gap-field"
                     onSubmit={(e) => {
                         e.preventDefault();
                         const r = repos.find((x) => `${x.installationId}:${x.id}` === choice);
@@ -159,8 +160,8 @@ export function GithubAppConnection({ data }: { data: GithubSettings }) {
                     {installations.isPending ? (
                         <LoadingRows rows={1} />
                     ) : (
-                        <div className="flex flex-wrap gap-2">
-                            <NativeSelect id={selectId} value={choice} onChange={(e) => setChoice(e.target.value)} className="w-80">
+                        <ControlGroup>
+                            <NativeSelect id={selectId} value={choice} onChange={(e) => setChoice(e.target.value)}>
                                 <option value="">
                                     {data.repository ? `${data.repository.fullName} (current)` : "Choose a repository…"}
                                 </option>
@@ -173,7 +174,7 @@ export function GithubAppConnection({ data }: { data: GithubSettings }) {
                             <Button type="submit" disabled={!choice || pick.isPending}>
                                 Use this repository
                             </Button>
-                        </div>
+                        </ControlGroup>
                     )}
                     {(installations.data ?? []).some((i) => i.error) && (
                         <p className="text-sm text-destructive">{installations.data?.find((i) => i.error)?.error}</p>
@@ -182,7 +183,7 @@ export function GithubAppConnection({ data }: { data: GithubSettings }) {
                 </form>
             )}
             {data.repository && can("configure") && (
-                <div>
+                <FormActions>
                     <ConfirmAction
                         trigger={<Button variant="ghost">Stop using the app</Button>}
                         title="Stop using the GitHub App for this project?"
@@ -193,7 +194,7 @@ export function GithubAppConnection({ data }: { data: GithubSettings }) {
                             refresh();
                         }}
                     />
-                </div>
+                </FormActions>
             )}
         </SettingsSection>
     );
@@ -211,11 +212,11 @@ export function TestConnection({ data }: { data: GithubSettings }) {
     if (data.mode === "none") return null;
     return (
         <SettingsSection title="Check the connection">
-            <div>
+            <FormActions>
                 <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending}>
                     {test.isPending ? "Checking…" : "Test the connection"}
                 </Button>
-            </div>
+            </FormActions>
             {test.data && (
                 <p className="text-sm" role="status">
                     {test.data.note} {test.data.repository.fullName} has {test.data.openPulls} open pull request

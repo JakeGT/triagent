@@ -37,13 +37,25 @@ export function PageHeader({
 }
 
 export function Page({ children, className, wide }: { children: ReactNode; className?: string; wide?: boolean }) {
-    return <div className={cn("mx-auto grid w-full gap-5 p-4 md:p-6", wide ? "max-w-none" : "max-w-6xl", className)}>{children}</div>;
+    // One column that may shrink below its content's width, so a wide table scrolls inside its frame
+    // instead of widening the page on a phone.
+    return (
+        <div
+            className={cn(
+                "mx-auto grid w-full grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6",
+                wide ? "max-w-none" : "max-w-6xl",
+                className,
+            )}
+        >
+            {children}
+        </div>
+    );
 }
 
 export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
     return (
         <div className="grid justify-items-start gap-2 rounded-lg border border-dashed p-6">
-            <h2 className="font-medium">{title}</h2>
+            <h2 className="section-title">{title}</h2>
             {children && <div className="max-w-prose text-sm text-muted-foreground">{children}</div>}
             {action}
         </div>

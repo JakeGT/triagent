@@ -2,12 +2,12 @@
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { useId, useState } from "react";
-import { NativeSelect } from "@/components/field";
+import { useState } from "react";
+import { Field, FieldRow, FieldRowActions, NativeSelect } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { api, paths } from "@/lib/api";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { branchesQuery } from "@/lib/queries";
@@ -30,7 +30,6 @@ export function ActivityPage() {
     const { ws, slug, project } = useProject();
     const search = useSearch({ from: "/authed/w/$ws/p/$project/activity" });
     const navigate = useNavigate();
-    const selectId = useId();
     const filter = search.branch ?? "";
     const [choice, setChoice] = useState(filter);
     const branches = useQuery(branchesQuery(ws, slug));
@@ -54,26 +53,31 @@ export function ActivityPage() {
             <PageMeta title={`Activity · ${project.name}`} />
             <PageHeader title="Activity" description="Changes to issues, tasks, reports and branches, newest first." />
             <form
-                className="flex flex-wrap items-end gap-2"
+                className="grid"
                 onSubmit={(e) => {
                     e.preventDefault();
                     void navigate({ to: ".", search: { branch: choice || undefined } });
                 }}
             >
-                <div className="grid gap-1.5">
-                    <Label htmlFor={selectId}>Branch</Label>
-                    <NativeSelect id={selectId} value={choice} onChange={(e) => setChoice(e.target.value)} className="w-60">
-                        <option value="">All branches</option>
-                        {(branches.data?.items ?? []).map((b) => (
-                            <option key={b.name} value={b.name}>
-                                {b.name}
-                            </option>
-                        ))}
-                    </NativeSelect>
-                </div>
-                <Button type="submit" variant="outline">
-                    Show
-                </Button>
+                <FieldRow columns="auto">
+                    <Field label="Branch" width="md">
+                        {(p) => (
+                            <NativeSelect {...p} value={choice} onChange={(e) => setChoice(e.target.value)}>
+                                <option value="">All branches</option>
+                                {(branches.data?.items ?? []).map((b) => (
+                                    <option key={b.name} value={b.name}>
+                                        {b.name}
+                                    </option>
+                                ))}
+                            </NativeSelect>
+                        )}
+                    </Field>
+                    <FieldRowActions>
+                        <Button type="submit" variant="outline">
+                            Show
+                        </Button>
+                    </FieldRowActions>
+                </FieldRow>
             </form>
 
             {activity.isPending ? (
@@ -104,11 +108,11 @@ export function ActivityPage() {
                         ))}
                     </ol>
                     {activity.hasNextPage && (
-                        <div>
+                        <FormActions>
                             <Button variant="outline" onClick={() => activity.fetchNextPage()} disabled={activity.isFetchingNextPage}>
                                 {activity.isFetchingNextPage ? "Loading…" : "Show older changes"}
                             </Button>
-                        </div>
+                        </FormActions>
                     )}
                 </>
             )}

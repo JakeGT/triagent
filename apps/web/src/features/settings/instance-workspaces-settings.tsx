@@ -6,12 +6,12 @@ import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
 import { UsageBar } from "@/components/charts";
 import { ConfirmAction } from "@/components/confirm-action";
-import { FieldError } from "@/components/field";
+import { Field, FieldError } from "@/components/field";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage } from "@/lib/api";
 import { compactCount, count, utcDay } from "@/lib/insights-format";
 import { insightKeys, instancePaths, instanceWorkspacesQuery } from "@/lib/insights-queries";
@@ -79,7 +79,7 @@ function GrantRow({ w }: { w: InstanceWorkspace }) {
                             onChange={(e) => setValue(e.target.value)}
                             placeholder="No allowance"
                             inputMode="numeric"
-                            className="w-36 tabular-nums"
+                            className="h-8 w-36 tabular-nums"
                             aria-invalid={error ? true : undefined}
                             aria-describedby={error ? `${id}-error` : undefined}
                         />
@@ -133,7 +133,6 @@ export function InstanceWorkspacesSettings() {
     const allowed = me.user.isInstanceAdmin;
     const query = useQuery({ ...instanceWorkspacesQuery, enabled: allowed });
     const [q, setQ] = useState("");
-    const findId = useId();
 
     if (!allowed)
         return (
@@ -154,7 +153,7 @@ export function InstanceWorkspacesSettings() {
                     ? `Every workspace on this instance. Those with an allowance can use the instance model key when they have no key of their own, up to their tokens each month; allowances reset on ${utcDay(query.data.resetsAt)} (UTC).`
                     : "Every workspace on this instance, and its allowance of the instance model key."
             }
-            className="max-w-5xl"
+            wide
         >
             {query.isError ? (
                 <LoadError error={query.error} onRetry={() => query.refetch()} />
@@ -162,33 +161,37 @@ export function InstanceWorkspacesSettings() {
                 <LoadingRows rows={5} />
             ) : (
                 <>
-                    <div className="flex flex-wrap items-end justify-between gap-3">
-                        <div className="grid gap-1.5">
-                            <Label htmlFor={findId}>Find a workspace</Label>
-                            <Input id={findId} type="search" value={q} onChange={(e) => setQ(e.target.value)} className="w-64" />
-                        </div>
-                        <p className="text-sm text-muted-foreground" role="status">
-                            {count(query.data.items.length)} workspaces, {count(granted)} with an allowance.
-                        </p>
-                    </div>
-                    <Table>
-                        <caption className="sr-only">Workspaces and their instance key allowances</caption>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead scope="col">Workspace</TableHead>
-                                <TableHead scope="col">Tokens a month</TableHead>
-                                <TableHead scope="col">Used this month</TableHead>
-                                <TableHead scope="col">
-                                    <span className="sr-only">Actions</span>
-                                </TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {items.slice(0, SHOWN).map((w) => (
-                                <GrantRow key={`${w.id}:${w.grant?.monthlyTokens ?? ""}`} w={w} />
-                            ))}
-                        </TableBody>
-                    </Table>
+                    <Field
+                        label="Find a workspace"
+                        width="md"
+                        hint={
+                            <span role="status">
+                                {count(query.data.items.length)} workspaces, {count(granted)} with an allowance.
+                            </span>
+                        }
+                    >
+                        {(p) => <Input {...p} type="search" value={q} onChange={(e) => setQ(e.target.value)} />}
+                    </Field>
+                    <TableFrame>
+                        <Table>
+                            <caption className="sr-only">Workspaces and their instance key allowances</caption>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead scope="col">Workspace</TableHead>
+                                    <TableHead scope="col">Tokens a month</TableHead>
+                                    <TableHead scope="col">Used this month</TableHead>
+                                    <TableHead scope="col">
+                                        <span className="sr-only">Actions</span>
+                                    </TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {items.slice(0, SHOWN).map((w) => (
+                                    <GrantRow key={`${w.id}:${w.grant?.monthlyTokens ?? ""}`} w={w} />
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </TableFrame>
                     {items.length > SHOWN && (
                         <p className="text-sm text-muted-foreground">
                             Showing {SHOWN} of {count(items.length)}. Search to find the others.

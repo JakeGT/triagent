@@ -7,7 +7,7 @@ import { AlertTriangle } from "lucide-react";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { runListQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
@@ -82,7 +82,7 @@ export function RunsPage() {
                 <>
                     <WaitingBanner list={data} ws={ws} />
                     <section aria-labelledby="running-heading" className="grid gap-2">
-                        <h2 id="running-heading" className="font-semibold">
+                        <h2 id="running-heading" className="section-title">
                             Running now
                         </h2>
                         {data.running.length === 0 ? (
@@ -116,15 +116,15 @@ export function RunsPage() {
                     </section>
 
                     <section aria-labelledby="queue-heading" className="grid gap-2">
-                        <h2 id="queue-heading" className="font-semibold">
+                        <h2 id="queue-heading" className="section-title">
                             Queue
                         </h2>
                         {data.queued.length === 0 ? (
                             <p className="text-sm text-muted-foreground">Nothing is waiting.</p>
                         ) : (
-                            <div className="rounded-md border">
+                            <TableFrame>
                                 <Table>
-                                    <TableHeader className="bg-muted/50 text-xs">
+                                    <TableHeader>
                                         <TableRow>
                                             <TableHead scope="col">Review</TableHead>
                                             <TableHead scope="col">Requested</TableHead>
@@ -157,12 +157,12 @@ export function RunsPage() {
                                         ))}
                                     </TableBody>
                                 </Table>
-                            </div>
+                            </TableFrame>
                         )}
                     </section>
 
                     <section aria-labelledby="recent-heading" className="grid gap-2">
-                        <h2 id="recent-heading" className="font-semibold">
+                        <h2 id="recent-heading" className="section-title">
                             Recent
                         </h2>
                         {data.recent.length === 0 ? (
@@ -172,9 +172,9 @@ export function RunsPage() {
                                     : "Reviews appear here once someone starts one, or automatic reviews are switched on."}
                             </EmptyState>
                         ) : (
-                            <div className="rounded-md border">
+                            <TableFrame>
                                 <Table>
-                                    <TableHeader className="bg-muted/50 text-xs">
+                                    <TableHeader>
                                         <TableRow>
                                             <TableHead scope="col">Status</TableHead>
                                             <TableHead scope="col">Review</TableHead>
@@ -228,7 +228,7 @@ export function RunsPage() {
                                         ))}
                                     </TableBody>
                                 </Table>
-                            </div>
+                            </TableFrame>
                         )}
                     </section>
                     <p className="text-xs text-muted-foreground">

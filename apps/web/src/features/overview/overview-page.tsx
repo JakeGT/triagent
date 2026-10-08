@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { SEVERITIES, type Severity, STATUSES, type Status } from "@triagent/shared";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { FormSection } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { InlineCode } from "@/components/markdown";
 import { SeverityBar, SeverityMark, StatusMark } from "@/components/marks";
@@ -24,17 +25,10 @@ const SEV_BG: Record<Severity, string> = {
 };
 
 function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
-    const id = `overview-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`;
     return (
-        <section aria-labelledby={id} className="grid content-start gap-2 rounded-lg border bg-card p-4">
-            <div className="flex items-baseline justify-between gap-2">
-                <h2 id={id} className="font-semibold">
-                    {title}
-                </h2>
-                {action}
-            </div>
+        <FormSection title={title} aside={action} level={2}>
             {children}
-        </section>
+        </FormSection>
     );
 }
 

@@ -79,7 +79,7 @@ export function ConfirmAction({
                         e.preventDefault();
                         void confirm();
                     }}
-                    className="grid gap-4"
+                    className="grid gap-form"
                 >
                     <AlertDialogHeader>
                         <AlertDialogTitle>{title}</AlertDialogTitle>

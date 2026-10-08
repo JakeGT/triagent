@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { LoadError, LoadingRows } from "@/components/load-state";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/format";
 import { auditQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
@@ -40,7 +40,7 @@ export function AuditSettings() {
             ) : query.data.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Nothing yet.</p>
             ) : (
-                <div className="rounded-md border">
+                <TableFrame>
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -74,7 +74,7 @@ export function AuditSettings() {
                             ))}
                         </TableBody>
                     </Table>
-                </div>
+                </TableFrame>
             )}
         </SettingsPage>
     );

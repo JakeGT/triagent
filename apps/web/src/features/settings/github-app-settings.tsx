@@ -3,16 +3,16 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
 import { CopyButton } from "@/components/copy-button";
-import { Field, FieldError } from "@/components/field";
+import { CheckField, ControlGroup, Field, FieldError } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Deliveries, Refused } from "@/features/runs/pull-requests-page";
 import { api, errorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -27,8 +27,6 @@ export function GithubAppSettings() {
     const queryClient = useQueryClient();
     const created = useLocation({ select: (l) => Boolean((l.search as { created?: string }).created) });
     const status = useQuery({ ...githubAppQuery, enabled: me.user.isInstanceAdmin });
-    const urlId = useId();
-    const publicId = useId();
     const [name, setName] = useState("Triagent");
     const [org, setOrg] = useState("");
     const [isPublic, setPublic] = useState(false);
@@ -92,14 +90,15 @@ export function GithubAppSettings() {
                                 by {data.app.createdBy} on {formatDate(data.app.createdAt)}
                             </dd>
                         </dl>
-                        <div className="grid gap-1.5">
-                            <Label htmlFor={urlId}>Webhook URL</Label>
-                            <div className="flex flex-wrap gap-2">
-                                <Input id={urlId} readOnly value={data.webhookUrl} className="min-w-0 flex-1 font-mono text-xs" />
-                                <CopyButton value={data.webhookUrl} />
-                            </div>
-                        </div>
-                        <div>
+                        <Field label="Webhook URL">
+                            {(p) => (
+                                <ControlGroup>
+                                    <Input {...p} readOnly value={data.webhookUrl} className="font-mono text-xs" />
+                                    <CopyButton value={data.webhookUrl} />
+                                </ControlGroup>
+                            )}
+                        </Field>
+                        <FormActions>
                             <ConfirmAction
                                 trigger={<Button variant="outline">Remove the app</Button>}
                                 title="Remove the GitHub App?"
@@ -111,7 +110,7 @@ export function GithubAppSettings() {
                                     await queryClient.invalidateQueries({ queryKey: keys.githubApp });
                                 }}
                             />
-                        </div>
+                        </FormActions>
                     </SettingsSection>
                     <SettingsSection
                         title="Webhook deliveries"
@@ -132,7 +131,7 @@ export function GithubAppSettings() {
                     }
                 >
                     <form
-                        className="grid gap-4"
+                        className="grid gap-form"
                         onSubmit={(e) => {
                             e.preventDefault();
                             start.mutate();
@@ -146,22 +145,18 @@ export function GithubAppSettings() {
                                 <Input {...p} value={org} onChange={(e) => setOrg(e.target.value)} spellCheck={false} autoComplete="off" />
                             )}
                         </Field>
-                        <div className="flex items-start gap-2">
-                            <Checkbox id={publicId} checked={isPublic} onCheckedChange={(v) => setPublic(v === true)} className="mt-0.5" />
-                            <Label htmlFor={publicId} className="grid gap-0.5 font-normal">
-                                <span>Any GitHub account can install it</span>
-                                <span className="text-xs text-muted-foreground">
-                                    Needed if other people's workspaces use this instance. Otherwise only its owner's account can install
-                                    it.
-                                </span>
-                            </Label>
-                        </div>
+                        <CheckField
+                            label="Any GitHub account can install it"
+                            hint="Needed if other people's workspaces use this instance. Otherwise only its owner's account can install it."
+                        >
+                            {(p) => <Checkbox {...p} checked={isPublic} onCheckedChange={(v) => setPublic(v === true)} />}
+                        </CheckField>
                         <FieldError message={start.error ? errorMessage(start.error) : null} />
-                        <div>
+                        <FormActions>
                             <Button type="submit" disabled={start.isPending || name.trim().length < 3}>
                                 Continue to GitHub…
                             </Button>
-                        </div>
+                        </FormActions>
                     </form>
                 </SettingsSection>
             )}

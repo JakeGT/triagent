@@ -1,14 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info } from "lucide-react";
-import { useId } from "react";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
-import { Field, FieldError, NativeSelect } from "@/components/field";
+import { CheckField, Field, FieldError, NativeSelect } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
@@ -76,24 +75,10 @@ function Toggle({
     disabled: boolean;
     onChange(v: boolean): void;
 }) {
-    const id = useId();
     return (
-        <div className="flex items-start gap-3">
-            <Switch
-                id={id}
-                checked={checked}
-                onCheckedChange={onChange}
-                disabled={disabled}
-                aria-describedby={`${id}-hint`}
-                className="mt-0.5"
-            />
-            <div className="grid gap-0.5">
-                <Label htmlFor={id}>{label}</Label>
-                <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-                    {hint}
-                </p>
-            </div>
-        </div>
+        <CheckField label={label} hint={hint}>
+            {(p) => <Switch {...p} checked={checked} onCheckedChange={onChange} disabled={disabled} />}
+        </CheckField>
     );
 }
 
@@ -156,6 +141,7 @@ export function ProjectAutomation() {
                         <Field
                             label="Review pull requests from"
                             hint="Each review spends this workspace's model budget. Pull requests from forks by anyone else wait until someone who can start reviews clicks Review now."
+                            width="lg"
                         >
                             {(p) => (
                                 <NativeSelect
@@ -165,14 +151,13 @@ export function ProjectAutomation() {
                                         set({ reviewPullRequestsFrom: e.target.value as Automation["reviewPullRequestsFrom"] })
                                     }
                                     disabled={!editable}
-                                    className="w-80"
                                 >
                                     <option value="collaborators">Branches of the repository, and its collaborators</option>
                                     <option value="everyone">Everyone, forks included</option>
                                 </NativeSelect>
                             )}
                         </Field>
-                        <Field label="Check for pull requests every (minutes)" hint="Used when there's no webhook. 1 to 60.">
+                        <Field label="Check for pull requests every (minutes)" hint="Used when there's no webhook. 1 to 60." width="xs">
                             {(p) => (
                                 <Input
                                     {...p}
@@ -182,11 +167,14 @@ export function ProjectAutomation() {
                                     value={d.pollMinutes}
                                     onChange={(e) => set({ pollMinutes: e.target.value })}
                                     disabled={!editable}
-                                    className="w-32"
                                 />
                             )}
                         </Field>
-                        <Field label="Review time limit (minutes)" hint="A pull request review that runs longer is stopped. 5 to 720.">
+                        <Field
+                            label="Review time limit (minutes)"
+                            hint="A pull request review that runs longer is stopped. 5 to 720."
+                            width="xs"
+                        >
                             {(p) => (
                                 <Input
                                     {...p}
@@ -196,20 +184,18 @@ export function ProjectAutomation() {
                                     value={d.reviewTimeoutMinutes}
                                     onChange={(e) => set({ reviewTimeoutMinutes: e.target.value })}
                                     disabled={!editable}
-                                    className="w-32"
                                 />
                             )}
                         </Field>
                     </SettingsSection>
                     <SettingsSection title="Full scans and branches">
-                        <Field label="Nightly full scan of the default branch" hint="The hour it starts, in UTC.">
+                        <Field label="Nightly full scan of the default branch" hint="The hour it starts, in UTC." width="sm">
                             {(p) => (
                                 <NativeSelect
                                     {...p}
                                     value={d.nightlyHourUtc}
                                     onChange={(e) => set({ nightlyHourUtc: e.target.value })}
                                     disabled={!editable}
-                                    className="w-48"
                                 >
                                     <option value="">None</option>
                                     {HOURS.map((h) => (
@@ -220,7 +206,7 @@ export function ProjectAutomation() {
                                 </NativeSelect>
                             )}
                         </Field>
-                        <Field label="Full scan time limit (minutes)" hint="5 to 720.">
+                        <Field label="Full scan time limit (minutes)" hint="5 to 720." width="xs">
                             {(p) => (
                                 <Input
                                     {...p}
@@ -230,13 +216,13 @@ export function ProjectAutomation() {
                                     value={d.fullScanTimeoutMinutes}
                                     onChange={(e) => set({ fullScanTimeoutMinutes: e.target.value })}
                                     disabled={!editable}
-                                    className="w-32"
                                 />
                             )}
                         </Field>
                         <Field
                             label="Model token budget per review"
                             hint="A review that would use more tokens stops. Empty for no limit; at least 10,000."
+                            width="sm"
                         >
                             {(p) => (
                                 <Input
@@ -246,7 +232,6 @@ export function ProjectAutomation() {
                                     value={d.maxTokensBudget}
                                     onChange={(e) => set({ maxTokensBudget: e.target.value })}
                                     disabled={!editable}
-                                    className="w-48"
                                 />
                             )}
                         </Field>
@@ -260,11 +245,11 @@ export function ProjectAutomation() {
                     </SettingsSection>
                     <FieldError message={save.error ? errorMessage(save.error) : null} />
                     {editable && (
-                        <div>
+                        <FormActions>
                             <Button type="submit" disabled={save.isPending || !form.dirty}>
                                 {save.isPending ? "Saving…" : "Save changes"}
                             </Button>
-                        </div>
+                        </FormActions>
                     )}
                 </form>
             )}

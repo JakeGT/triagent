@@ -4,10 +4,10 @@
 
 import { type FormEvent, useId, useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
-import { FieldError } from "@/components/field";
+import { Field, FieldError, FieldRow } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { errorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -84,21 +84,22 @@ export function PriceEditor({
     };
 
     const field = (key: keyof typeof EMPTY, label: string, extra: Record<string, unknown> = {}) => (
-        <div className="grid gap-1.5">
-            <Label htmlFor={`${id}-${key}`}>{label}</Label>
-            <Input
-                id={`${id}-${key}`}
-                value={form[key]}
-                onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                aria-invalid={error ? true : undefined}
-                aria-describedby={error ? `${id}-error` : undefined}
-                {...extra}
-            />
-        </div>
+        <Field label={label}>
+            {(p) => (
+                <Input
+                    {...p}
+                    value={form[key]}
+                    onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={error ? `${id}-error` : undefined}
+                    {...extra}
+                />
+            )}
+        </Field>
     );
 
     return (
-        <div className="grid gap-4" data-testid="price-editor">
+        <div className="grid gap-form" data-testid="price-editor">
             {prices.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No {title} yet.</p>
             ) : (
@@ -174,8 +175,8 @@ export function PriceEditor({
                 </Table>
             )}
             {canEdit && (
-                <form className="grid gap-3" onSubmit={submit} aria-label={`Set a price (${title})`}>
-                    <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
+                <form className="grid gap-form" onSubmit={submit} aria-label={`Set a price (${title})`}>
+                    <FieldRow columns={4} className="lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
                         {field("model", "Model", {
                             list: catalogue.length ? `${id}-models` : undefined,
                             spellCheck: false,
@@ -185,7 +186,7 @@ export function PriceEditor({
                         {field("input", "Input (US$ per million)", { inputMode: "decimal" })}
                         {field("output", "Output (US$ per million)", { inputMode: "decimal" })}
                         {field("cacheRead", "Cache reads (optional)", { inputMode: "decimal", placeholder: "As input" })}
-                    </div>
+                    </FieldRow>
                     {catalogue.length > 0 && (
                         <datalist id={`${id}-models`}>
                             {catalogue.map((m) => (
@@ -194,7 +195,7 @@ export function PriceEditor({
                         </datalist>
                     )}
                     <FieldError id={`${id}-error`} message={error} />
-                    <div className="flex flex-wrap gap-2">
+                    <FormActions>
                         <Button type="submit" disabled={busy}>
                             {busy ? "Saving…" : "Save price"}
                         </Button>
@@ -214,7 +215,7 @@ export function PriceEditor({
                                 Use OpenRouter's price
                             </Button>
                         )}
-                    </div>
+                    </FormActions>
                 </form>
             )}
         </div>

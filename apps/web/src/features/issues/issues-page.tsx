@@ -244,7 +244,9 @@ export function IssuesPage() {
 
     const filtered = activeFilters(search) > 0;
     return (
-        <div className={cn("grid min-h-0 flex-1", issueId && "lg:grid-cols-[minmax(0,1fr)_minmax(26rem,0.95fr)]")}>
+        <div
+            className={cn("grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)]", issueId && "lg:grid-cols-[minmax(0,1fr)_minmax(26rem,0.95fr)]")}
+        >
             <PageMeta
                 title={`Issues · ${project.name}`}
                 markdown={`/api/v1/w/${encodeURIComponent(ws)}/p/${encodeURIComponent(slug)}/issues.md?branch=${encodeURIComponent(branch)}`}

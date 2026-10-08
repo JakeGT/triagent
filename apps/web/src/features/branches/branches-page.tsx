@@ -4,10 +4,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { History, MoveRight, RotateCw, Trash2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
-import { Field, FieldError } from "@/components/field";
+import { CheckField, Field, FieldError } from "@/components/field";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Badge } from "@/components/ui/badge";
@@ -15,8 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StartReview } from "@/features/runs/start-review";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDateTime, plural, timeAgo } from "@/lib/format";
@@ -53,7 +52,7 @@ export function BranchesPage() {
             {can("upload") && <UploadReport />}
 
             <section aria-labelledby="branches-heading" className="grid gap-2">
-                <h2 id="branches-heading" className="font-semibold">
+                <h2 id="branches-heading" className="section-title">
                     Branches with a report
                 </h2>
                 {branches.isPending ? (
@@ -67,9 +66,9 @@ export function BranchesPage() {
                             : "Someone with upload access needs to upload a report."}
                     </EmptyState>
                 ) : (
-                    <div className="rounded-md border">
+                    <TableFrame>
                         <Table>
-                            <TableHeader className="bg-muted/50 text-xs">
+                            <TableHeader>
                                 <TableRow>
                                     <TableHead scope="col">Branch</TableHead>
                                     <TableHead scope="col" className="text-end">
@@ -112,7 +111,7 @@ export function BranchesPage() {
                                         <TableCell className="text-end tabular-nums">{b.unresolved}</TableCell>
                                         <TableCell className="text-end tabular-nums">{b.inProgress}</TableCell>
                                         <TableCell className="text-end tabular-nums">{b.done}</TableCell>
-                                        <TableCell className="text-xs">
+                                        <TableCell className="min-w-56 text-xs whitespace-normal">
                                             <span className="font-mono">{b.fileName}</span>
                                             <span className="block text-muted-foreground">
                                                 {b.scope === "diff" ? "Changes only" : "Whole codebase"} · {b.uploadedBy},{" "}
@@ -129,7 +128,7 @@ export function BranchesPage() {
                                             <GithubState branch={b} />
                                         </TableCell>
                                         <TableCell>
-                                            <span className="flex justify-end gap-1">
+                                            <span className="flex flex-wrap justify-end gap-1">
                                                 {b.github?.onGitHub && !b.github.current && (
                                                     <StartReview
                                                         defaults={
@@ -184,13 +183,13 @@ export function BranchesPage() {
                                 ))}
                             </TableBody>
                         </Table>
-                    </div>
+                    </TableFrame>
                 )}
             </section>
 
             {branches.data?.github && branches.data.github.notReviewed.length > 0 && (
                 <section aria-labelledby="not-reviewed-heading" className="grid gap-2">
-                    <h2 id="not-reviewed-heading" className="font-semibold">
+                    <h2 id="not-reviewed-heading" className="section-title">
                         On GitHub, not reviewed yet
                     </h2>
                     <ul className="grid gap-1" data-testid="not-reviewed">
@@ -264,7 +263,6 @@ function HistoryDialog({ branch, onClose }: { branch: string | null; onClose(): 
 function MoveDialog({ branch, onClose }: { branch: Branch | null; onClose(): void }) {
     const { ws, slug } = useProject();
     const queryClient = useQueryClient();
-    const checkId = useId();
     const [to, setTo] = useState("");
     const [makeDefault, setMakeDefault] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
@@ -302,7 +300,7 @@ function MoveDialog({ branch, onClose }: { branch: Branch | null; onClose(): voi
         >
             <DialogContent>
                 <form
-                    className="grid gap-4"
+                    className="grid gap-form"
                     onSubmit={(e) => {
                         e.preventDefault();
                         if (to.trim()) move.mutate();
@@ -317,12 +315,9 @@ function MoveDialog({ branch, onClose }: { branch: Branch | null; onClose(): voi
                     <Field label="New branch name">
                         {(p) => <Input {...p} value={to} onChange={(e) => setTo(e.target.value)} className="font-mono" required />}
                     </Field>
-                    <div className="flex items-center gap-2">
-                        <Checkbox id={checkId} checked={makeDefault} onCheckedChange={(v) => setMakeDefault(v === true)} />
-                        <Label htmlFor={checkId} className="font-normal">
-                            Make it the project's default branch
-                        </Label>
-                    </div>
+                    <CheckField label="Make it the project's default branch">
+                        {(p) => <Checkbox {...p} checked={makeDefault} onCheckedChange={(v) => setMakeDefault(v === true)} />}
+                    </CheckField>
                     <FieldError message={move.error ? errorMessage(move.error) : null} />
                     <DialogFooter>
                         <Button type="button" variant="ghost" onClick={close}>

@@ -6,11 +6,11 @@ import { Link } from "@tanstack/react-router";
 import { SEVERITIES } from "@triagent/shared";
 import { useId, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Field, FieldError } from "@/components/field";
+import { ChoiceField, Field, FieldError, FieldRow } from "@/components/field";
+import { FormActions, FormSection } from "@/components/form";
 import { SeverityBar } from "@/components/marks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { api, errorMessage, paths } from "@/lib/api";
 import { plural, SEVERITY_LABEL } from "@/lib/format";
 import { keys } from "@/lib/queries";
@@ -95,73 +95,56 @@ export function UploadReport() {
 
     const p = preview;
     return (
-        <section aria-labelledby="upload-heading" className="grid gap-3 rounded-lg border bg-card p-4">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 id="upload-heading" className="font-semibold">
-                    Upload a report
-                </h2>
+        <FormSection
+            level={2}
+            title="Upload a report"
+            aside={
                 <Link to="/w/$ws/agents" params={{ ws }} search={{ project: slug }} className="text-sm underline">
                     Upload from CI instead
                 </Link>
-            </div>
+            }
+        >
             <form
-                className="grid gap-3 sm:grid-cols-2"
+                className="grid gap-form"
                 onSubmit={(e) => {
                     e.preventDefault();
                     void prepare();
                 }}
             >
-                <Field label="Branch">
-                    {(f) => <Input {...f} value={branch} onChange={(e) => setBranch(e.target.value)} className="font-mono" required />}
-                </Field>
-                <Field label="Commit" hint="Optional: the commit that was reviewed.">
-                    {(f) => (
-                        <Input {...f} value={commit} onChange={(e) => setCommit(e.target.value)} className="font-mono" maxLength={40} />
-                    )}
-                </Field>
-                <fieldset className="grid gap-3">
-                    <legend className="mb-1.5 text-sm font-medium">What the review covered</legend>
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="radio"
-                            id={`${scopeName}-full`}
-                            name={scopeName}
-                            checked={scope === "full"}
-                            onChange={() => setScope("full")}
-                            className="size-4 accent-primary"
-                        />
-                        <Label htmlFor={`${scopeName}-full`} className="font-normal">
-                            The whole codebase
-                        </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="radio"
-                            id={`${scopeName}-diff`}
-                            name={scopeName}
-                            checked={scope === "diff"}
-                            onChange={() => setScope("diff")}
-                            className="size-4 accent-primary"
-                        />
-                        <Label htmlFor={`${scopeName}-diff`} className="font-normal">
-                            Only the branch's changes
-                        </Label>
-                    </div>
-                </fieldset>
+                <FieldRow>
+                    <Field label="Branch">
+                        {(f) => <Input {...f} value={branch} onChange={(e) => setBranch(e.target.value)} className="font-mono" required />}
+                    </Field>
+                    <Field label="Commit" hint="Optional: the commit that was reviewed.">
+                        {(f) => (
+                            <Input {...f} value={commit} onChange={(e) => setCommit(e.target.value)} className="font-mono" maxLength={40} />
+                        )}
+                    </Field>
+                </FieldRow>
+                <ChoiceField
+                    legend="What the review covered"
+                    name={scopeName}
+                    value={scope}
+                    onChange={setScope}
+                    choices={[
+                        { value: "full", label: "The whole codebase" },
+                        { value: "diff", label: "Only the branch's changes" },
+                    ]}
+                />
                 <Field label="Report file" error={fileError}>
                     {(f) => <Input {...f} ref={fileRef} type="file" accept=".json,application/json" onChange={clearPreview} />}
                 </Field>
-                <div className="sm:col-span-2">
+                <FormActions>
                     <Button type="submit" disabled={previewIt.isPending}>
                         {previewIt.isPending ? "Checking…" : "Preview upload"}
                     </Button>
-                </div>
+                </FormActions>
             </form>
             <FieldError message={previewIt.error ? errorMessage(previewIt.error) : null} />
 
             {p && prepared && (
                 <div className="grid gap-3 rounded-md border bg-background p-3 text-sm" data-testid="upload-preview">
-                    <h3 className="font-medium">
+                    <h3 className="font-semibold">
                         What uploading {prepared.fileName} to <span className="font-mono">{p.branch}</span> would do
                     </h3>
                     {p.identical && <p>This is the same file as the branch's current report. Nothing will be reopened.</p>}
@@ -201,7 +184,7 @@ export function UploadReport() {
                             history.
                         </p>
                     )}
-                    <div className="flex flex-wrap gap-2">
+                    <FormActions>
                         <Button
                             onClick={() => upload.mutate({ ...prepared, ...(p.requiresConfirmation ? { confirm: true } : {}) })}
                             disabled={upload.isPending}
@@ -211,10 +194,10 @@ export function UploadReport() {
                         <Button variant="ghost" onClick={reset}>
                             Cancel
                         </Button>
-                    </div>
+                    </FormActions>
                     <FieldError message={upload.error ? errorMessage(upload.error) : null} />
                 </div>
             )}
-        </section>
+        </FormSection>
     );
 }

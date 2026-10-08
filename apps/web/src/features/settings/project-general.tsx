@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
 import { ConfirmAction } from "@/components/confirm-action";
 import { Field, FieldError } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,7 +70,7 @@ export function ProjectGeneral() {
                     {!editable && <ReadOnlyNote />}
                     <ChangedElsewhere show={form.changedElsewhere} onReload={form.reload} what="These settings" />
                     <form
-                        className="grid gap-4"
+                        className="grid gap-form"
                         onSubmit={(e) => {
                             e.preventDefault();
                             save.mutate(d);
@@ -118,11 +119,11 @@ export function ProjectGeneral() {
                         </p>
                         <FieldError message={save.error ? errorMessage(save.error) : null} />
                         {editable && (
-                            <div>
+                            <FormActions>
                                 <Button type="submit" disabled={save.isPending || !form.dirty}>
                                     {save.isPending ? "Saving…" : "Save changes"}
                                 </Button>
-                            </div>
+                            </FormActions>
                         )}
                     </form>
                 </SettingsSection>
@@ -132,7 +133,7 @@ export function ProjectGeneral() {
                     title="Delete this project"
                     description="Removes every report, triage decision, note and setting of this project. This can't be undone."
                 >
-                    <div>
+                    <FormActions>
                         <ConfirmAction
                             trigger={<Button variant="destructive">Delete project</Button>}
                             title={`Delete ${project.name}?`}
@@ -141,7 +142,7 @@ export function ProjectGeneral() {
                             typeToConfirm={slug}
                             onConfirm={remove}
                         />
-                    </div>
+                    </FormActions>
                 </SettingsSection>
             )}
         </SettingsPage>

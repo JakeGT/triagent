@@ -106,7 +106,7 @@ function CreateOrganisation({ open, onOpenChange }: { open: boolean; onOpenChang
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent>
                 <form
-                    className="grid gap-4"
+                    className="grid gap-form"
                     onSubmit={(e) => {
                         e.preventDefault();
                         create.mutate();

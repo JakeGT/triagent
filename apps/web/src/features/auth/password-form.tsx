@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Field, FieldError } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { PasswordInput } from "@/components/password-input";
 import { Button } from "@/components/ui/button";
 import { api, errorMessage, paths } from "@/lib/api";
@@ -38,7 +39,7 @@ export function PasswordForm({ onChanged, submitLabel = "Change password" }: { o
     const fieldError = (f: FieldName) => (state.field === f ? state.error : null);
 
     return (
-        <form onSubmit={change} className="grid max-w-sm gap-4" noValidate>
+        <form onSubmit={change} className="grid max-w-control-lg gap-form" noValidate>
             <Field label="Current password" error={fieldError("current")}>
                 {(p) => <PasswordInput {...p} value={values.current} onChange={set("current")} autoComplete="current-password" required />}
             </Field>
@@ -62,11 +63,11 @@ export function PasswordForm({ onChanged, submitLabel = "Change password" }: { o
                 {(p) => <PasswordInput {...p} value={values.confirm} onChange={set("confirm")} autoComplete="new-password" required />}
             </Field>
             {!state.field && <FieldError message={state.error} />}
-            <div>
+            <FormActions>
                 <Button type="submit" disabled={pending}>
                     {pending ? "Saving…" : submitLabel}
                 </Button>
-            </div>
+            </FormActions>
         </form>
     );
 }

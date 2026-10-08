@@ -4,7 +4,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useParams } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { PREF, prefs } from "@/lib/prefs";
 import { projectsQuery } from "@/lib/queries";
 import { useMe, useWorkspace } from "@/lib/session";
@@ -120,20 +121,50 @@ export function SettingsLayout() {
         wsLink("/appearance", "Appearance", "/w/$ws/settings/appearance"),
     ];
 
+    const here = [...projectItems, ...workspaceItems, ...instanceItems, ...accountItems].find((i) => i.href === pathname)?.label;
     return (
-        <div className="mx-auto grid w-full max-w-6xl gap-5 p-4 md:p-6">
+        <div className="mx-auto grid w-full max-w-6xl grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6">
             <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
-            <div className="grid gap-6 md:grid-cols-[12rem_minmax(0,1fr)]">
-                <nav aria-label="Settings" className="grid content-start gap-4">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-section md:grid-cols-[12rem_minmax(0,1fr)]">
+                <SettingsNav current={here} pathname={pathname}>
                     <NavGroup title="Project" note={projectName} items={projectItems} pathname={pathname} />
                     <NavGroup title="Workspace" items={workspaceItems} pathname={pathname} />
                     <NavGroup title="Instance" items={instanceItems} pathname={pathname} />
                     <NavGroup title="Account" items={accountItems} pathname={pathname} />
-                </nav>
+                </SettingsNav>
                 <div className="min-w-0">
                     <Outlet />
                 </div>
             </div>
         </div>
+    );
+}
+
+/** Beside the page on wider screens; on a phone, folded behind a button so the page comes first. */
+function SettingsNav({ current, pathname, children }: { current?: string; pathname: string; children: ReactNode }) {
+    const [open, setOpen] = useState(false);
+    const listId = useId();
+    // Choosing a page folds it away again.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: close when the page changes
+    useEffect(() => setOpen(false), [pathname]);
+    return (
+        <nav aria-label="Settings" className="grid content-start gap-2">
+            <button
+                type="button"
+                aria-expanded={open}
+                aria-controls={listId}
+                onClick={() => setOpen(!open)}
+                className="flex h-9 items-center justify-between gap-2 rounded-md border bg-card px-3 text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 md:hidden"
+            >
+                <span className="truncate">
+                    <span className="text-muted-foreground">Settings: </span>
+                    {current ?? "All settings"}
+                </span>
+                <ChevronDown className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} aria-hidden="true" />
+            </button>
+            <div id={listId} className={cn("content-start gap-4 md:grid", open ? "grid" : "hidden")}>
+                {children}
+            </div>
+        </nav>
     );
 }

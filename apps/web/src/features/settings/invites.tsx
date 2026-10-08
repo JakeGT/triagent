@@ -8,13 +8,14 @@ import { Info } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
-import { Field, FieldError, NativeSelect } from "@/components/field";
+import { Field, FieldError, FieldRow, NativeSelect } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Invite, InviteList } from "@/lib/types";
@@ -62,14 +63,14 @@ export function Invites({ queryKey, url, roles, roleInfo, description }: Invites
                 </Alert>
             )}
             <form
-                className="grid gap-4"
+                className="grid gap-form"
                 onSubmit={(e) => {
                     e.preventDefault();
                     setSent(null);
                     create.mutate();
                 }}
             >
-                <div className="grid gap-4 sm:grid-cols-2">
+                <FieldRow>
                     <Field label="Email address">
                         {(p) => (
                             <Input
@@ -96,20 +97,20 @@ export function Invites({ queryKey, url, roles, roleInfo, description }: Invites
                             )}
                         </Field>
                     )}
-                </div>
+                </FieldRow>
                 <FieldError message={create.error ? errorMessage(create.error) : null} />
-                <div>
+                <FormActions>
                     <Button type="submit" disabled={create.isPending || !email.trim()}>
                         {create.isPending ? "Inviting…" : "Invite"}
                     </Button>
-                </div>
+                </FormActions>
             </form>
             {query.isError ? (
                 <LoadError error={query.error} onRetry={() => query.refetch()} />
             ) : query.isPending ? (
                 <LoadingRows rows={2} />
             ) : query.data.items.length ? (
-                <div className="rounded-md border">
+                <TableFrame>
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -162,7 +163,7 @@ export function Invites({ queryKey, url, roles, roleInfo, description }: Invites
                             ))}
                         </TableBody>
                     </Table>
-                </div>
+                </TableFrame>
             ) : (
                 <p className="text-sm text-muted-foreground">No invites yet.</p>
             )}

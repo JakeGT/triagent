@@ -8,6 +8,7 @@ import { ExternalLink } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { CopyButton } from "@/components/copy-button";
 import { Field, NativeSelect } from "@/components/field";
+import { FormSection } from "@/components/form";
 import { Page, PageHeader, PageMeta } from "@/components/page";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PREF, prefs } from "@/lib/prefs";
@@ -36,14 +37,10 @@ function Snippet({ code, label }: { code: string; label: string }) {
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
-    const id = useId();
     return (
-        <section aria-labelledby={id} className="grid gap-3 rounded-lg border bg-card p-4">
-            <h2 id={id} className="text-base font-semibold">
-                {title}
-            </h2>
+        <FormSection title={title} level={2}>
             {children}
-        </section>
+        </FormSection>
     );
 }
 
@@ -68,7 +65,7 @@ export function AgentsPage() {
     );
 
     return (
-        <Page className="max-w-4xl">
+        <Page className="max-w-wide">
             <PageMeta title="Agents & API" />
             <PageHeader
                 title="Agents & API"
@@ -149,9 +146,9 @@ export function AgentsPage() {
 
             <Section title="4. Upload reports from CI">
                 {list.length > 1 && (
-                    <Field label="Project" hint="Fills in the address in the snippets.">
+                    <Field label="Project" hint="Fills in the address in the snippets." width="md">
                         {(p) => (
-                            <NativeSelect {...p} value={project} onChange={(e) => setChosen(e.target.value)} className="w-64">
+                            <NativeSelect {...p} value={project} onChange={(e) => setChosen(e.target.value)}>
                                 {list.map((x) => (
                                     <option key={x.id} value={x.slug}>
                                         {x.name}
