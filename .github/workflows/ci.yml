@@ -100,6 +100,7 @@ jobs:
           docker run -d --name server-ci -e PUBLIC_ORIGIN=http://localhost -e COOKIE_SECURE=false -e NODE_ENV=development triagent-server:ci
           for i in $(seq 1 30); do docker exec server-ci wget -qO- http://127.0.0.1:8080/healthz && break; sleep 1; done
           docker exec server-ci wget -qO- http://127.0.0.1:8080/healthz | grep -q '"ok"'
+          docker exec server-ci wget -qO- http://127.0.0.1:8080/api/v1/skill.md | grep -q '^name: triagent$'
           docker rm -f server-ci
 
   secrets:

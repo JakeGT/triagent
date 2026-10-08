@@ -9,7 +9,8 @@ apps/*/test
 apps/web/e2e
 tests
 docs
-skills
+skills/*
+!skills/triagent
 secrets
 data
 **/.env

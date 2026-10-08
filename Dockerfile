@@ -50,6 +50,8 @@ COPY packages/shared packages/shared
 COPY apps/server/package.json apps/server/
 COPY apps/server/src apps/server/src
 COPY apps/server/db apps/server/db
+# Served at /api/v1/skill.md, for the Agents & API page's install commands.
+COPY skills/triagent/SKILL.md skills/triagent/SKILL.md
 COPY --from=web /src/apps/web/dist /app/web
 USER node
 EXPOSE 8080
