@@ -8,18 +8,10 @@ import { now as nowIso } from "../security.ts";
 import type { Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
 import { monthStart } from "./history.ts";
-import type { SecretScope } from "./secrets.ts";
-import { LLM_PROVIDERS, modelKeyName, PROVIDER_IDS, type ProviderId } from "./settings.ts";
+import { type ModelChoice, ModelSetup, type Resolution, type SecretKind } from "./model-setup.ts";
 
-const MODEL_KEY = "instance-model";
-const INSTANCE: SecretScope = { workspaceId: null, projectId: null };
 const MAX_ALLOWANCE = 1e12;
-
-export interface InstanceModel {
-    provider: ProviderId;
-    /** The model chosen for each provider. */
-    models: Partial<Record<ProviderId, string>>;
-}
+const INSTANCE = { kind: "instance" } as const;
 
 /** The first moment of next month (UTC): when allowances start again. */
 export function nextMonthStart(now: Date): Date {
@@ -42,80 +34,35 @@ const tokens = (n: number) => n.toLocaleString("en-GB");
 export class Allowances {
     private readonly core: Core;
     private readonly clock: () => Date;
+    private readonly setup: ModelSetup;
 
-    constructor(core: Core, clock: () => Date = () => new Date()) {
+    constructor(core: Core, clock: () => Date = () => new Date(), setup: ModelSetup = new ModelSetup(core)) {
         this.core = core;
         this.clock = clock;
+        this.setup = setup;
     }
 
     now(): Date {
         return this.clock();
     }
 
-    async model(repos: Repos = this.core.store): Promise<{ provider: ProviderId; model: string }> {
-        const stored = (await repos.instanceSettings.get(MODEL_KEY)) as InstanceModel | null;
-        const provider = stored && PROVIDER_IDS.includes(stored.provider) ? stored.provider : "openrouter";
-        return { provider, model: stored?.models?.[provider] ?? LLM_PROVIDERS[provider].defaultModel };
+    /** What reviews paid with the instance key would run with, or what it still needs. Reveals the key. */
+    resolve(repos: Repos = this.core.store): Promise<Resolution> {
+        return this.setup.resolve(repos, INSTANCE);
     }
 
-    /** The instance key for the instance's chosen provider. Never put it in a response or a log. */
-    async key(repos: Repos, provider: ProviderId): Promise<string | null> {
-        return this.core.secrets.reveal(repos, INSTANCE, modelKeyName(provider));
+    /** For the instance page: provider, model and each provider's settings and secrets (never the secrets themselves). */
+    view() {
+        return this.setup.view(this.core.store, INSTANCE);
     }
 
-    /** For the instance page: provider, model and which providers have a key (never the keys). */
-    async view() {
-        const repos = this.core.store;
-        const stored = (await repos.instanceSettings.get(MODEL_KEY)) as InstanceModel | null;
-        const chosen = await this.model(repos);
-        const providers = [];
-        for (const p of Object.values(LLM_PROVIDERS))
-            providers.push({
-                ...p,
-                model: stored?.models?.[p.id] ?? p.defaultModel,
-                key: await this.core.secrets.view(repos, INSTANCE, modelKeyName(p.id)),
-            });
-        const active = providers.find((p) => p.id === chosen.provider);
-        return { provider: chosen.provider, model: chosen.model, ready: Boolean(active?.key.set), providers };
-    }
-
-    async setModel(actor: Actor, input: { provider?: string; model?: string }) {
-        if (input.provider !== undefined && !PROVIDER_IDS.includes(input.provider as ProviderId))
-            throw badRequest(`Unknown provider "${input.provider}". Choose one of: ${PROVIDER_IDS.join(", ")}.`);
-        if (input.model !== undefined && !/^[\w.:/@+-]{1,150}$/.test(input.model)) throw badRequest("That isn't a valid model name.");
-        await this.core.write(actor, async (w) => {
-            const stored = (await w.tx.instanceSettings.get(MODEL_KEY)) as InstanceModel | null;
-            const provider = (input.provider ?? stored?.provider ?? "openrouter") as ProviderId;
-            const next: InstanceModel = { provider, models: { ...stored?.models, ...(input.model ? { [provider]: input.model } : {}) } };
-            await w.tx.instanceSettings.put(MODEL_KEY, next);
-            await w.audit({
-                workspaceId: null,
-                kind: "settings",
-                target: "instance:model",
-                changes: { provider, ...(input.model ? { model: input.model } : {}) },
-            });
-        });
+    async setModel(actor: Actor, input: ModelChoice) {
+        await this.setup.choose(actor, INSTANCE, input);
         return this.view();
     }
 
-    async setKey(actor: Actor, provider: string, key: string | null) {
-        if (!PROVIDER_IDS.includes(provider as ProviderId))
-            throw badRequest(`Unknown provider "${provider}". Choose one of: ${PROVIDER_IDS.join(", ")}.`);
-        const value = key?.trim() ?? null;
-        if (value !== null && (value.length < 8 || value.length > 500 || /\s/.test(value)))
-            throw badRequest("That doesn't look like an API key.");
-        const name = modelKeyName(provider as ProviderId);
-        return this.core.write(actor, async (w) => {
-            if (value === null) await this.core.secrets.clear(w.tx, INSTANCE, name);
-            else await this.core.secrets.set(w.tx, INSTANCE, name, value, actor.name);
-            await w.audit({
-                workspaceId: null,
-                kind: "secret",
-                target: `instance:${name}`,
-                changes: { [name]: value === null ? "cleared" : "set" },
-            });
-            return this.core.secrets.view(w.tx, INSTANCE, name);
-        });
+    setKey(actor: Actor, provider: string, key: string | null, kind: SecretKind = "key") {
+        return this.setup.setSecret(actor, INSTANCE, provider, kind, key);
     }
 
     // ---- grants -----------------------------------------------------------------------------
@@ -125,8 +72,8 @@ export class Allowances {
         const now = this.clock();
         const grant = await repos.modelGrants.get(workspace.id);
         const used = await repos.reviewHistory.tokensSince(workspace.id, monthStart(now), "instance");
-        const model = await this.model(repos);
-        const keySet = (await repos.secrets.get(null, null, modelKeyName(model.provider))) !== null;
+        const view = await this.setup.view(repos, INSTANCE);
+        const chosen = view.providers.find((p) => p.id === view.provider);
         return {
             granted: Boolean(grant),
             monthlyTokens: grant?.monthlyTokens ?? null,
@@ -135,7 +82,7 @@ export class Allowances {
             resetsAt: nextMonthStart(now).toISOString(),
             grantedBy: grant?.grantedBy ?? null,
             grantedAt: grant?.grantedAt ?? null,
-            instance: { provider: model.provider, providerName: LLM_PROVIDERS[model.provider].name, model: model.model, keySet },
+            instance: { provider: view.provider, providerName: chosen?.name ?? view.provider, model: view.model, keySet: view.ready },
         };
     }
 

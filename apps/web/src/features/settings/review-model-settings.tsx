@@ -1,31 +1,20 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { ChangedElsewhere } from "@/components/changed-elsewhere";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { UsageBar } from "@/components/charts";
-import { Field, FieldError, NativeSelect } from "@/components/field";
 import { LoadError, LoadingRows } from "@/components/load-state";
-import { ModelPicker } from "@/components/model-picker";
-import { SecretField } from "@/components/secret-field";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { api, errorMessage, paths } from "@/lib/api";
-import { useDraft } from "@/lib/drafts";
+import { paths } from "@/lib/api";
 import { count, utcDay } from "@/lib/insights-format";
 import { allowanceQuery, insightKeys } from "@/lib/insights-queries";
 import type { Allowance } from "@/lib/insights-types";
 import { keys, reviewModelQuery } from "@/lib/queries";
-import { safeHref } from "@/lib/safe-href";
 import { useWorkspace } from "@/lib/session";
-import type { ReviewModel } from "@/lib/types";
-import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
+import { ModelProviderForm } from "./model-provider-form";
+import { SettingsPage, SettingsSection } from "./settings-page";
 
 export function ReviewModelSettings() {
     const { ws, workspace, can } = useWorkspace();
-    const editable = can("configure");
     const queryClient = useQueryClient();
     const query = useQuery(reviewModelQuery(ws));
     const data = query.data;
-    const form = useDraft(data ? { provider: data.provider, model: data.model ?? "" } : undefined);
     const allowance = useQuery(allowanceQuery(ws));
     const refresh = () =>
         Promise.all([
@@ -33,18 +22,6 @@ export function ReviewModelSettings() {
             queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) }),
         ]);
 
-    const save = useMutation({
-        mutationFn: (v: { provider: string; model: string }) =>
-            api.patch<ReviewModel>(`${paths.workspace(ws)}/settings/review-model`, { provider: v.provider, model: v.model.trim() }),
-        onSuccess: (m) => {
-            queryClient.setQueryData(keys.wsSettings(ws, "review-model"), m);
-            form.saved({ provider: m.provider, model: m.model ?? "" });
-            void queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) });
-            toast.success("Review model saved.");
-        },
-    });
-
-    const d = form.draft;
     return (
         <SettingsPage
             title="Review model & keys"
@@ -52,7 +29,7 @@ export function ReviewModelSettings() {
         >
             {query.isError ? (
                 <LoadError error={query.error} onRetry={() => query.refetch()} />
-            ) : !data || !d ? (
+            ) : !data ? (
                 <LoadingRows rows={4} />
             ) : (
                 <>
@@ -61,107 +38,23 @@ export function ReviewModelSettings() {
                             ? `Ready: reviews use ${data.model} through ${data.providers.find((p) => p.id === data.provider)?.name ?? data.provider}.`
                             : allowance.data?.now.ready
                               ? `Ready: reviews use ${allowance.data.now.model} through the instance's key.`
-                              : `Not ready: ${allowance.data && !allowance.data.now.ready ? allowance.data.now.reason : "the chosen provider has no API key yet."}`}
+                              : `Not ready: ${allowance.data && !allowance.data.now.ready ? allowance.data.now.reason : `add ${data.missing ?? "an API key"}.`}`}
                     </p>
-                    <SettingsSection title="Model">
-                        {!editable && <ReadOnlyNote />}
-                        <ChangedElsewhere show={form.changedElsewhere} onReload={form.reload} what="The review model" />
-                        <form
-                            className="grid gap-4"
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                save.mutate(d);
-                            }}
-                        >
-                            <Field label="Provider">
-                                {(p) => (
-                                    <NativeSelect
-                                        {...p}
-                                        value={d.provider}
-                                        disabled={!editable}
-                                        className="w-64"
-                                        onChange={(e) =>
-                                            form.setDraft({
-                                                provider: e.target.value,
-                                                model: data.providers.find((x) => x.id === e.target.value)?.model ?? "",
-                                            })
-                                        }
-                                    >
-                                        {data.providers.map((p) => (
-                                            <option key={p.id} value={p.id}>
-                                                {p.name}
-                                            </option>
-                                        ))}
-                                    </NativeSelect>
-                                )}
-                            </Field>
-                            <Field label="Model" hint="The provider's name for the model, e.g. anthropic/claude-sonnet-4.5.">
-                                {(p) => (
-                                    <Input
-                                        {...p}
-                                        value={d.model}
-                                        onChange={(e) => form.setDraft({ ...d, model: e.target.value })}
-                                        disabled={!editable}
-                                        maxLength={150}
-                                        spellCheck={false}
-                                        className="font-mono"
-                                    />
-                                )}
-                            </Field>
-                            {editable && d.provider === "openrouter" && (
-                                <div>
-                                    <ModelPicker ws={ws} current={d.model} onChoose={(m) => form.setDraft({ ...d, model: m.id })} />
-                                </div>
-                            )}
-                            <FieldError message={save.error ? errorMessage(save.error) : null} />
-                            {editable && (
-                                <div>
-                                    <Button type="submit" disabled={save.isPending || !form.dirty}>
-                                        {save.isPending ? "Saving…" : "Save model"}
-                                    </Button>
-                                </div>
-                            )}
-                        </form>
-                    </SettingsSection>
+                    <ModelProviderForm
+                        data={data}
+                        base={`${paths.workspace(ws)}/settings/review-model`}
+                        ws={ws}
+                        queryKey={keys.wsSettings(ws, "review-model")}
+                        scope="workspace"
+                        canConfigure={can("configure")}
+                        canSetSecrets={can("secrets")}
+                        onSaved={(m) => {
+                            queryClient.setQueryData(keys.wsSettings(ws, "review-model"), m);
+                            void queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) });
+                        }}
+                        refresh={refresh}
+                    />
                     {allowance.data && <InstanceKeyStatus a={allowance.data} />}
-                    <SettingsSection
-                        title="API keys"
-                        description="Stored encrypted for this workspace and never shown again. API tokens and agents can't set or read them."
-                    >
-                        {!can("secrets") && <ReadOnlyNote>Only admins can set or clear keys.</ReadOnlyNote>}
-                        {data.providers.map((p) => {
-                            const keysUrl = safeHref(p.keysUrl);
-                            return (
-                                <div key={p.id} className="grid gap-1">
-                                    <SecretField
-                                        label={`${p.name} API key`}
-                                        secret={p.key}
-                                        canEdit={can("secrets")}
-                                        hint={`Sent to ${p.url}.`}
-                                        onSave={async (key) => {
-                                            await api.put(`${paths.workspace(ws)}/settings/review-model/keys/${encodeURIComponent(p.id)}`, {
-                                                key,
-                                            });
-                                            await refresh();
-                                            toast.success(`${p.name} key saved.`);
-                                        }}
-                                        onClear={async () => {
-                                            await api.delete(
-                                                `${paths.workspace(ws)}/settings/review-model/keys/${encodeURIComponent(p.id)}`,
-                                            );
-                                            await refresh();
-                                            toast.success(`${p.name} key cleared.`);
-                                        }}
-                                    />
-                                    {keysUrl && (
-                                        <a href={keysUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline">
-                                            Get a {p.name} key<span className="sr-only"> (opens in a new tab)</span>
-                                        </a>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </SettingsSection>
                 </>
             )}
         </SettingsPage>
@@ -178,7 +71,7 @@ function InstanceKeyStatus({ a }: { a: Allowance }) {
         >
             <div className="grid gap-2 text-sm" data-testid="instance-key-status">
                 {!a.granted || a.monthlyTokens === null ? (
-                    <p>This workspace can't use the instance's key. Reviews need one of the API keys below.</p>
+                    <p>This workspace can't use the instance's key. Reviews need a key of its own, above.</p>
                 ) : (
                     <>
                         <p>

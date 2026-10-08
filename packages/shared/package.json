@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./redact": "./src/redact.ts"
+    "./redact": "./src/redact.ts",
+    "./model": "./src/model.ts"
   },
   "dependencies": {
     "zod": "^4.6.5"

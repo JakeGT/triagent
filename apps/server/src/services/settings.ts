@@ -1,11 +1,13 @@
 // Configuration, kept apart from day-to-day work: a project's GitHub connection, webhook and automation,
-// and a workspace's review model and keys. Secrets go through services/secrets.ts and are never returned.
+// and a workspace's review model and keys (services/model-setup.ts). Secrets go through services/secrets.ts
+// and are never returned.
 
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { badRequest } from "../errors.ts";
 import type { Project, Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
+import { type ModelChoice, ModelSetup, type SecretKind } from "./model-setup.ts";
 import type { SecretScope } from "./secrets.ts";
 
 /** The smallest token budget a review can run with. */
@@ -47,39 +49,19 @@ export const AUTOMATION_DEFAULTS: Automation = {
     reviewPullRequestsFrom: "collaborators",
 };
 
-/** Model providers reviews can use; both speak the OpenAI-compatible protocol Open Code Review supports. */
-export const LLM_PROVIDERS = {
-    openrouter: {
-        id: "openrouter",
-        name: "OpenRouter",
-        url: "https://openrouter.ai/api/v1",
-        defaultModel: "anthropic/claude-sonnet-4.5",
-        keysUrl: "https://openrouter.ai/settings/keys",
-    },
-    meta: { id: "meta", name: "Meta", url: "https://api.meta.ai/v1", defaultModel: "muse-spark-1.3-contributor", keysUrl: null },
-} as const;
-export type ProviderId = keyof typeof LLM_PROVIDERS;
-export const PROVIDER_IDS = Object.keys(LLM_PROVIDERS) as ProviderId[];
-
-export const ReviewModelSchema = z.object({
-    provider: z.enum(PROVIDER_IDS as [ProviderId, ...ProviderId[]]),
-    /** The model chosen for each provider; switching provider keeps the other's choice. */
-    models: z.record(z.string(), z.string().min(1).max(150)),
-});
-export type ReviewModel = z.infer<typeof ReviewModelSchema>;
-
 const GITHUB_TOKEN = "github-token";
 const WEBHOOK_SECRET = "webhook-secret";
-export const modelKeyName = (provider: ProviderId) => `model-key:${provider}`;
 
 /** Fine-grained (github_pat_), the gh?_ family and old 40-hex tokens. */
 const GITHUB_TOKEN_FORMAT = /^(?:(?:github_pat_|gh[a-z]_)[A-Za-z0-9_]{20,255}|[0-9a-f]{40})$/;
 
 export class Settings {
     private readonly core: Core;
+    private readonly setup: ModelSetup;
 
-    constructor(core: Core) {
+    constructor(core: Core, setup: ModelSetup = new ModelSetup(core)) {
         this.core = core;
+        this.setup = setup;
     }
 
     private projectScope(project: Project): SecretScope {
@@ -190,62 +172,17 @@ export class Settings {
         return this.core.secrets.reveal(this.core.store, this.projectScope(project), WEBHOOK_SECRET);
     }
 
-    // ---- review model and keys (per workspace) -------------------------------------------------
+    // ---- review model and keys (per workspace; see services/model-setup.ts) ------------------------
 
-    async reviewModel(workspace: Workspace) {
-        const repos = this.core.store;
-        const stored = (await repos.settings.get(workspace.id, null, "review-model"))?.value as ReviewModel | undefined;
-        const provider = stored?.provider ?? "openrouter";
-        const scope: SecretScope = { workspaceId: workspace.id, projectId: null };
-        const providers = [];
-        for (const p of Object.values(LLM_PROVIDERS)) {
-            providers.push({
-                ...p,
-                model: stored?.models[p.id] ?? p.defaultModel,
-                key: await this.core.secrets.view(repos, scope, modelKeyName(p.id)),
-            });
-        }
-        const chosen = providers.find((p) => p.id === provider);
-        return { provider, model: chosen?.model ?? null, ready: Boolean(chosen?.key.set), providers };
+    reviewModel(workspace: Workspace) {
+        return this.setup.view(this.core.store, { kind: "workspace", workspace });
     }
 
-    async setReviewModel(actor: Actor, workspace: Workspace, input: { provider?: string; model?: string }) {
-        if (input.provider !== undefined && !PROVIDER_IDS.includes(input.provider as ProviderId))
-            throw badRequest(`Unknown provider "${input.provider}". Choose one of: ${PROVIDER_IDS.join(", ")}.`);
-        if (input.model !== undefined && !/^[\w.:/@+-]{1,150}$/.test(input.model)) throw badRequest("That isn't a valid model name.");
-        return this.core.write(actor, async (w) => {
-            const stored = (await w.tx.settings.get(workspace.id, null, "review-model"))?.value as ReviewModel | undefined;
-            const provider = (input.provider ?? stored?.provider ?? "openrouter") as ProviderId;
-            const next: ReviewModel = { provider, models: { ...stored?.models, ...(input.model ? { [provider]: input.model } : {}) } };
-            await w.tx.settings.put({ workspaceId: workspace.id, projectId: null, key: "review-model", value: next });
-            await w.audit({
-                workspaceId: workspace.id,
-                kind: "settings",
-                target: "review-model",
-                changes: { provider, ...(input.model ? { model: input.model } : {}) },
-            });
-            return next;
-        });
+    setReviewModel(actor: Actor, workspace: Workspace, input: ModelChoice) {
+        return this.setup.choose(actor, { kind: "workspace", workspace }, input);
     }
 
-    async setModelKey(actor: Actor, workspace: Workspace, provider: string, key: string | null) {
-        if (!PROVIDER_IDS.includes(provider as ProviderId))
-            throw badRequest(`Unknown provider "${provider}". Choose one of: ${PROVIDER_IDS.join(", ")}.`);
-        const value = key?.trim() ?? null;
-        if (value !== null && (value.length < 8 || value.length > 500 || /\s/.test(value)))
-            throw badRequest("That doesn't look like an API key.");
-        const scope: SecretScope = { workspaceId: workspace.id, projectId: null };
-        const name = modelKeyName(provider as ProviderId);
-        return this.core.write(actor, async (w) => {
-            if (value === null) await this.core.secrets.clear(w.tx, scope, name);
-            else await this.core.secrets.set(w.tx, scope, name, value, actor.name);
-            await w.audit({
-                workspaceId: workspace.id,
-                kind: "secret",
-                target: name,
-                changes: { [name]: value === null ? "cleared" : "set" },
-            });
-            return this.core.secrets.view(w.tx, scope, name);
-        });
+    setModelKey(actor: Actor, workspace: Workspace, provider: string, key: string | null, kind: SecretKind = "key") {
+        return this.setup.setSecret(actor, { kind: "workspace", workspace }, provider, kind, key);
     }
 }

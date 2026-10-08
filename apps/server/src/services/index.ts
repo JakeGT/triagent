@@ -10,6 +10,9 @@ import { Automation } from "./github/automation.ts";
 import { Github } from "./github/service.ts";
 import { History } from "./history.ts";
 import { Invites } from "./invites.ts";
+import { ModelLists } from "./model-lists.ts";
+import { ModelSetup } from "./model-setup.ts";
+import type { Lookup } from "./model-urls.ts";
 import { Models } from "./models.ts";
 import { Oidc } from "./oidc.ts";
 import { Prices } from "./prices.ts";
@@ -34,6 +37,7 @@ export interface Services {
     webhooks: Webhooks;
     history: History;
     models: Models;
+    modelLists: ModelLists;
     github: Github;
     runs: Runs;
     automation: Automation;
@@ -46,10 +50,11 @@ export interface Services {
     oidc: Oidc | null;
 }
 
-/** Test seams: the clock, and how to reach OpenRouter. */
+/** Test seams: the clock, how to reach OpenRouter and model providers, and how host names resolve. */
 export interface ServiceOptions {
     now?: () => Date;
     fetch?: typeof fetch;
+    lookup?: Lookup;
 }
 
 export function createServices(config: Config, store: Store, options: ServiceOptions = {}): Services {
@@ -58,12 +63,14 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
     const clock = options.now ?? (() => new Date());
     const history = new History(core);
     const reports = new Reports(core, history);
-    const settings = new Settings(core);
+    const setup = new ModelSetup(core, options.lookup);
+    const settings = new Settings(core, setup);
     const projects = new Projects(core);
     const catalogue = new Catalogue({ enabled: config.openrouterCatalogue, ...(options.fetch ? { fetch: options.fetch } : {}) });
     const prices = new Prices(core, catalogue);
-    const allowances = new Allowances(core, clock);
-    const models = new Models(core, history, allowances);
+    const allowances = new Allowances(core, clock, setup);
+    const models = new Models(core, history, allowances, setup);
+    const modelLists = new ModelLists(setup, catalogue, options.fetch ? { fetch: options.fetch } : {});
     const webhooks = new Webhooks(core, settings);
     const github = new Github(core, settings, projects);
     const runs = new Runs(core, github, reports, history, models, settings);
@@ -83,6 +90,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         webhooks,
         history,
         models,
+        modelLists,
         catalogue,
         prices,
         allowances,

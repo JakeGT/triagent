@@ -2,10 +2,21 @@
 // to use it (with monthly token allowances), and instance-wide model prices. Instance administrators
 // only, in the browser; keys are never returned.
 
+import { MODEL_PROTOCOLS } from "@triagent/shared/model";
 import { z } from "zod";
+import { notFound } from "../errors.ts";
 import { json, type Route, route } from "../http/route.ts";
-import { PROVIDER_IDS } from "../services/settings.ts";
+import { PROVIDER_IDS } from "../services/providers.ts";
 import { ModelBody, PriceBody } from "./insights.ts";
+
+/** Choosing a provider and model, and the chosen provider's protocol, endpoint URL (Azure, custom) or AWS region (Bedrock). */
+export const ModelChoiceBody = z.object({
+    provider: z.enum(PROVIDER_IDS as [string, ...string[]]).optional(),
+    model: z.string().max(150).optional(),
+    protocol: z.enum(MODEL_PROTOCOLS).optional(),
+    url: z.string().max(500).nullable().optional(),
+    region: z.string().max(40).nullable().optional(),
+});
 
 export const instanceModelRoutes: Route[] = [
     route({
@@ -23,8 +34,8 @@ export const instanceModelRoutes: Route[] = [
         path: "/api/v1/instance/model",
         scope: "instance",
         tag: "Instance",
-        summary: "Choose the provider and model reviews use with the instance key",
-        body: z.object({ provider: z.enum(PROVIDER_IDS as [string, ...string[]]).optional(), model: z.string().max(150).optional() }),
+        summary: "Choose the provider and model reviews use with the instance key, and that provider's settings",
+        body: ModelChoiceBody,
         async handler({ services, body, actor }) {
             return json(await services.allowances.setModel(actor, body));
         },
@@ -52,6 +63,41 @@ export const instanceModelRoutes: Route[] = [
         summary: "Forget the instance's API key for a provider",
         async handler({ services, params, actor }) {
             return json(await services.allowances.setKey(actor, params.provider as string, null));
+        },
+    }),
+    route({
+        method: "PUT",
+        path: "/api/v1/instance/model/keys/{provider}/access-key-id",
+        scope: "instance",
+        recentSignIn: true,
+        tag: "Instance",
+        summary: "Set the instance's AWS access key ID for a provider (Amazon Bedrock; stored encrypted)",
+        body: z.object({ key: z.string().max(500) }),
+        async handler({ services, params, body, actor }) {
+            return json(await services.allowances.setKey(actor, params.provider as string, body.key, "accessKeyId"));
+        },
+    }),
+    route({
+        method: "DELETE",
+        path: "/api/v1/instance/model/keys/{provider}/access-key-id",
+        scope: "instance",
+        recentSignIn: true,
+        tag: "Instance",
+        summary: "Forget the instance's AWS access key ID for a provider",
+        async handler({ services, params, actor }) {
+            return json(await services.allowances.setKey(actor, params.provider as string, null, "accessKeyId"));
+        },
+    }),
+    route({
+        method: "GET",
+        path: "/api/v1/instance/model/providers/{provider}/models",
+        scope: "instance",
+        tag: "Instance",
+        summary: "A provider's models, fetched by the server with the instance key (never returned), plus suggestions",
+        async handler({ services, params }) {
+            const view = await services.modelLists.list(services.store, { kind: "instance" }, params.provider as string);
+            if (!view) throw notFound("No such provider.");
+            return json(view);
         },
     }),
     route({

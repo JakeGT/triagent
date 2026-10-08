@@ -1,6 +1,7 @@
 // Model prices (US$ per million tokens, for input, output and cache reads), which turn the tokens reviews
 // used into costs, past reviews included. Instance admins set prices for the whole instance; a workspace
-// can override them. Models with neither use OpenRouter's listed price, if it lists them; anything else
+// can override them. Models with neither use OpenRouter's listed price, if it lists them (under the same
+// name, or the name OpenRouter gives a provider's own model id: services/providers.ts); anything else
 // has no price, and its tokens are left out of costs.
 
 import type { PricedModel } from "../domain/analytics.ts";
@@ -9,6 +10,7 @@ import { now } from "../security.ts";
 import type { Repos, Workspace } from "../store/types.ts";
 import type { Catalogue } from "./catalogue.ts";
 import type { Actor, Core } from "./core.ts";
+import { catalogueCandidates } from "./providers.ts";
 
 const KEY = "model-prices";
 const PRICE_MAX = 10_000;
@@ -98,7 +100,9 @@ export class Prices {
             if (w) return { input: w.input, output: w.output, cacheRead: w.cacheRead, source: "workspace" };
             const i = Object.hasOwn(instance, model) ? instance[model] : undefined;
             if (i) return { input: i.input, output: i.output, cacheRead: i.cacheRead, source: "instance" };
-            const c = listed.get(model);
+            // A provider's own name for a model OpenRouter lists under another (claude-sonnet-4-5 is
+            // anthropic/claude-sonnet-4.5), when OpenRouter lists exactly that name.
+            const c = [model, ...catalogueCandidates(model)].map((id) => listed.get(id)).find(Boolean);
             return c ? { ...c.price, source: "openrouter" } : null;
         };
     }
