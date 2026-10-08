@@ -13,6 +13,7 @@ import type {
     ArchivedReport,
     AuditRow,
     Membership,
+    ModelGrant,
     Page,
     Project,
     Repos,
@@ -147,6 +148,8 @@ export class MemoryStore implements Store {
         uploadLinks: this.table<UploadLink>(),
         secrets: this.table<SecretRecord>(),
         settings: this.table<SettingRecord>(),
+        instanceSettings: this.table<{ value: unknown }>(),
+        modelGrants: this.table<ModelGrant>(),
         activity: new Log<ActivityRow>(() => this.context.getStore()?.undo ?? null),
         audit: new Log<AuditRow>(() => this.context.getStore()?.undo ?? null),
         reviewHistory: new Log<ReviewRecord>(() => this.context.getStore()?.undo ?? null),
@@ -238,6 +241,7 @@ export class MemoryStore implements Store {
                     if (s.workspaceId === id) this.t.secrets.delete(key(id, s.projectId ?? "", s.name));
                 this.t.activity.remove((r) => r.workspaceId === id);
                 this.t.reviewHistory.remove((r) => r.workspaceId === id);
+                this.t.modelGrants.delete(id);
                 this.t.workspaces.delete(id);
             }),
     };
@@ -362,6 +366,14 @@ export class MemoryStore implements Store {
             this.t.reviewHistory.rows
                 .filter((r) => r.workspaceId === workspaceId && r.at >= since && (keySource === undefined || r.keySource === keySource))
                 .reduce((n, r) => n + (r.tokens?.total ?? 0), 0),
+        tokensByWorkspace: async (since, keySource) => {
+            const out: Record<string, number> = {};
+            for (const r of this.t.reviewHistory.rows) {
+                if (r.at < since || (keySource !== undefined && r.keySource !== keySource) || !r.tokens?.total) continue;
+                out[r.workspaceId] = (out[r.workspaceId] ?? 0) + r.tokens.total;
+            }
+            return out;
+        },
     };
 
     audit: Repos["audit"] = {
@@ -401,5 +413,17 @@ export class MemoryStore implements Store {
     settings: Repos["settings"] = {
         get: async (workspaceId, projectId, k) => this.t.settings.get(key(workspaceId, projectId ?? "", k)),
         put: (s) => this.write(() => this.t.settings.set(key(s.workspaceId, s.projectId ?? "", s.key), s)),
+    };
+
+    instanceSettings: Repos["instanceSettings"] = {
+        get: async (k) => this.t.instanceSettings.get(k)?.value ?? null,
+        put: (k, value) => this.write(() => this.t.instanceSettings.set(k, { value })),
+    };
+
+    modelGrants: Repos["modelGrants"] = {
+        get: async (workspaceId) => this.t.modelGrants.get(workspaceId),
+        list: async () => this.t.modelGrants.values().sort((a, b) => a.grantedAt.localeCompare(b.grantedAt)),
+        put: (g) => this.write(() => this.t.modelGrants.set(g.workspaceId, g)),
+        delete: (workspaceId) => this.write(() => this.t.modelGrants.delete(workspaceId)),
     };
 }

@@ -20,6 +20,7 @@ import type {
     ArchivedReport,
     AuditRow,
     Membership,
+    ModelGrant,
     Project,
     Repos,
     ReviewRecord,
@@ -244,6 +245,13 @@ const toSecret = (r: Row): SecretRecord => ({
     hint: r.hint,
     setBy: r.set_by,
     setAt: iso(r.set_at),
+});
+
+const toGrant = (r: Row): ModelGrant => ({
+    workspaceId: r.workspace_id,
+    monthlyTokens: Number(r.monthly_tokens),
+    grantedBy: r.granted_by,
+    grantedAt: iso(r.granted_at),
 });
 
 const toSetting = (r: Row): SettingRecord => ({ workspaceId: r.workspace_id, projectId: r.project_id, key: r.key, value: r.value });
@@ -740,6 +748,16 @@ export class PostgresStore implements Store {
             );
             return Number(rows[0]?.total ?? 0);
         },
+        tokensByWorkspace: async (since, keySource) => {
+            const rows = await this.rows(
+                (sql) => sql`
+                    select workspace_id, sum(tokens_total)::bigint as total from review_history
+                    where at >= ${since} and tokens_total > 0
+                    ${keySource === undefined ? sql`` : sql`and ${same(sql, "key_source", keySource)}`}
+                    group by workspace_id`,
+            );
+            return Object.fromEntries(rows.map((r) => [r.workspace_id as string, Number(r.total)]));
+        },
     };
 
     settings: Repos["settings"] = {
@@ -757,5 +775,26 @@ export class PostgresStore implements Store {
                 "project_id",
                 "key",
             ]),
+    };
+
+    instanceSettings: Repos["instanceSettings"] = {
+        get: async (key) => (await this.rows((sql) => sql`select value from instance_settings where key = ${key}`))[0]?.value ?? null,
+        put: (key, value) => this.upsert("instance_settings", { key, value: json(this.sql, value) }, ["key"]),
+    };
+
+    modelGrants: Repos["modelGrants"] = {
+        get: async (workspaceId) =>
+            first(await this.rows((sql) => sql`select * from model_grants where workspace_id = ${workspaceId}`), toGrant),
+        list: async () => (await this.rows((sql) => sql`select * from model_grants order by granted_at, workspace_id`)).map(toGrant),
+        put: (g) =>
+            this.upsert(
+                "model_grants",
+                { workspace_id: g.workspaceId, monthly_tokens: g.monthlyTokens, granted_by: g.grantedBy, granted_at: g.grantedAt },
+                ["workspace_id"],
+            ),
+        delete: (workspaceId) =>
+            this.write(async (sql) => {
+                await sql`delete from model_grants where workspace_id = ${workspaceId}`;
+            }),
     };
 }

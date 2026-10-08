@@ -13,6 +13,7 @@ import { publicProject } from "../services/projects.ts";
 import { AutomationSchema } from "../services/settings.ts";
 import type { BranchRef } from "../services/triage.ts";
 import type { Project } from "../store/types.ts";
+import { analyticsTool } from "./analytics-tool.ts";
 
 export interface ToolContext {
     services: Services;
@@ -515,6 +516,8 @@ export const TOOLS: Tool[] = [
             };
         },
     }),
+
+    analyticsTool,
 
     // ---- configuration (manage tokens) ---------------------------------------------------------
     tool({

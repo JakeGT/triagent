@@ -5,6 +5,11 @@ import { randomId } from "../security.ts";
 import type { Repos, ReviewRecord } from "../store/types.ts";
 import type { Core } from "./core.ts";
 
+/** The first moment of `now`'s calendar month (UTC), as ISO time: allowances count from here. */
+export function monthStart(now: Date): string {
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+}
+
 export class History {
     private readonly core: Core;
 
@@ -25,7 +30,6 @@ export class History {
 
     /** Tokens a workspace has used since the start of this calendar month (UTC). */
     tokensThisMonth(workspaceId: string, keySource?: ReviewRecord["keySource"], now = new Date()): Promise<number> {
-        const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-        return this.core.store.reviewHistory.tokensSince(workspaceId, start, keySource);
+        return this.core.store.reviewHistory.tokensSince(workspaceId, monthStart(now), keySource);
     }
 }

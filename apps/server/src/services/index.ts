@@ -1,10 +1,14 @@
 import type { Config } from "../config.ts";
 import type { Store } from "../store/types.ts";
 import { Accounts } from "./accounts.ts";
+import { Allowances } from "./allowances.ts";
+import { AnalyticsService } from "./analytics.ts";
+import { Catalogue } from "./catalogue.ts";
 import { Core } from "./core.ts";
 import { EventBus } from "./events.ts";
 import { History } from "./history.ts";
 import { Models } from "./models.ts";
+import { Prices } from "./prices.ts";
 import { Projects } from "./projects.ts";
 import { Reports } from "./reports.ts";
 import { SecretBox, Secrets } from "./secrets.ts";
@@ -25,25 +29,45 @@ export interface Services {
     webhooks: Webhooks;
     history: History;
     models: Models;
+    catalogue: Catalogue;
+    prices: Prices;
+    allowances: Allowances;
+    analytics: AnalyticsService;
 }
 
-export function createServices(config: Config, store: Store): Services {
+/** Test seams: the clock, and how to reach OpenRouter. */
+export interface ServiceOptions {
+    now?: () => Date;
+    fetch?: typeof fetch;
+}
+
+export function createServices(config: Config, store: Store, options: ServiceOptions = {}): Services {
     const events = new EventBus();
     const core = new Core(store, config, events, new Secrets(new SecretBox(config.secretsKey)));
-    const reports = new Reports(core);
+    const clock = options.now ?? (() => new Date());
+    const history = new History(core);
+    const reports = new Reports(core, history);
     const settings = new Settings(core);
+    const projects = new Projects(core);
+    const catalogue = new Catalogue({ enabled: config.openrouterCatalogue, ...(options.fetch ? { fetch: options.fetch } : {}) });
+    const prices = new Prices(core, catalogue);
+    const allowances = new Allowances(core, clock);
     return {
         core,
         config,
         store,
         events,
         accounts: new Accounts(core),
-        projects: new Projects(core),
+        projects,
         reports,
         triage: new Triage(core, reports),
         settings,
         webhooks: new Webhooks(core, settings),
-        history: new History(core),
-        models: new Models(core),
+        history,
+        models: new Models(core, history, allowances),
+        catalogue,
+        prices,
+        allowances,
+        analytics: new AnalyticsService(core, projects, reports, prices, () => clock().getTime()),
     };
 }
