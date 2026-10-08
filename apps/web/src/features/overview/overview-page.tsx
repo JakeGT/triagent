@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { SEVERITIES, type Severity, STATUSES, type Status } from "@triagent/shared";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { ExampleBadge } from "@/components/example-badge";
 import { FormSection } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { InlineCode } from "@/components/markdown";
@@ -12,7 +13,8 @@ import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CATEGORY_LABEL, formatDateTime, plural, STATUS_LABEL, timeAgo } from "@/lib/format";
 import { overviewQuery } from "@/lib/queries";
-import { useProject } from "@/lib/session";
+import { useMe, useProject } from "@/lib/session";
+import { isExample } from "@/lib/tutorial";
 import type { Overview } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { describeActivity } from "../activity/describe";
@@ -35,6 +37,7 @@ function Section({ title, children, action }: { title: string; children: ReactNo
 export function OverviewPage() {
     const { ws, slug, project, branch, branchParam } = useProject();
     const query = useQuery(overviewQuery(ws, slug, branch));
+    const example = isExample(useMe(), ws, slug);
     const params = { ws, project: slug };
     /** Search for a link to Issues on this branch. */
     const issues = (filters: Record<string, unknown> = {}) => ({ branch: branchParam, ...filters }) as never;
@@ -50,6 +53,7 @@ export function OverviewPage() {
             description={
                 <>
                     {project.name}, branch <span className="font-mono">{branch}</span>
+                    {example && <ExampleBadge className="ms-2" />}
                 </>
             }
         />
@@ -156,7 +160,7 @@ export function OverviewPage() {
                 </details>
             )}
 
-            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" data-tour="overview-tiles">
                 {tiles.map((t) => (
                     <li key={t.label} className="relative rounded-lg border bg-card p-3 hover:bg-accent/50">
                         <p className="text-xs text-muted-foreground">{t.label}</p>
@@ -186,7 +190,7 @@ export function OverviewPage() {
                 </div>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
                 <Section title="By severity">
                     <Table>
                         <TableHeader>
@@ -308,7 +312,7 @@ export function OverviewPage() {
                     {o.hotspots.length === 0 ? (
                         <p className="text-sm text-muted-foreground">No files with findings.</p>
                     ) : (
-                        <ul className="grid text-sm">
+                        <ul className="grid grid-cols-[minmax(0,1fr)] text-sm">
                             {o.hotspots.map((f) => (
                                 <li key={f.path} className="flex items-center gap-3">
                                     <Link
@@ -334,7 +338,7 @@ export function OverviewPage() {
                     {o.themes.length === 0 ? (
                         <p className="text-sm text-muted-foreground">The reviewer's summary has no list of themes.</p>
                     ) : (
-                        <ol className="grid gap-1.5 text-sm">
+                        <ol className="grid grid-cols-[minmax(0,1fr)] gap-1.5 text-sm">
                             {o.themes.map((t) => (
                                 <li key={t.id} className="flex items-start gap-3">
                                     <Link
@@ -391,7 +395,7 @@ export function OverviewPage() {
                     {o.recentActivity.length === 0 ? (
                         <p className="text-sm text-muted-foreground">Nothing has changed yet.</p>
                     ) : (
-                        <ol className="grid gap-1.5 text-sm">
+                        <ol className="grid grid-cols-[minmax(0,1fr)] gap-1.5 text-sm">
                             {o.recentActivity.slice(0, 8).map((a) => (
                                 <li key={a.id}>
                                     <span className="font-medium">{a.actor}</span> {describeActivity(a)}{" "}

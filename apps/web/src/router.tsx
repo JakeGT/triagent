@@ -8,10 +8,10 @@ import {
     createRouter,
     lazyRouteComponent,
     notFound,
-    Outlet,
     type RouteComponent,
     redirect,
 } from "@tanstack/react-router";
+import { AuthedLayout } from "@/components/layout/authed-layout";
 import { RouteError } from "@/components/load-state";
 import { NotFoundPage } from "@/components/not-found";
 import { RootLayout } from "@/components/root-layout";
@@ -95,7 +95,7 @@ const authedRoute = createRoute({
         if (me.mustChangePassword) throw redirect({ to: "/change-password" });
         return { me };
     },
-    component: Outlet,
+    component: AuthedLayout,
 });
 
 const homeRoute = createRoute({
@@ -210,6 +210,10 @@ const wsSettingsRoutes = [
     settingsPage(
         "/password",
         lazyRouteComponent(() => import("@/features/settings/password-settings"), "PasswordSettings"),
+    ),
+    settingsPage(
+        "/tutorial",
+        lazyRouteComponent(() => import("@/features/settings/tutorial-settings"), "TutorialSettings"),
     ),
     settingsPage(
         "/appearance",

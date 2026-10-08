@@ -16,7 +16,7 @@ import {
     sha256,
     verifyPassword,
 } from "../security.ts";
-import type { ApiToken, Membership, NotifyPrefs, Repos, Session, User, Workspace } from "../store/types.ts";
+import type { ApiToken, Membership, NotifyPrefs, Repos, Session, TutorialState, User, Workspace } from "../store/types.ts";
 import type { Actor, Core, Write } from "./core.ts";
 import type { Invites } from "./invites.ts";
 import type { Identity } from "./oidc.ts";
@@ -33,6 +33,11 @@ export interface Access {
 }
 
 export const DEFAULT_NOTIFY: NotifyPrefs = { scope: "mine", problemsOnly: false };
+
+/** Where a new account starts in the first-run tutorial. */
+export function newTutorial(autoStart: boolean): TutorialState {
+    return { status: autoStart ? "pending" : "completed", step: 0, exampleProject: null };
+}
 
 export function publicUser(u: User) {
     return {
@@ -109,6 +114,7 @@ export class Accounts {
             issuer: null,
             subject: null,
             notify: DEFAULT_NOTIFY,
+            tutorial: newTutorial(this.core.config.tutorialAutoStart),
             createdAt: now(),
             lastLoginAt: null,
         };
@@ -256,6 +262,7 @@ export class Accounts {
                     issuer: identity.issuer,
                     subject: identity.subject,
                     notify: DEFAULT_NOTIFY,
+                    tutorial: newTutorial(this.core.config.tutorialAutoStart),
                     createdAt: now(),
                     lastLoginAt: now(),
                 };

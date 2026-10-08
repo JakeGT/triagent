@@ -85,6 +85,7 @@ for (const theme of ["light", "dark"] as const)
                 ["settings-notifications", `/w/${s.ws}/settings/notifications`],
                 ["settings-password", `/w/${s.ws}/settings/password`],
                 ["settings-appearance", `/w/${s.ws}/settings/appearance`],
+                ["settings-tutorial", `/w/${s.ws}/settings/tutorial`],
             ];
             for (const [name, url] of pages) {
                 await page.goto(url);

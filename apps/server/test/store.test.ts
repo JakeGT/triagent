@@ -38,6 +38,7 @@ const user = (id: string, extra: Partial<User> = {}): User => ({
     issuer: null,
     subject: null,
     notify: { scope: "mine", problemsOnly: false },
+    tutorial: { status: "pending", step: 0, exampleProject: null },
     createdAt: at(),
     lastLoginAt: null,
     ...extra,

@@ -36,9 +36,9 @@ function Snippet({ code, label }: { code: string; label: string }) {
     );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, tour, children }: { title: string; tour?: string; children: ReactNode }) {
     return (
-        <FormSection title={title} level={2}>
+        <FormSection title={title} level={2} data-tour={tour}>
             {children}
         </FormSection>
     );
@@ -91,7 +91,7 @@ export function AgentsPage() {
                 </p>
             </Section>
 
-            <Section title="2. Connect your agent (MCP)">
+            <Section title="2. Connect your agent (MCP)" tour="agents-mcp">
                 <p className="text-sm">
                     Triagent is an MCP server at <code className="font-mono">{mcp}</code> (stateless Streamable HTTP). Agents see the tools
                     their token allows: claim the next issue, read it, mark it resolved with a note, and more.

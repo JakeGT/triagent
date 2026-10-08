@@ -92,7 +92,7 @@ export function ComparePage() {
                     <LoadError error={result.error} onRetry={() => result.refetch()} title="Couldn't compare the branches" />
                 ) : (
                     <>
-                        <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-tour="compare-summary">
                             <div className="rounded-lg border bg-card p-3">
                                 <dt className="text-xs text-muted-foreground">
                                     New on <span className="font-mono">{result.data.head}</span>
@@ -126,7 +126,7 @@ export function ComparePage() {
                                 findings it no longer has weren't necessarily fixed: they may just not have been looked at.
                             </p>
                         )}
-                        <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
                             <IssueList
                                 title={`New on ${result.data.head}`}
                                 items={result.data.added.items}

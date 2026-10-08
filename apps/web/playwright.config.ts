@@ -28,12 +28,15 @@ process.env.E2E_OIDC_PORT ??= String(await freePort());
 process.env.E2E_PROVIDER_PORT ??= String(await freePort());
 process.env.E2E_GITHUB_PORT ??= String(await freePort());
 process.env.E2E_RUNNER_PORT ??= String(await freePort());
+process.env.E2E_TUTORIAL_PORT ??= String(await freePort());
 // Made up for each run: shared by the end-to-end server and its runner.
 process.env.E2E_RUNNER_SECRET ??= randomBytes(32).toString("base64url");
 const RUNNER_SECRET = process.env.E2E_RUNNER_SECRET;
 const port = Number(process.env.E2E_PORT);
 const origin = `http://127.0.0.1:${port}`;
 const oidcOrigin = `http://127.0.0.1:${process.env.E2E_OIDC_PORT}`;
+// The first-run tutorial starts by itself only on its own server: elsewhere accounts start with it done.
+const tutorialOrigin = `http://127.0.0.1:${process.env.E2E_TUTORIAL_PORT}`;
 // The provider is on "localhost": another site from the app's 127.0.0.1, as a real provider would be.
 const issuer = `http://localhost:${process.env.E2E_PROVIDER_PORT}/application/o/triagent/`;
 process.env.E2E_PROVIDER_ISSUER = issuer;
@@ -59,13 +62,18 @@ export default defineConfig({
     projects: [
         {
             name: "chromium",
-            testIgnore: /oidc\.spec\.ts/,
+            testIgnore: /(oidc|tutorial)\.spec\.ts/,
             use: { ...devices["Desktop Chrome"], viewport: { width: 1400, height: 900 } },
         },
         {
             name: "oidc",
             testMatch: /oidc\.spec\.ts/,
             use: { ...devices["Desktop Chrome"], viewport: { width: 1400, height: 900 }, baseURL: oidcOrigin },
+        },
+        {
+            name: "tutorial",
+            testMatch: /tutorial\.spec\.ts/,
+            use: { ...devices["Desktop Chrome"], viewport: { width: 1400, height: 900 }, baseURL: tutorialOrigin },
         },
     ],
     webServer: [
@@ -94,6 +102,28 @@ export default defineConfig({
                 REVIEW_CONCURRENCY: "4",
                 // The model provider tests serve a fake provider on 127.0.0.1 (providers.spec.ts).
                 ALLOW_PRIVATE_MODEL_URLS: "true",
+                // Test accounts start with the tutorial done; tutorial.spec.ts has a server of its own.
+                TUTORIAL_AUTO_START: "false",
+            },
+        },
+        {
+            command: "node ../server/src/main.ts",
+            cwd: import.meta.dirname,
+            url: `${tutorialOrigin}/healthz`,
+            reuseExistingServer: false,
+            timeout: 30_000,
+            stdout: "ignore",
+            stderr: "pipe",
+            env: {
+                HOST: "127.0.0.1",
+                PORT: String(process.env.E2E_TUTORIAL_PORT),
+                PUBLIC_ORIGIN: tutorialOrigin,
+                COOKIE_SECURE: "false",
+                TRIAGENT_ADMIN_USER: ADMIN_USER,
+                TRIAGENT_ADMIN_PASSWORD: ADMIN_PASSWORD,
+                REQUESTS_PER_MINUTE: "100000",
+                OPENROUTER_CATALOGUE: "false",
+                WEB_DIST_DIR: path.resolve(import.meta.dirname, "dist"),
             },
         },
         {
@@ -157,6 +187,7 @@ export default defineConfig({
                 OIDC_CLIENT_ID: "triagent",
                 OIDC_CLIENT_SECRET,
                 OIDC_PROVIDER_NAME: "Test ID",
+                TUTORIAL_AUTO_START: "false",
                 INVITE_HINT: "Ask the administrator to add your address to the sign-in allowlist.",
                 REQUESTS_PER_MINUTE: "100000",
                 // Never reach OpenRouter from tests: the catalogue is served by the tests that need it.

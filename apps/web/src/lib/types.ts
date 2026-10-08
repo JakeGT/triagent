@@ -44,6 +44,8 @@ export interface AuthConfig {
     signupMode: "invite" | "open";
 }
 
+export type TutorialStatus = "pending" | "in_progress" | "completed" | "dismissed";
+
 export interface Me {
     kind: "session";
     user: PublicUser;
@@ -51,7 +53,16 @@ export interface Me {
     csrf: string;
     mustChangePassword: boolean;
     notify: NotifyPrefs;
+    /** The first-run tutorial: where the person is in it, and where their example project is. */
+    tutorial: { status: TutorialStatus; step: number; example: { workspace: string; project: string } | null };
     workspaces: WorkspaceSummary[];
+}
+
+/** GET /api/v1/me/tutorial */
+export interface TutorialView {
+    status: TutorialStatus;
+    step: number;
+    example: { workspace: string; project: string; name: string; issue: string | null } | null;
 }
 
 export interface WorkspaceDetail extends WorkspaceSummary {
@@ -431,6 +442,8 @@ export interface Run {
         counts: { added: number; carriedOver: number; removed: number; reopened: number } | null;
         tokens: { input: number; output: number; cacheRead: number; total: number } | null;
         github?: string[];
+        /** A made-up run in the tutorial's example project: nothing ran. */
+        example?: boolean;
     } | null;
     error: string | null;
     model: { provider: string; model: string; keySource: "workspace" | "instance" } | null;

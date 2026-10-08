@@ -100,5 +100,27 @@ for (const kind of kinds) {
             assert.deepEqual(await store.reviewHistory.tokensByWorkspace("2026-03-01T00:00:00.000Z", null), {});
             assert.deepEqual(await store.reviewHistory.tokensByWorkspace("2026-04-01T00:00:00.000Z", "instance"), {});
         });
+
+        test("a project's reviews can be forgotten, leaving the rest", async () => {
+            const store = await kind.make();
+            await workspace(store, "w1");
+            await workspace(store, "w2");
+            const of = (id: string, workspaceId: string, projectId: string | null) => ({
+                ...review(id, workspaceId, "2026-03-01T00:00:00.000Z", 10, null),
+                projectId,
+            });
+            await store.reviewHistory.add(of("a", "w1", "p1"));
+            await store.reviewHistory.add(of("b", "w1", "p2"));
+            await store.reviewHistory.add(of("c", "w2", "p1"));
+            await store.reviewHistory.removeProject("w1", "p1");
+            assert.deepEqual(
+                (await store.reviewHistory.list({ workspaceId: "w1" }, 10)).map((r) => r.id),
+                ["b"],
+            );
+            assert.deepEqual(
+                (await store.reviewHistory.list({ workspaceId: "w2" }, 10)).map((r) => r.id),
+                ["c"],
+            );
+        });
     });
 }

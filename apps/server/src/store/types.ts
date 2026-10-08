@@ -9,6 +9,16 @@ export interface NotifyPrefs {
     problemsOnly: boolean;
 }
 
+export const TUTORIAL_STATUSES = ["pending", "in_progress", "completed", "dismissed"] as const;
+export type TutorialStatus = (typeof TUTORIAL_STATUSES)[number];
+
+/** How far someone has got through the first-run tutorial, and their example project (by slug, in their personal workspace). */
+export interface TutorialState {
+    status: TutorialStatus;
+    step: number;
+    exampleProject: string | null;
+}
+
 export interface User {
     id: string;
     /** Local accounts sign in with this; accounts from an identity provider may have none. */
@@ -22,6 +32,7 @@ export interface User {
     issuer: string | null;
     subject: string | null;
     notify: NotifyPrefs;
+    tutorial: TutorialState;
     createdAt: string;
     lastLoginAt: string | null;
 }
@@ -472,6 +483,8 @@ export interface Repos {
         tokensSince(workspaceId: string, since: string, keySource?: ReviewRecord["keySource"]): Promise<number>;
         /** The same, for every workspace with any: workspace id → tokens. */
         tokensByWorkspace(since: string, keySource?: ReviewRecord["keySource"]): Promise<Record<string, number>>;
+        /** Forget a project's reviews (deleting a project otherwise keeps them for analytics). */
+        removeProject(workspaceId: string, projectId: string): Promise<void>;
     };
     settings: {
         get(workspaceId: string, projectId: string | null, key: string): Promise<SettingRecord | null>;

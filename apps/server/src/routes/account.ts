@@ -88,6 +88,8 @@ export const accountRoutes: Route[] = [
             }
             if (principal?.kind !== "session") throw new ApiError(401, "Sign in.");
             const { user, session } = principal;
+            const workspaces = await services.accounts.workspacesOf(user);
+            const personal = workspaces.find((w) => w.kind === "personal" && w.role === "owner");
             return json({
                 kind: "session",
                 user: publicUser(user),
@@ -95,7 +97,16 @@ export const accountRoutes: Route[] = [
                 csrf: session.csrf,
                 mustChangePassword: user.mustChangePassword,
                 notify: user.notify,
-                workspaces: await services.accounts.workspacesOf(user),
+                tutorial: {
+                    status: user.tutorial.status,
+                    step: user.tutorial.step,
+                    // Where the example project is, so pages can mark it as one.
+                    example:
+                        personal && user.tutorial.exampleProject
+                            ? { workspace: personal.slug, project: user.tutorial.exampleProject }
+                            : null,
+                },
+                workspaces,
             });
         },
     }),

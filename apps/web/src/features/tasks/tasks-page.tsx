@@ -59,6 +59,7 @@ export function TasksPage() {
                     {tasks.data && <p className="text-sm text-muted-foreground">{plural(tasks.data.total, "task")}</p>}
                 </div>
                 <Tabs
+                    data-tour="tasks-list"
                     value={current}
                     onValueChange={(v) =>
                         void navigate({

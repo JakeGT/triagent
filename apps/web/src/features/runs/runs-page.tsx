@@ -4,6 +4,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useSearch } from "@tanstack/react-router";
 import { AlertTriangle } from "lucide-react";
+import { ExampleBadge } from "@/components/example-badge";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -35,13 +36,16 @@ export function WaitingBanner({ list, ws }: { list: Pick<RunList, "ready" | "wai
 
 function RunLink({ run, ws, project }: { run: Run; ws: string; project: string }) {
     return (
-        <Link
-            to="/w/$ws/p/$project/runs/$runId"
-            params={{ ws, project: run.project ?? project, runId: run.id }}
-            className="font-medium hover:underline"
-        >
-            {run.title}
-        </Link>
+        <>
+            <Link
+                to="/w/$ws/p/$project/runs/$runId"
+                params={{ ws, project: run.project ?? project, runId: run.id }}
+                className="font-medium hover:underline"
+            >
+                {run.title}
+            </Link>
+            {run.result?.example && <ExampleBadge className="ms-2" />}
+        </>
     );
 }
 
@@ -81,6 +85,11 @@ export function RunsPage() {
             ) : data ? (
                 <>
                     <WaitingBanner list={data} ws={ws} />
+                    {data.recent.some((r) => r.result?.example) && (
+                        <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                            Runs marked Example are made up for the tutorial: nothing was fetched or reviewed, and no model was used.
+                        </p>
+                    )}
                     <section aria-labelledby="running-heading" className="grid gap-2">
                         <h2 id="running-heading" className="section-title">
                             Running now
@@ -161,7 +170,7 @@ export function RunsPage() {
                         )}
                     </section>
 
-                    <section aria-labelledby="recent-heading" className="grid gap-2">
+                    <section aria-labelledby="recent-heading" className="grid gap-2" data-tour="runs-recent">
                         <h2 id="recent-heading" className="section-title">
                             Recent
                         </h2>

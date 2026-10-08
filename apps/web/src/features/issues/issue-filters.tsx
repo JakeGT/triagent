@@ -175,7 +175,7 @@ export function IssueFilters({
 
     const sort = search.sort ?? "priority";
     return (
-        <search className="flex flex-wrap items-center gap-2" aria-label="Filter issues">
+        <search className="flex flex-wrap items-center gap-2" aria-label="Filter issues" data-tour="issue-filters">
             <div className="relative w-full sm:w-64">
                 <Label htmlFor={searchId} className="sr-only">
                     Search issues

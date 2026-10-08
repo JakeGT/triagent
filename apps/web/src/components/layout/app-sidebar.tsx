@@ -125,7 +125,7 @@ export function AppSidebar() {
 
     return (
         <Sidebar collapsible="icon">
-            <SidebarHeader className="gap-1">
+            <SidebarHeader className="gap-1" data-tour="pickers">
                 <WorkspaceSwitcher />
                 <ProjectPicker current={project} />
                 {project && branchScoped && <BranchPicker project={project} />}

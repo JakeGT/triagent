@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ExampleBadge } from "@/components/example-badge";
 import { Field, FieldError, FieldRow } from "@/components/field";
 import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
@@ -11,7 +12,8 @@ import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableR
 import { api, errorMessage, paths } from "@/lib/api";
 import { keys, projectsQuery } from "@/lib/queries";
 import { safeHref } from "@/lib/safe-href";
-import { useWorkspace } from "@/lib/session";
+import { useMe, useWorkspace } from "@/lib/session";
+import { isExample } from "@/lib/tutorial";
 import type { Project } from "@/lib/types";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
@@ -103,6 +105,7 @@ function CreateProject() {
 }
 
 export function ProjectsSettings() {
+    const me = useMe();
     const { ws, workspace, can } = useWorkspace();
     const query = useQuery(projectsQuery(ws));
     return (
@@ -141,6 +144,7 @@ export function ProjectsSettings() {
                                             >
                                                 {p.name}
                                             </Link>
+                                            {isExample(me, ws, p.slug) && <ExampleBadge className="ms-2" />}
                                             <div className="font-mono text-xs text-muted-foreground">{p.slug}</div>
                                         </TableCell>
                                         <TableCell className="max-w-56 truncate text-xs">

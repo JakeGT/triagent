@@ -22,6 +22,7 @@ import { Runs } from "./runs.ts";
 import { SecretBox, Secrets } from "./secrets.ts";
 import { Settings } from "./settings.ts";
 import { Triage } from "./triage.ts";
+import { Tutorial } from "./tutorial.ts";
 import { Webhooks } from "./webhooks.ts";
 
 export interface Services {
@@ -33,6 +34,7 @@ export interface Services {
     projects: Projects;
     reports: Reports;
     triage: Triage;
+    tutorial: Tutorial;
     settings: Settings;
     webhooks: Webhooks;
     history: History;
@@ -77,6 +79,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
     const automation = new Automation(core, github, runs, reports, settings);
     webhooks.automation = automation;
     const invites = new Invites(core);
+    const triage = new Triage(core, reports);
     return {
         core,
         config,
@@ -85,7 +88,8 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         accounts: new Accounts(core, invites),
         projects,
         reports,
-        triage: new Triage(core, reports),
+        triage,
+        tutorial: new Tutorial(core, projects, reports, triage, history),
         settings,
         webhooks,
         history,

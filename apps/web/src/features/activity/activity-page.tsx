@@ -88,7 +88,7 @@ export function ActivityPage() {
                 <EmptyState title="Nothing has changed yet">Uploads, triage and notes will appear here.</EmptyState>
             ) : (
                 <>
-                    <ol className="divide-y rounded-lg border bg-card">
+                    <ol className="divide-y rounded-lg border bg-card" data-tour="activity-list">
                         {rows.map((row) => (
                             <li key={row.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2 text-sm">
                                 <time

@@ -119,6 +119,7 @@ export function SettingsLayout() {
         // With an identity provider, it looks after passwords.
         ...(me.authMode === "local" ? [wsLink("/password", "Password", "/w/$ws/settings/password")] : []),
         wsLink("/appearance", "Appearance", "/w/$ws/settings/appearance"),
+        wsLink("/tutorial", "Tutorial", "/w/$ws/settings/tutorial"),
     ];
 
     const here = [...projectItems, ...workspaceItems, ...instanceItems, ...accountItems].find((i) => i.href === pathname)?.label;
@@ -148,7 +149,7 @@ function SettingsNav({ current, pathname, children }: { current?: string; pathna
     // biome-ignore lint/correctness/useExhaustiveDependencies: close when the page changes
     useEffect(() => setOpen(false), [pathname]);
     return (
-        <nav aria-label="Settings" className="grid content-start gap-2">
+        <nav aria-label="Settings" className="grid content-start gap-2" data-tour="settings-nav">
             <button
                 type="button"
                 aria-expanded={open}

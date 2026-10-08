@@ -383,6 +383,8 @@ export class MemoryStore implements Store {
 
     reviewHistory: Repos["reviewHistory"] = {
         add: (record) => this.write(() => this.t.reviewHistory.add(record)),
+        removeProject: (workspaceId, projectId) =>
+            this.write(() => this.t.reviewHistory.remove((r) => r.workspaceId === workspaceId && r.projectId === projectId)),
         list: async (f, limit) =>
             this.t.reviewHistory.rows
                 .filter(

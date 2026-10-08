@@ -103,6 +103,16 @@ test("the review model form lines up for every kind of provider", async ({ page,
 
 test("no page is wider than a phone", async ({ page, admin }) => {
     const { ws, project } = await seedProject(admin);
+    // Long paths, as the tutorial's example project has.
+    await admin.post(`/api/v1/w/${ws}/p/${project}/reports`, {
+        branch: "main",
+        confirm: true,
+        fileName: "long.json",
+        report: {
+            ...REPORT,
+            comments: REPORT.comments.map((c, i) => ({ ...c, path: `src/checkout/components/CheckoutFormStep${i}.tsx` })),
+        },
+    });
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
     await page.setViewportSize({ width: 390, height: 844 });
     for (const path of [

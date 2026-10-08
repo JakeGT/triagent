@@ -115,6 +115,7 @@ const toUser = (r: Row): User => ({
     issuer: r.issuer,
     subject: r.subject,
     notify: r.notify,
+    tutorial: r.tutorial,
     createdAt: iso(r.created_at),
     lastLoginAt: isoOrNull(r.last_login_at),
 });
@@ -497,6 +498,7 @@ export class PostgresStore implements Store {
                     issuer: u.issuer,
                     subject: u.subject,
                     notify: json(this.sql, u.notify),
+                    tutorial: json(this.sql, u.tutorial),
                     created_at: u.createdAt,
                     last_login_at: u.lastLoginAt,
                 },
@@ -863,6 +865,10 @@ export class PostgresStore implements Store {
             );
             return Number(rows[0]?.total ?? 0);
         },
+        removeProject: (workspaceId, projectId) =>
+            this.write(async (sql) => {
+                await sql`delete from review_history where workspace_id = ${workspaceId} and project_id = ${projectId}`;
+            }),
         tokensByWorkspace: async (since, keySource) => {
             const rows = await this.rows(
                 (sql) => sql`

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { Building2, Check, ChevronsUpDown, FolderGit2, GitBranch, Plus, User } from "lucide-react";
 import { useState } from "react";
+import { ExampleBadge } from "@/components/example-badge";
 import { Field, FieldError } from "@/components/field";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -22,14 +23,16 @@ import { api, errorMessage, paths } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { branchesQuery, keys, projectsQuery } from "@/lib/queries";
 import { useMe, useWorkspace } from "@/lib/session";
+import { isExample } from "@/lib/tutorial";
 import type { WorkspaceSummary } from "@/lib/types";
 
 function PickerButton({
     icon,
     label,
     value,
+    badge,
     ...props
-}: { icon: React.ReactNode; label: string; value: string } & React.ComponentProps<typeof SidebarMenuButton>) {
+}: { icon: React.ReactNode; label: string; value: string; badge?: React.ReactNode } & React.ComponentProps<typeof SidebarMenuButton>) {
     return (
         <SidebarMenuButton
             {...props}
@@ -39,7 +42,10 @@ function PickerButton({
         >
             <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background [&>svg]:size-4">{icon}</span>
             <span className="grid min-w-0 flex-1 text-start leading-tight">
-                <span className="text-[0.7rem] text-muted-foreground">{label}</span>
+                <span className="flex items-center gap-1.5 text-[0.7rem] text-muted-foreground">
+                    {label}
+                    {badge}
+                </span>
                 <span className="truncate font-medium">{value}</span>
             </span>
             <ChevronsUpDown className="ms-auto size-4 opacity-60" aria-hidden="true" />
@@ -147,6 +153,7 @@ function CreateOrganisation({ open, onOpenChange }: { open: boolean; onOpenChang
 }
 
 export function ProjectPicker({ current }: { current: string | undefined }) {
+    const me = useMe();
     const { ws, can } = useWorkspace();
     const { isMobile } = useSidebar();
     const projects = useQuery(projectsQuery(ws));
@@ -158,7 +165,12 @@ export function ProjectPicker({ current }: { current: string | undefined }) {
             <SidebarMenuItem>
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <PickerButton icon={<FolderGit2 />} label="Project" value={currentName} />
+                        <PickerButton
+                            icon={<FolderGit2 />}
+                            label="Project"
+                            value={currentName}
+                            badge={isExample(me, ws, current) ? <ExampleBadge className="h-4 px-1 text-[0.65rem]" /> : undefined}
+                        />
                     </DropdownMenuTrigger>
                     <DropdownMenuContent className="min-w-60" align="start" side={isMobile ? "bottom" : "right"}>
                         <DropdownMenuLabel className="text-xs text-muted-foreground">Projects</DropdownMenuLabel>
@@ -166,6 +178,7 @@ export function ProjectPicker({ current }: { current: string | undefined }) {
                             <DropdownMenuItem key={p.id} asChild>
                                 <Link to="/w/$ws/p/$project/overview" params={{ ws, project: p.slug }}>
                                     <span className="flex-1 truncate">{p.name}</span>
+                                    {isExample(me, ws, p.slug) && <ExampleBadge />}
                                     <span className="text-xs text-muted-foreground tabular-nums">{p.findings}</span>
                                     {p.slug === current && <Check aria-label="current" />}
                                 </Link>

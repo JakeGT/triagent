@@ -40,7 +40,7 @@ export function AnalyticsPage() {
             <PageMeta title="Analytics" />
             <PageHeader title="Analytics" description={`Reviews, findings and triage in ${workspace.name}: ${scope}.`} />
 
-            <form className="grid" aria-label="What to show" onSubmit={(e) => e.preventDefault()}>
+            <form className="grid" aria-label="What to show" onSubmit={(e) => e.preventDefault()} data-tour="analytics-filters">
                 <FieldRow columns="auto">
                     <Field label="Project" width="md">
                         {(p) => (

@@ -18,6 +18,7 @@ import { reportRoutes } from "./routes/reports.ts";
 import { runnerRoutes } from "./routes/runner.ts";
 import { runRoutes } from "./routes/runs.ts";
 import { skillRoutes } from "./routes/skill.ts";
+import { tutorialRoutes } from "./routes/tutorial.ts";
 import { workspaceRoutes } from "./routes/workspace.ts";
 import { RequestLimiter } from "./security.ts";
 import type { Services } from "./services/index.ts";
@@ -39,6 +40,7 @@ export function allRoutes(services: Services): Route[] {
     const routes: Route[] = [];
     routes.push(
         ...accountRoutes,
+        ...tutorialRoutes,
         ...authRoutes,
         ...inviteRoutes,
         ...workspaceRoutes,

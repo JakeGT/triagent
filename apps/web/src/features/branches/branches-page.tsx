@@ -51,7 +51,7 @@ export function BranchesPage() {
             />
             {can("upload") && <UploadReport />}
 
-            <section aria-labelledby="branches-heading" className="grid gap-2">
+            <section aria-labelledby="branches-heading" className="grid gap-2" data-tour="branches-table">
                 <h2 id="branches-heading" className="section-title">
                     Branches with a report
                 </h2>

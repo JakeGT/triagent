@@ -66,6 +66,7 @@ test("agents and settings pages", async ({ page, admin }) => {
         "/settings/notifications",
         "/settings/password",
         "/settings/appearance",
+        "/settings/tutorial",
     ]) {
         await page.goto(`/w/${ws}${path}`);
         await check(page, path);

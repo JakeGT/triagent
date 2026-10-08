@@ -247,8 +247,8 @@ function IssueView({ id }: { id: string }) {
             <FieldError message={error} />
 
             {canTriage && (
-                <div className="grid gap-form rounded-lg border bg-background p-3" data-testid="triage">
-                    <fieldset className="grid gap-field">
+                <div className="grid gap-form rounded-lg border bg-background p-3" data-testid="triage" data-tour="triage">
+                    <fieldset className="grid gap-field" data-tour="issue-status">
                         <legend className="mb-field text-xs font-medium text-muted-foreground">Status</legend>
                         <div className="flex flex-wrap gap-1">
                             {STATUSES.map((s: Status, i) => (
@@ -458,14 +458,16 @@ function IssueView({ id }: { id: string }) {
                 </p>
             )}
 
-            <section aria-labelledby="finding-heading" className="grid gap-1.5">
-                <h3 id="finding-heading" className="text-sm font-medium">
-                    Finding
-                </h3>
-                <Markdown>{issue.content}</Markdown>
-            </section>
+            <div className="grid gap-4" data-tour="issue-finding">
+                <section aria-labelledby="finding-heading" className="grid gap-1.5">
+                    <h3 id="finding-heading" className="text-sm font-medium">
+                        Finding
+                    </h3>
+                    <Markdown>{issue.content}</Markdown>
+                </section>
 
-            <CodeView existing={issue.existingCode} suggestion={issue.suggestionCode} startLine={issue.startLine} />
+                <CodeView existing={issue.existingCode} suggestion={issue.suggestionCode} startLine={issue.startLine} />
+            </div>
 
             {issue.duplicates.length > 0 && (
                 <section aria-labelledby="dups-heading" className="grid gap-1.5">
