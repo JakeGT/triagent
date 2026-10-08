@@ -250,6 +250,8 @@ const issueRoute = createRoute({
     getParentRoute: () => issuesRoute,
     path: "/$issueId",
     staticData: { branchScoped: true },
+    // A fresh panel for each issue (and branch), so a half-typed note or edit never carries over to another.
+    remountDeps: ({ params, search }) => `${params.issueId}\n${(search as { branch?: string }).branch ?? ""}`,
     component: lazyRouteComponent(() => import("@/features/issues/issue-panel"), "IssuePanel"),
 });
 
@@ -265,6 +267,7 @@ const taskRoute = createRoute({
     getParentRoute: () => tasksRoute,
     path: "/$taskId",
     staticData: { branchScoped: true },
+    remountDeps: ({ params, search }) => `${params.taskId}\n${(search as { branch?: string }).branch ?? ""}`,
     component: lazyRouteComponent(() => import("@/features/tasks/task-panel"), "TaskPanel"),
 });
 
