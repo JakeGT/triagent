@@ -30,6 +30,9 @@ test("every route that sets secrets needs a recent sign-in, and only those that 
     const guarded = t.routes.filter(needsRecentSignIn);
     assert.ok(guarded.length >= 6, `only ${guarded.length} routes need a recent sign-in`);
     for (const r of t.routes) if (r.permission === "secrets") assert.ok(guarded.includes(r), `${r.method} ${r.path}`);
+    // Instance-wide secrets (the instance's model keys) too.
+    for (const r of t.routes)
+        if (r.path.startsWith("/api/v1/instance/model/keys/")) assert.ok(guarded.includes(r), `${r.method} ${r.path}`);
 
     await age(t.services, admin, 16);
     for (const r of guarded) {
