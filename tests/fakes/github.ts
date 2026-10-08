@@ -46,6 +46,8 @@ export interface FakePull {
     baseRef: string;
     /** From a fork: the head lives in another repository. */
     fork: boolean;
+    /** GitHub's author_association: how the author relates to the repository (MEMBER unless given). */
+    association?: string;
 }
 
 export interface FakeApp {
@@ -367,6 +369,7 @@ export class FakeGitHub {
             draft: p.draft,
             html_url: `https://github.com/${r.fullName}/pull/${p.number}`,
             user: { login: p.author },
+            author_association: p.association ?? "MEMBER",
             head: { ref: p.headRef, sha: p.headSha, repo: { full_name: fork } },
             base: { ref: p.baseRef, sha: r.branches.get(p.baseRef) ?? "0".repeat(40), repo: { full_name: r.fullName } },
             updated_at: new Date().toISOString(),

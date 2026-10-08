@@ -2,9 +2,10 @@
 // database and keeps nothing between jobs but bare git mirrors; each job's credentials live only in
 // memory, for that job.
 //
-// OCR gets an explicit environment and nothing else: a throwaway HOME, OCR_CONFIG_PATH pointing at a file
-// that doesn't exist (so no MCP servers or setup commands from a user config can run), the model's
-// settings, and git settings that keep hooks off. Never telemetry settings, nor anything of Anthropic's.
+// OCR gets an explicit environment and nothing else: a throwaway HOME (OCR reads its user config, with
+// any MCP servers and setup commands, and its global rules from ~/.opencodereview, so there are none),
+// the model's settings, and git settings that keep hooks off. Never telemetry settings, nor anything of
+// Anthropic's.
 
 import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -39,8 +40,6 @@ export function ocrEnv(
         XDG_DATA_HOME: path.join(home, ".local", "share"),
         LANG: "C.UTF-8",
         TZ: "UTC",
-        // A config file that doesn't exist: OCR's MCP servers and setup commands only come from there.
-        OCR_CONFIG_PATH: path.join(home, ".opencodereview", "none.json"),
         OCR_NO_UPDATE: "1",
         OCR_LLM_URL: job.model.url,
         OCR_LLM_TOKEN: job.model.apiKey,
@@ -94,6 +93,7 @@ export class JobRun {
     private stopOcr: (() => void) | null = null;
     cancelled = false;
     lost = false;
+    private readonly stopping = new AbortController();
     private readonly timers: ReturnType<typeof setInterval>[] = [];
     private flushing: Promise<void> = Promise.resolve();
 
@@ -179,14 +179,21 @@ export class JobRun {
         }
     }
 
+    /** Aborted when the job is cancelled or lost: stops git (fetching, adding the worktree) as well as OCR. */
+    get signal(): AbortSignal {
+        return this.stopping.signal;
+    }
+
     cancel(): void {
         if (this.cancelled) return;
         this.cancelled = true;
+        this.stopping.abort();
         this.stopOcr?.();
     }
 
     private lose(): void {
         this.lost = true;
+        this.stopping.abort();
         this.stopOcr?.();
     }
 
@@ -293,15 +300,19 @@ export class Runner {
             run.say(
                 `Fetching ${job.kind === "pr" ? `pull request #${job.pr?.number}` : job.gitRef}${job.baseRef ? ` and ${job.baseRef}` : ""} from ${job.repository.fullName}…`,
             );
-            fetched = await this.git.fetch(mirror, {
-                kind: job.kind,
-                cloneUrl: job.repository.cloneUrl,
-                username: job.git.username,
-                token: job.git.token,
-                pr: job.pr?.number ?? null,
-                gitRef: job.gitRef,
-                baseRef: job.baseRef,
-            });
+            fetched = await this.git.fetch(
+                mirror,
+                {
+                    kind: job.kind,
+                    cloneUrl: job.repository.cloneUrl,
+                    username: job.git.username,
+                    token: job.git.token,
+                    pr: job.pr?.number ?? null,
+                    gitRef: job.gitRef,
+                    baseRef: job.baseRef,
+                },
+                run.signal,
+            );
             run.check();
             if (job.kind === "pr" && job.headSha && fetched.head !== job.headSha)
                 run.say(`The pull request moved on to ${fetched.head.slice(0, 7)} since it was queued; reviewing that.`);
@@ -309,7 +320,8 @@ export class Runner {
                 throw new Error(
                     `There are no changes to review: ${job.gitRef ?? "the pull request"} has nothing that isn't on ${job.baseRef}.`,
                 );
-            await this.git.addWorktree(mirror, tree, fetched.head, fetched.base);
+            await this.git.addWorktree(mirror, tree, fetched.head, fetched.base, run.signal);
+            run.check();
             if (fetched.base) {
                 const rules = await this.git.useBaseReviewRules(mirror, tree, fetched.base);
                 if (rules !== "unchanged")

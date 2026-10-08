@@ -7,14 +7,24 @@
 #   openssl rand -base64 24 > secrets/postgres_password
 #   printf 'postgres://triagent:%s@db:5432/triagent' "$(cat secrets/postgres_password)" > secrets/triagent_database_url
 #   printf 'a long first password' > secrets/triagent_admin_password
+#   chmod 0400 secrets/*
+#   sudo chown 1000:1000 secrets/triagent_runner_secret   # the images' node user; Compose mounts file secrets as they are
 #   docker compose -f deploy/compose.example.yml up -d --build
 #
 # Networks:
-#   - private: the server, the runner and the database talk here. It has no way out.
+#   - data: the server and the database. It has no way out, and the runner isn't on it.
+#   - runners: the server and the runner: all the runner can reach inside, and only the server's
+#     /internal/runner API answers it (with the runner secret). It has no way out either.
 #   - egress: the runner's way out, to GitHub and the model provider. Nothing else is on it, and
 #     nothing on it is published, so nothing can reach the runner from outside.
 #   - proxy: where the reverse proxy reaches the server. Only the server is on it.
 # The reverse proxy must never pass /internal/ (the runner API) on to the server.
+#
+# What's left: OCR runs as the runner's own user, so a review that got OCR to read files outside the
+# repository (its tools are confined to it, and it has no shell) could read the runner secret file. The
+# runner reads the secret into memory at start-up and warns unless the file is readable by its owner
+# alone (0400); OCR never gets it in its environment. Running OCR as a user of its own, who can't read
+# the secret, is a later hardening step.
 
 name: triagent
 
@@ -29,7 +39,7 @@ services:
     secrets: [postgres_password]
     volumes:
       - db-data:/var/lib/postgresql/data
-    networks: [private]
+    networks: [data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U triagent -d triagent"]
       interval: 5s
@@ -50,7 +60,7 @@ services:
       TRIAGENT_ADMIN_PASSWORD_FILE: /run/secrets/triagent_admin_password
       REVIEW_CONCURRENCY: "2"
     secrets: [triagent_database_url, triagent_secrets_key, triagent_runner_secret, triagent_admin_password]
-    networks: [private, proxy]
+    networks: [data, runners, proxy]
     # Published here for trying it out; behind a reverse proxy, remove this and let the proxy reach it on "proxy".
     ports: ["127.0.0.1:8080:8080"]
     read_only: true
@@ -68,7 +78,8 @@ services:
       TRIAGENT_RUNNER_SECRET_FILE: /run/secrets/triagent_runner_secret
       RUNNER_CONCURRENCY: "2"
     secrets: [triagent_runner_secret]
-    networks: [private, egress]
+    # Not on "data": the runner can't reach the database at all.
+    networks: [runners, egress]
     # No data volume: the git mirrors are a cache, and each review's worktree is deleted when it ends.
     read_only: true
     tmpfs:
@@ -80,7 +91,9 @@ services:
     pids_limit: 512
 
 networks:
-  private:
+  data:
+    internal: true
+  runners:
     internal: true
   egress: {}
   proxy: {}

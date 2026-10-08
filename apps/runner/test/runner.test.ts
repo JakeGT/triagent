@@ -5,13 +5,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { FakeGitHub } from "../../../tests/fakes/github.ts";
 import { ServerError } from "../src/client.ts";
-import { Git, gitVersionProblem, mirrorPath } from "../src/git.ts";
+import { loadConfig, secretFileWarning } from "../src/config.ts";
+import { checkBranch, Git, gitVersionProblem, mirrorPath } from "../src/git.ts";
 import { start } from "../src/process.ts";
 import { readProgress } from "../src/progress.ts";
 import { JobRun, ocrArgs, ocrEnv } from "../src/runner.ts";
@@ -111,6 +112,27 @@ describe("what the runner sends", () => {
     });
 });
 
+describe("the runner's secret file", () => {
+    test("is read at start-up, and a file others can read is warned about", () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "secret-"));
+        try {
+            const file = path.join(dir, "runner_secret");
+            const secret = randomBytes(32).toString("base64url");
+            writeFileSync(file, `${secret}\n`, { mode: 0o644 });
+            const env = { TRIAGENT_SERVER_URL: "http://server:8080", TRIAGENT_RUNNER_SECRET_FILE: file };
+            let config = loadConfig(env);
+            assert.equal(config.secret, secret);
+            assert.match(config.warnings[0] ?? "", /can be read by users other than its owner \(mode 0644\)\. Make it 0400/);
+            chmodSync(file, 0o400);
+            config = loadConfig(env);
+            assert.deepEqual(config.warnings, []);
+            assert.equal(secretFileWarning(undefined), null);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("tokens from OCR's stderr", () => {
     test("the most OCR has said it used: its usage record, its text summary, or a budget stop", () => {
         const seen = new Set<string>();
@@ -150,15 +172,16 @@ describe("OCR's environment", () => {
                 model: { url: "https://llm.test/v1", model: "m", apiKey: "key-123456", protocol: "openai", provider: "openrouter" },
             });
             for (const k of Object.keys(env))
-                assert.ok(
-                    /^(PATH|HOME|TMPDIR|XDG_\w+|LANG|TZ|OCR_(CONFIG_PATH|NO_UPDATE|LLM_\w+|USE_ANTHROPIC)|GIT_\w+)$/.test(k),
-                    `unexpected ${k}`,
-                );
+                assert.ok(/^(PATH|HOME|TMPDIR|XDG_\w+|LANG|TZ|OCR_(NO_UPDATE|LLM_\w+|USE_ANTHROPIC)|GIT_\w+)$/.test(k), `unexpected ${k}`);
             assert.equal(env.OCR_USE_ANTHROPIC, "false");
             assert.equal(env.OCR_NO_UPDATE, "1");
             assert.equal(env.OCR_LLM_TIMEOUT, "300");
+            // OCR reads its user config (MCP servers, setup commands) and global rules from $HOME/.opencodereview
+            // (OCR_CONFIG_PATH isn't read by 1.12.12): HOME, and everywhere else it might look, is the job's own.
             assert.equal(env.HOME, "/work/home");
-            assert.ok(env.OCR_CONFIG_PATH?.startsWith("/work/home/") && !existsSync(env.OCR_CONFIG_PATH));
+            for (const k of ["TMPDIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"])
+                assert.ok(env[k]?.startsWith("/work/home/"), `${k} is ${env[k]}`);
+            assert.equal(env.OCR_CONFIG_PATH, undefined);
             assert.ok(!JSON.stringify(env).includes("should-not-pass") && !JSON.stringify(env).includes("collector"));
             // Hooks stay off for any git OCR runs.
             const keys = Object.entries(env).filter(([k]) => k.startsWith("GIT_CONFIG_KEY_"));
@@ -217,6 +240,52 @@ describe("process groups", () => {
     test("a time limit stops it", async () => {
         const exit = await start("sleep", ["30"], { env: { PATH: process.env.PATH ?? "" }, timeoutMs: 200 }).done;
         assert.equal(exit.timedOut, true);
+    });
+});
+
+describe("stopping git", () => {
+    test("cancelling a review, or losing it, stops a git fetch or worktree add under way", async () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "slow-git-"));
+        try {
+            // A git that takes its time over everything, and says when it's started.
+            const slowGit = path.join(dir, "git");
+            writeFileSync(slowGit, `#!/bin/sh\necho started >> ${dir}/log\nexec sleep 20\n`, { mode: 0o755 });
+            const git = new Git({ gitBin: slowGit, path: process.env.PATH ?? "", home: dir });
+            const job = {
+                kind: "pr" as const,
+                cloneUrl: "https://github.example/acme/app.git",
+                username: "x-access-token",
+                token: "not-a-real-token",
+                pr: 1,
+                gitRef: null,
+                baseRef: "main",
+            };
+            for (const step of ["fetch", "worktree"] as const) {
+                const stop = new AbortController();
+                const t0 = Date.now();
+                const pending =
+                    step === "fetch"
+                        ? git.fetch(path.join(dir, `m-${step}`), job, stop.signal)
+                        : git.addWorktree(path.join(dir, "m"), path.join(dir, "tree"), "a".repeat(40), null, stop.signal);
+                setTimeout(() => stop.abort(), 200);
+                await assert.rejects(pending, /stopped/);
+                assert.ok(Date.now() - t0 < 5000, `${step} took ${Date.now() - t0}ms to stop`);
+            }
+            // And a JobRun stops it when it's cancelled or lost.
+            const run = new JobRun(
+                {
+                    id: "j",
+                    git: { username: "x", token: "t".repeat(10) },
+                    model: { url: "u", model: "m", apiKey: "k".repeat(10), protocol: "openai", provider: "p" },
+                },
+                { events: async () => ({ cancel: false }), heartbeat: async () => ({ cancel: false }) },
+            );
+            assert.equal(run.signal.aborted, false);
+            run.cancel();
+            assert.equal(run.signal.aborted, true);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 
@@ -423,6 +492,65 @@ describe("git against a fake GitHub", () => {
         assert.match(gitVersionProblem("git version 2.41.2") ?? "", /git 2\.41 is too old: reviews need git 2\.42 or later/);
         assert.match(gitVersionProblem("git version 1.9.5") ?? "", /too old/);
         assert.match(gitVersionProblem("not git") ?? "", /Couldn't tell which version of git/);
+    });
+
+    test("branch names are checked by git's own rules, so valid ones like fix#12 get through", () => {
+        const names = [
+            "main",
+            "fix#12",
+            "feature/x",
+            "release-1.2",
+            "a+b",
+            "user@fix",
+            "ünïcode",
+            "a{b}",
+            "x!y",
+            "it's",
+            "",
+            "-x",
+            "HEAD",
+            "a..b",
+            "a//b",
+            "/x",
+            "x/",
+            ".x",
+            "a/.b",
+            "x.",
+            "x.lock",
+            "a/b.lock/c",
+            "a b",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+            "a@{b",
+            "tab\tname",
+            "del\u007f",
+        ];
+        for (const name of names) {
+            const gitSays = (() => {
+                try {
+                    execFileSync("git", ["check-ref-format", "--branch", name], { stdio: "ignore", env: { PATH: process.env.PATH ?? "" } });
+                    return true;
+                } catch {
+                    return false;
+                }
+            })();
+            const oursSays = (() => {
+                try {
+                    checkBranch(name, "branch");
+                    return true;
+                } catch {
+                    return false;
+                }
+            })();
+            assert.equal(oursSays, gitSays, `${JSON.stringify(name)}: git says ${gitSays ? "valid" : "invalid"}`);
+        }
+        // git's --branch reads "@" as the branch checked out, not as a name: refused here.
+        assert.throws(() => checkBranch("@", "branch"), /unusable branch/);
     });
 
     test("branch names from the server are checked before they reach git", async () => {

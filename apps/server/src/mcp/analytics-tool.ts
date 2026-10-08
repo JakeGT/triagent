@@ -71,7 +71,7 @@ export const analyticsTool: Tool = {
     permission: "read",
     readOnly: true,
     input: z.object({
-        project: z.string().max(40).optional().describe("Project id (see list_projects); leave out for all projects"),
+        project: z.string().max(40).optional().describe("The project's slug (as list_projects shows it); leave out for all projects"),
         branch: z.string().max(200).optional().describe("One branch; leave out for all branches"),
         days: z
             .number()

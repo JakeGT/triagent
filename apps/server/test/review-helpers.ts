@@ -63,6 +63,7 @@ export async function reviewEnv(options: { store?: Store; env?: Record<string, s
                 gitBin: "git",
                 llmTimeout: null,
                 path: process.env.PATH ?? "/usr/bin:/bin",
+                warnings: [],
             });
             env.runners.push(r);
             r.start();

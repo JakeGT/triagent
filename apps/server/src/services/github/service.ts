@@ -48,6 +48,32 @@ export interface GithubAccess {
     identity(): Promise<string>;
 }
 
+/**
+ * Webhook deliveries refused for a bad or missing signature, counted per project (or the app's webhook,
+ * under null) since this process started. Not stored with the real deliveries: anyone can send them, so
+ * they'd push those out, and each would be a write to the database.
+ */
+export class RefusedDeliveries {
+    private readonly counts = new Map<string, { count: number; lastAt: string; lastReason: string }>();
+
+    note(projectId: string | null, reason: string, what: string): void {
+        const key = projectId ?? "";
+        const c = this.counts.get(key) ?? { count: 0, lastAt: "", lastReason: "" };
+        c.count++;
+        c.lastAt = now();
+        c.lastReason = reason;
+        this.counts.set(key, c);
+        if (this.counts.size > 10_000) this.counts.delete(this.counts.keys().next().value as string);
+        // Not every one: the log mustn't fill up with them either.
+        if (c.count === 1 || c.count % 100 === 0) console.warn(`GitHub delivery to ${what} refused (${c.count} so far): ${reason}`);
+    }
+
+    get(projectId: string | null): { count: number; lastAt: string; lastReason: string } | null {
+        const c = this.counts.get(projectId ?? "");
+        return c ? { ...c } : null;
+    }
+}
+
 /** How many pull requests' comment ids a project remembers. */
 const KEEP_COMMENT_IDS = 1000;
 
@@ -78,6 +104,7 @@ export class Github {
     private readonly core: Core;
     private readonly settings: Settings;
     private readonly projects: Projects;
+    readonly refused = new RefusedDeliveries();
     /** Token owners' logins, by a hash of the token, so `GET /user` isn't asked on every comment. */
     private readonly owners = new Map<string, string>();
 
@@ -434,6 +461,7 @@ export class Github {
             githubUrl: this.core.config.githubUrl,
             webhookUrl: `${this.core.config.publicOrigin}/api/v1/github/app/webhook`,
             deliveries: await this.store.githubDeliveries.list(null, 20),
+            refused: this.refused.get(null),
         };
     }
 

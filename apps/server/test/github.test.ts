@@ -109,12 +109,21 @@ describe("pull requests with a token: webhooks, checks and the baseline", () => 
         // Another repository's delivery is ignored.
         const elsewhere = await env.fake.deliver(hook, "pull_request", { ...body, repository: { full_name: "evil/app" } }, secret);
         assert.equal(elsewhere.body.ignored, true);
-        const deliveries = (await prs()).deliveries;
+        // Deliveries without a good signature (anyone can send them) are counted, not kept: they can't push the real ones out.
+        const page = await prs();
         assert.deepEqual(
-            deliveries.slice(0, 4).map((d: { outcome: string }) => d.outcome),
-            ["ignored", "received", "refused", "refused"],
+            page.deliveries.map((d: { outcome: string }) => d.outcome),
+            ["ignored", "received"],
         );
-        assert.match(deliveries[2].detail, /No signature/);
+        assert.equal(page.refused.count, 2);
+        assert.equal(page.refused.lastReason, "No signature: set the secret in the webhook's settings on GitHub.");
+        for (let i = 0; i < 60; i++) await env.fake.deliver(hook, "pull_request", body, "wrong");
+        const after = await prs();
+        assert.equal(after.refused.count, 62);
+        assert.deepEqual(
+            after.deliveries.map((d: { outcome: string }) => d.outcome),
+            ["ignored", "received"],
+        );
         await env.t.request(`/api/v1/w/acme/runs/${queued[0]?.id}/cancel`, { method: "POST", session: env.admin, body: {} });
     });
 });
@@ -217,6 +226,77 @@ describe("more than a page of pull requests, and a project that moves to another
         assert.match(failed?.error ?? "", /This project now uses acme\/other, but this review was queued for acme\/app/);
         await runs.settled();
         assert.equal(other.statuses.length, 0);
+    });
+});
+
+describe("pull requests from people outside the repository", () => {
+    let env: ReviewEnv;
+    before(async () => {
+        env = await reviewEnv();
+        await patProject(env, "acme");
+        await env.fake.gitRepo("acme/app", { "src/a.ts": "a\n" });
+    });
+    after(() => env.close());
+
+    const page = async () => (await env.t.request("/api/v1/w/acme/p/app/pull-requests", { session: env.admin })).body;
+    const check = async () =>
+        (await env.t.request("/api/v1/w/acme/p/app/pull-requests/check", { method: "POST", session: env.admin, body: {} })).body;
+    type Item = { number: number; status: string; lastDecision: { action: string; why: string } };
+    const item = (p: { items: Item[] }, n: number) => p.items.find((x) => x.number === n) as Item;
+
+    test("wait for someone who can start reviews, unless the project says to review everyone's", async () => {
+        const settings = await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
+            method: "PATCH",
+            session: env.admin,
+            body: { enabled: true },
+        });
+        assert.equal(settings.body.reviewPullRequestsFrom, "collaborators");
+        await check(); // the baseline, with nothing open
+
+        // From a branch of the repository itself: reviewed, whoever opened it.
+        await env.fake.commit("acme/app", "inside", { "src/in.ts": "in\n" }, "in", "main");
+        await env.fake.openPull("acme/app", { number: 1, headRef: "inside", author: "newcomer", association: "NONE" });
+        // From forks: a stranger's waits; a collaborator's and an organisation member's are reviewed.
+        env.fake.pull("acme/app", { number: 2, headRef: "patch", fork: true, author: "stranger", association: "FIRST_TIME_CONTRIBUTOR" });
+        env.fake.pull("acme/app", { number: 3, headRef: "fix", fork: true, author: "colleague", association: "COLLABORATOR" });
+        env.fake.pull("acme/app", { number: 4, headRef: "tweak", fork: true, author: "staff", association: "MEMBER" });
+        env.fake.pull("acme/app", { number: 5, headRef: "more", fork: true, author: "passer-by", association: "CONTRIBUTOR" });
+        const checked = await check();
+        const queued = (await env.t.services.store.jobs.list({ statuses: ["queued"] }, 10)).map((j) => j.pr?.number).sort();
+        assert.deepEqual(queued, [1, 3, 4]);
+        for (const n of [2, 5]) {
+            const pr = item(checked, n);
+            assert.equal(pr.status, "waiting for approval");
+            assert.equal(pr.lastDecision.action, "skipped");
+            assert.match(
+                pr.lastDecision.why,
+                /from a fork, by .+, who isn't a collaborator on acme\/app: someone who can start reviews can use Review now/,
+            );
+        }
+        assert.equal(item(await page(), 2).status, "waiting for approval");
+
+        // Someone who can start reviews looks at it and starts one.
+        const now = await env.t.request("/api/v1/w/acme/p/app/reviews", {
+            method: "POST",
+            session: env.admin,
+            body: { kind: "pr", number: 2 },
+        });
+        assert.equal(now.status, 201, now.text);
+        // A new push waits again: it's new code.
+        const pr2 = env.fake.repo("acme/app").pulls.get(2);
+        if (pr2) pr2.headSha = randomBytes(20).toString("hex");
+        assert.equal(item(await check(), 2).status, "waiting for approval");
+
+        // Reviewing everyone's: the next push is queued without waiting.
+        await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
+            method: "PATCH",
+            session: env.admin,
+            body: { reviewPullRequestsFrom: "everyone" },
+        });
+        if (pr2) pr2.headSha = randomBytes(20).toString("hex");
+        assert.equal(item(await check(), 2).lastDecision.action, "queued");
+        for (const j of await env.t.services.store.jobs.list({ statuses: ["queued"] }, 20))
+            await env.t.request(`/api/v1/w/acme/runs/${j.id}/cancel`, { method: "POST", session: env.admin, body: {} });
     });
 });
 
@@ -563,8 +643,10 @@ describe("the GitHub App", () => {
         assert.match(start.body.error, /suspended/);
         await env.fake.deliver(hook, "installation", { action: "deleted", installation: { id: evilInst.id } }, secret);
         assert.equal(await env.t.services.store.githubInstallations.get(evilInst.id), null);
-        const deliveries = (await env.t.request("/api/v1/instance/github-app", { session: env.admin })).body.deliveries;
-        assert.ok(deliveries.some((d: { outcome: string }) => d.outcome === "refused"));
+        const status = (await env.t.request("/api/v1/instance/github-app", { session: env.admin })).body;
+        assert.ok(!status.deliveries.some((d: { outcome: string }) => d.outcome === "refused"));
+        assert.equal(status.refused.count, 1);
+        assert.match(status.refused.lastReason, /^Bad signature/);
     });
 
     test("a review through the app: a token narrowed to the repository, read-only for the runner", async () => {
@@ -760,7 +842,15 @@ describe("MCP tools for reviews", () => {
             (await env.t.request("/api/v1/w/acme/p/app/reviews", { method: "POST", session: vic, body: { kind: "full" } })).status,
             403,
         );
-        assert.equal((await env.t.request("/api/v1/w/acme/runs", { session: vic })).status, 200);
+        const theirs = await env.t.request("/api/v1/w/acme/runs", { session: vic });
+        assert.equal(theirs.status, 200);
+        // Which runners there are, and their versions, are the instance's business: members see how many.
+        assert.deepEqual(theirs.body.runners, []);
+        assert.equal(theirs.body.runnersConnected, 1);
+        const admins = (await env.t.request("/api/v1/w/acme/runs", { session: env.admin })).body;
+        assert.equal(admins.runnersConnected, 1);
+        assert.match(admins.runners[0].name, /^test-runner-/);
+        assert.ok(admins.runners[0].version);
         assert.equal(
             (await env.t.request("/api/v1/w/acme/p/app/pull-requests/check", { method: "POST", session: vic, body: {} })).status,
             403,

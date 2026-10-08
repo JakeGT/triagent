@@ -302,8 +302,12 @@ export class Runs {
         return { ready: true, reason: null };
     }
 
-    /** Queued, running and recent runs in a workspace (one project, if given). */
-    async list(workspace: Workspace, filter: { projectId?: string; limit?: number } = {}) {
+    /**
+     * Queued, running and recent runs in a workspace (one project, if given). Runners serve the whole
+     * instance, so their names and versions are only listed for instance administrators (`runnerDetails`);
+     * everyone sees how many are connected.
+     */
+    async list(workspace: Workspace, filter: { projectId?: string; limit?: number; runnerDetails?: boolean } = {}) {
         const projects = await this.slugs(workspace.id);
         const active = (await this.store.jobs.active()).filter((j) => j.workspaceId === workspace.id);
         const readiness = await this.readiness(workspace);
@@ -318,6 +322,7 @@ export class Runs {
                   ? "Waiting for a free slot: the instance is running as many reviews as it allows."
                   : "Waiting for a runner to pick it up.");
         const mine = (j: Job) => !filter.projectId || j.projectId === filter.projectId;
+        const runners = await this.connectedRunners();
         const recent = (
             await this.store.jobs.list(
                 {
@@ -332,12 +337,10 @@ export class Runs {
             ready: readiness.ready,
             waiting: readiness.reason,
             concurrency: { instance: cfg.reviewConcurrency, workspace: cfg.reviewConcurrencyPerWorkspace },
-            runners: (await this.connectedRunners()).map((r) => ({
-                name: r.name,
-                slots: r.slots,
-                version: r.version,
-                lastSeenAt: r.lastSeenAt,
-            })),
+            runnersConnected: runners.length,
+            runners: filter.runnerDetails
+                ? runners.map((r) => ({ name: r.name, slots: r.slots, version: r.version, lastSeenAt: r.lastSeenAt }))
+                : [],
             running: active.filter((j) => j.status === "running" && mine(j)).map((j) => this.view(j, projects.get(j.projectId) ?? null)),
             queued: active
                 .filter((j) => j.status === "queued" && mine(j))
@@ -1123,7 +1126,8 @@ export class Runs {
             );
         } else {
             const state: CommitState = "error";
-            const description = job.status === "cancelled" ? "Review cancelled" : `Review failed: ${job.error ?? "see Triagent"}`;
+            // Commit statuses are public: the runner's error (paths, OCR's output) stays in Triagent.
+            const description = job.status === "cancelled" ? "Review cancelled" : "Review failed — see Triagent for details";
             await note("commit status", () =>
                 this.github.setStatus(project, sha, state, description, this.runUrl(workspace, project, job), job.repository),
             );

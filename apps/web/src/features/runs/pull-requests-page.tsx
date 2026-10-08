@@ -16,10 +16,25 @@ import { formatDateTime, timeAgo } from "@/lib/format";
 import { keys, pullRequestsQuery, runListQuery } from "@/lib/queries";
 import { safeHref } from "@/lib/safe-href";
 import { useCan, useProject } from "@/lib/session";
-import type { GithubDelivery, PullRequests } from "@/lib/types";
+import type { GithubDelivery, PullRequests, RefusedDeliveries } from "@/lib/types";
 import { RunStatusBadge } from "./run-bits";
 import { WaitingBanner } from "./runs-page";
 import { StartReview } from "./start-review";
+
+/** How many deliveries were refused for their signature: counted rather than listed, as anyone can send them. */
+export function Refused({ refused }: { refused: RefusedDeliveries | null }) {
+    if (!refused) return null;
+    return (
+        <p className="text-sm text-muted-foreground" data-testid="refused-deliveries">
+            {refused.count === 1 ? "1 delivery was" : `${refused.count.toLocaleString("en-GB")} deliveries were`} refused since the server
+            started, the last{" "}
+            <time dateTime={refused.lastAt} title={formatDateTime(refused.lastAt)}>
+                {timeAgo(refused.lastAt)}
+            </time>
+            : {refused.lastReason}
+        </p>
+    );
+}
 
 export function Deliveries({ items }: { items: GithubDelivery[] }) {
     if (!items.length) return <p className="text-sm text-muted-foreground">None received yet.</p>;
@@ -217,6 +232,8 @@ export function PullRequestsPage() {
                                                         >
                                                             Reviewed
                                                         </Link>
+                                                    ) : p.status === "waiting for approval" ? (
+                                                        <span className="font-medium">Waiting for approval</span>
                                                     ) : (
                                                         <span>{p.status}</span>
                                                     )}
@@ -251,6 +268,7 @@ export function PullRequestsPage() {
                             Webhook deliveries
                         </h2>
                         <p className="text-sm text-muted-foreground">What GitHub sent lately, and what Triagent did with it.</p>
+                        <Refused refused={data.refused} />
                         <Deliveries items={data.deliveries} />
                     </section>
                 </>

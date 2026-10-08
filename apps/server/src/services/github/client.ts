@@ -36,6 +36,8 @@ export interface Pull {
     draft?: boolean;
     html_url: string;
     user: { login: string } | null;
+    /** How the author relates to the repository: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, NONE… */
+    author_association?: string;
     head: { ref: string; sha: string; repo: { full_name: string } | null };
     base: { ref: string; sha: string; repo: { full_name: string } | null };
     updated_at?: string;

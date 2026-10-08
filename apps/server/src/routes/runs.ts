@@ -39,14 +39,19 @@ export const runRoutes: Route[] = [
         permission: "read",
         tag: "Runs",
         summary: "Queued, running and recent reviews, and whether reviews can start (and if not, why)",
+        description:
+            "`runnersConnected` says how many runners are connected; their names and versions (`runners`) are listed for instance administrators only.",
         query: z.object({
             project: z.string().max(40).optional().describe("Only this project's"),
             limit: z.string().regex(/^\d+$/).optional().describe("How many recent runs (default 30)"),
         }),
-        async handler({ services, access, query }) {
+        async handler({ services, access, query, principal }) {
             const workspace = (access as Access).workspace;
             const p = query.project ? await services.projects.get(services.store, workspace, query.project) : null;
-            return json(await services.runs.list(workspace, { ...(p ? { projectId: p.id } : {}), limit: Number(query.limit) || 30 }));
+            const runnerDetails = principal?.kind === "session" && principal.user.isInstanceAdmin;
+            return json(
+                await services.runs.list(workspace, { ...(p ? { projectId: p.id } : {}), limit: Number(query.limit) || 30, runnerDetails }),
+            );
         },
     }),
     route({

@@ -323,6 +323,7 @@ export interface Automation {
     archiveDeletedBranches: boolean;
     reviewTimeoutMinutes: number;
     fullScanTimeoutMinutes: number;
+    reviewPullRequestsFrom: "collaborators" | "everyone";
 }
 
 export interface GithubSettings {
@@ -376,6 +377,14 @@ export interface GithubAppStatus {
     githubUrl: string;
     webhookUrl: string;
     deliveries: GithubDelivery[];
+    refused: RefusedDeliveries | null;
+}
+
+/** Deliveries refused for a bad or missing signature since the server started: counted, not listed. */
+export interface RefusedDeliveries {
+    count: number;
+    lastAt: string;
+    lastReason: string;
 }
 
 // ---- runs ----------------------------------------------------------------------------------------
@@ -434,7 +443,9 @@ export interface RunList {
     ready: boolean;
     waiting: string | null;
     concurrency: { instance: number; workspace: number };
+    /** Listed for instance administrators only; everyone sees `runnersConnected`. */
     runners: { name: string; slots: number; version: string | null; lastSeenAt: string }[];
+    runnersConnected: number;
     running: Run[];
     queued: Run[];
     recent: Run[];
@@ -477,6 +488,7 @@ export interface PullRequests {
     lastError: { at: string; message: string } | null;
     items: PullRequest[];
     deliveries: GithubDelivery[];
+    refused: RefusedDeliveries | null;
 }
 
 export interface Provider {

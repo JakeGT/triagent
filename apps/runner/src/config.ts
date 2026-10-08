@@ -1,7 +1,7 @@
 // The runner's settings, from the environment. The secret can come from a file (NAME_FILE), the Docker
-// secrets convention.
+// secrets convention; it's read once, here, at start-up, and kept in memory.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 
@@ -20,6 +20,8 @@ export interface RunnerConfig {
     llmTimeout: string | null;
     /** The PATH OCR and git get (they get nothing else from the runner's own environment). */
     path: string;
+    /** Things worth fixing that don't stop the runner, to print at start-up. */
+    warnings: string[];
 }
 
 type Env = Record<string, string | undefined>;
@@ -48,6 +50,22 @@ function whole(env: Env, name: string, fallback: number, min: number, max: numbe
     return Number(v);
 }
 
+/**
+ * Why a secret file is readable by more than its owner, or null. OCR runs as the runner's user, so the
+ * file can't be hidden from it, but it needn't be readable by anyone else too.
+ */
+export function secretFileWarning(file: string | undefined): string | null {
+    if (!file) return null;
+    try {
+        const mode = statSync(file).mode & 0o777;
+        return mode & 0o077
+            ? `${file} can be read by users other than its owner (mode ${mode.toString(8).padStart(4, "0")}). Make it 0400, owned by the runner's user.`
+            : null;
+    } catch {
+        return null;
+    }
+}
+
 export function loadConfig(env: Env = process.env): RunnerConfig {
     const serverUrl = (env.TRIAGENT_SERVER_URL ?? "").replace(/\/+$/, "");
     if (!/^https?:\/\/[^\s/]+$/.test(serverUrl))
@@ -73,5 +91,6 @@ export function loadConfig(env: Env = process.env): RunnerConfig {
         gitBin: env.GIT_BIN || "git",
         llmTimeout,
         path: env.PATH || "/usr/local/bin:/usr/bin:/bin",
+        warnings: [secretFileWarning(env.TRIAGENT_RUNNER_SECRET_FILE)].filter((w): w is string => w !== null),
     };
 }

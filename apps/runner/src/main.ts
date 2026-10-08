@@ -18,6 +18,8 @@ try {
     throw err;
 }
 
+for (const warning of config.warnings) console.warn(`Warning: ${warning}`);
+
 // A git too old to read .gitattributes from the base commit would let a pull request hide its changes.
 let gitVersion: string;
 try {

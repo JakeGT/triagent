@@ -106,12 +106,24 @@ export function fetchEnv(ctx: GitContext, cloneUrl: string, username: string, to
     };
 }
 
-const BRANCH = /^(?!-)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/+@-]{1,200}(?<![/.])$/;
 const SHA = /^[0-9a-f]{40}$/;
 
+/**
+ * Whether `name` is a branch name git accepts (`git check-ref-format --branch`): no control characters,
+ * spaces or any of ~ ^ : ? * [ \, no "..", "@{" or "//", no part starting with "." or ending in
+ * ".lock", not ending in "/" or ".", not "@" or "HEAD", and not starting with "-" (it would read as an
+ * option). Anything else, like "fix#12", is fine.
+ */
+export function isGitBranch(name: string): boolean {
+    if (!name || Buffer.byteLength(name) > 255 || name === "@" || name === "HEAD" || name.startsWith("-")) return false;
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
+    if (/[\u0000-\u0020\u007f~^:?*[\\]|\.\.|@\{/.test(name)) return false;
+    if (name.startsWith("/") || name.endsWith("/") || name.endsWith(".")) return false;
+    return name.split("/").every((part) => part !== "" && !part.startsWith(".") && !part.endsWith(".lock"));
+}
+
 export function checkBranch(name: string | null, what: string): string {
-    if (!name || !BRANCH.test(name) || name.endsWith(".lock"))
-        throw new Error(`The server sent an unusable ${what} ("${String(name).slice(0, 60)}").`);
+    if (!name || !isGitBranch(name)) throw new Error(`The server sent an unusable ${what} ("${String(name).slice(0, 60)}").`);
     return name;
 }
 
@@ -133,14 +145,14 @@ export class Git {
         this.ctx = ctx;
     }
 
-    private git(args: string[], env = gitEnv(this.ctx), timeoutMs = 60_000) {
-        return run(this.ctx.gitBin, args, { env, timeoutMs }).then((out) => out.trim());
+    private git(args: string[], env = gitEnv(this.ctx), timeoutMs = 60_000, signal?: AbortSignal) {
+        return run(this.ctx.gitBin, args, { env, timeoutMs, ...(signal ? { signal } : {}) }).then((out) => out.trim());
     }
 
-    async ensureMirror(mirror: string): Promise<void> {
+    async ensureMirror(mirror: string, signal?: AbortSignal): Promise<void> {
         if (existsSync(path.join(mirror, "HEAD"))) return;
         mkdirSync(mirror, { recursive: true, mode: 0o700 });
-        await this.git(["init", "--bare", "--quiet", mirror]);
+        await this.git(["init", "--bare", "--quiet", mirror], gitEnv(this.ctx), 60_000, signal);
     }
 
     /**
@@ -158,8 +170,9 @@ export class Git {
             gitRef: string | null;
             baseRef: string | null;
         },
+        signal?: AbortSignal,
     ): Promise<Fetched> {
-        await this.ensureMirror(mirror);
+        await this.ensureMirror(mirror, signal);
         const refspecs: string[] = [];
         let headRef: string;
         if (job.kind === "pr") {
@@ -179,8 +192,14 @@ export class Git {
             ["--git-dir", mirror, "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--", job.cloneUrl, ...refspecs],
             env,
             15 * 60_000,
+            signal,
         );
-        const head = await this.git(["--git-dir", mirror, "rev-parse", "--verify", `${headRef}^{commit}`]);
+        const head = await this.git(
+            ["--git-dir", mirror, "rev-parse", "--verify", `${headRef}^{commit}`],
+            gitEnv(this.ctx),
+            60_000,
+            signal,
+        );
         if (!SHA.test(head)) throw new Error("Couldn't tell which commit to review.");
         let base: string | null = null;
         if (baseRef) {
@@ -195,12 +214,13 @@ export class Git {
      * A detached worktree of `commit` at `dir`. With `attrSource`, checking out uses that commit's
      * .gitattributes rather than the ones being checked out.
      */
-    async addWorktree(mirror: string, dir: string, commit: string, attrSource: string | null = null): Promise<void> {
+    async addWorktree(mirror: string, dir: string, commit: string, attrSource: string | null = null, signal?: AbortSignal): Promise<void> {
         if (!SHA.test(commit) || (attrSource !== null && !SHA.test(attrSource))) throw new Error("Not a commit.");
         await this.git(
             ["--git-dir", mirror, "worktree", "add", "--detach", "--force", "--quiet", dir, commit],
             { ...gitEnv(this.ctx), ...(attrSource ? { GIT_ATTR_SOURCE: attrSource } : {}) },
             10 * 60_000,
+            signal,
         );
     }
 

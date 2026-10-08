@@ -269,7 +269,10 @@ describe("reviews end to end (token mode)", () => {
                 run.error,
                 /^Open Code Review failed \(exit 1\): review failed: all 1 file review\(s\) failed .*; the first model error was: Subtask error for group "src": LLM completion error: .*503 Service Unavailable$/,
             );
-            assert.equal(env.fake.repo("acme/app").statuses.at(-1)?.state, "error");
+            const failed = env.fake.repo("acme/app").statuses.at(-1);
+            assert.equal(failed?.state, "error");
+            // The commit status is public: the runner's words (paths, OCR's output) stay in Triagent.
+            assert.equal(failed?.description, "Review failed — see Triagent for details");
             const wsId = (await env.t.services.store.workspaces.bySlug(ws))?.id as string;
             const records = await env.t.services.history.list({ workspaceId: wsId });
             assert.equal(records[0]?.status, "failed");

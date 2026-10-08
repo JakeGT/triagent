@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Deliveries } from "@/features/runs/pull-requests-page";
+import { Deliveries, Refused } from "@/features/runs/pull-requests-page";
 import { api, errorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { githubAppQuery, keys } from "@/lib/queries";
@@ -115,8 +115,9 @@ export function GithubAppSettings() {
                     </SettingsSection>
                     <SettingsSection
                         title="Webhook deliveries"
-                        description="Deliveries no project took: bad signatures, and installations not linked to a workspace."
+                        description="Deliveries no project took, such as for installations not linked to a workspace. Those with a bad or missing signature are only counted."
                     >
+                        <Refused refused={data.refused} />
                         <Deliveries items={data.deliveries} />
                     </SettingsSection>
                 </>

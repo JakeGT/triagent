@@ -26,6 +26,12 @@ export const AutomationSchema = z.object({
     archiveDeletedBranches: z.boolean(),
     reviewTimeoutMinutes: z.number().int().min(5).max(720),
     fullScanTimeoutMinutes: z.number().int().min(5).max(720),
+    /**
+     * Whose pull requests are reviewed automatically: "collaborators" (from a branch of the repository,
+     * or by its owners, organisation members and collaborators), or "everyone" (forks by anyone too,
+     * spending the workspace's model budget). Others wait until someone who can start reviews does.
+     */
+    reviewPullRequestsFrom: z.enum(["collaborators", "everyone"]),
 });
 export type Automation = z.infer<typeof AutomationSchema>;
 
@@ -38,6 +44,7 @@ export const AUTOMATION_DEFAULTS: Automation = {
     archiveDeletedBranches: false,
     reviewTimeoutMinutes: 45,
     fullScanTimeoutMinutes: 120,
+    reviewPullRequestsFrom: "collaborators",
 };
 
 /** Model providers reviews can use; both speak the OpenAI-compatible protocol Open Code Review supports. */

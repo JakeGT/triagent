@@ -37,20 +37,12 @@ export class Webhooks {
         if (!secret) throw notFound("Webhooks aren't set up for this project: create a secret in its GitHub settings.");
         const body = await readBody();
         if (!verifySignature(secret, body, signature)) {
-            await this.core.store.githubDeliveries.add(
-                {
-                    workspaceId: project.workspaceId,
-                    projectId: project.id,
-                    at: new Date().toISOString(),
-                    event: event ?? null,
-                    deliveryId: deliveryId ?? null,
-                    what: null,
-                    outcome: "refused",
-                    detail: signature
-                        ? "Bad signature: the secret on GitHub doesn't match this project's, or something changed the body on the way."
-                        : "No signature: set the secret in the webhook's settings on GitHub.",
-                },
-                50,
+            // Counted, not kept with the deliveries: anyone can send these.
+            this.automation?.refuse(
+                project,
+                signature
+                    ? "Bad signature: the secret on GitHub doesn't match this project's, or something changed the body on the way."
+                    : "No signature: set the secret in the webhook's settings on GitHub.",
             );
             throw new ApiError(401, "Bad webhook signature.");
         }

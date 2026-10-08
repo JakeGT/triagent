@@ -233,8 +233,10 @@ export function RunsPage() {
                     </section>
                     <p className="text-xs text-muted-foreground">
                         {data.runners.length
-                            ? `Runners connected: ${data.runners.map((r) => r.name).join(", ")}.`
-                            : "No runner is connected."}{" "}
+                            ? `Runners connected: ${data.runners.map((r) => (r.version ? `${r.name} (${r.version})` : r.name)).join(", ")}.`
+                            : data.runnersConnected
+                              ? `${data.runnersConnected} runner${data.runnersConnected === 1 ? "" : "s"} connected.`
+                              : "No runner is connected."}{" "}
                         At most {data.concurrency.instance} review{data.concurrency.instance === 1 ? "" : "s"} at once on this instance,{" "}
                         {data.concurrency.workspace} per workspace.
                     </p>

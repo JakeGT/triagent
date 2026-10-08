@@ -493,6 +493,17 @@ describe("analytics API and MCP", () => {
         assert.equal(none.body.reviews.total, 0);
         assert.equal(none.body.range.unit, "week");
         assert.equal((await t.request("/api/v1/w/acme/analytics?project=missing", { session: admin })).status, 404);
+        // A project is named by its slug, as in its address (and as MCP's tools name it), and documented so.
+        const internalId = (await t.services.store.projects.bySlug((await t.services.store.workspaces.bySlug("acme"))?.id as string, "lib"))
+            ?.id;
+        assert.equal((await t.request(`/api/v1/w/acme/analytics?project=${internalId}`, { session: admin })).status, 404);
+        const doc = (await t.request("/api/v1/openapi.json", { session: admin })).body;
+        const param = doc.paths["/api/v1/w/{workspace}/analytics"].get.parameters.find((p: { name: string }) => p.name === "project");
+        assert.match(param.description, /slug/);
+        const tool = (
+            await t.request("/mcp", { method: "POST", token, body: { jsonrpc: "2.0", id: 1, method: "tools/list" } })
+        ).body.result.tools.find((x: { name: string }) => x.name === "get_analytics");
+        assert.match(tool.inputSchema.properties.project.description, /slug/);
         assert.equal((await t.request("/api/v1/w/acme/analytics?days=12", { session: admin })).status, 400);
     });
 

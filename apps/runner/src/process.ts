@@ -30,6 +30,8 @@ export interface SpawnOptions {
     timeoutMs?: number;
     /** Each complete stderr line, as it arrives. */
     onLine?: (line: string) => void;
+    /** Stops the process group when aborted (a cancelled or lost review). */
+    signal?: AbortSignal;
 }
 
 function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
@@ -57,6 +59,8 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
         hardKill = setTimeout(() => signalGroup(child.pid, "SIGKILL"), 5000);
         hardKill.unref();
     };
+    if (options.signal?.aborted) stop();
+    else options.signal?.addEventListener("abort", stop, { once: true });
     const timer = options.timeoutMs
         ? setTimeout(() => {
               timedOut = true;
@@ -83,6 +87,7 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
     const done = new Promise<Exit>((resolve) => {
         const finish = (code: number | null, signal: NodeJS.Signals | null) => {
             if (timer) clearTimeout(timer);
+            options.signal?.removeEventListener("abort", stop);
             if (partial.trim()) options.onLine?.(partial);
             partial = "";
             // Anything the child left behind in its group goes too.
@@ -103,7 +108,11 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
 export async function run(cmd: string, args: string[], options: SpawnOptions): Promise<string> {
     const exit = await start(cmd, args, options).done;
     if (exit.code !== 0) {
-        const why = exit.timedOut ? "took too long and was stopped" : `failed (exit ${exit.code ?? exit.signal})`;
+        const why = exit.timedOut
+            ? "took too long and was stopped"
+            : exit.killed
+              ? "was stopped"
+              : `failed (exit ${exit.code ?? exit.signal})`;
         throw new Error(
             `${cmd} ${args[0] === "--git-dir" ? (args[2] ?? "") : (args[0] ?? "")} ${why}: ${exit.stderr.trim().split("\n").slice(-3).join(" ")}`,
         );

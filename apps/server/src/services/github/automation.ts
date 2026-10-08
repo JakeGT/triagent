@@ -36,7 +36,7 @@ export interface PullState {
     reviewedSha: string | null;
     /** A commit whose review failed or was cancelled: not queued again automatically. */
     attemptedSha?: string | null;
-    /** In words: "reviewed", "queued", "draft", "not reviewed (was already open)"… */
+    /** In words: "reviewed", "queued", "draft", "not reviewed (was already open)", "waiting for approval"… */
     status: string;
     /** Open when automatic reviews were switched on: listed, but not reviewed until someone asks. */
     baseline?: boolean;
@@ -86,6 +86,23 @@ export interface DeliveryResult {
 }
 
 const PR_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
+
+/** Authors whose pull requests are reviewed automatically wherever their branch is. */
+const TRUSTED = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+
+/**
+ * Why a pull request waits for someone to approve its review, or null if it needn't: a review spends the
+ * workspace's model budget, so pull requests from forks by people outside the repository wait, unless
+ * the project reviews everyone's.
+ */
+export function needsApproval(pr: Pull, from: "collaborators" | "everyone", repo: string): string | null {
+    if (from === "everyone") return null;
+    const sameRepo = Boolean(pr.head.repo?.full_name && pr.head.repo.full_name === pr.base.repo?.full_name);
+    const association = String(pr.author_association ?? "NONE").toUpperCase();
+    if (sameRepo || TRUSTED.has(association)) return null;
+    const who = pr.user?.login ?? "someone";
+    return `it's from a fork, by ${who}, who isn't a collaborator on ${repo}: someone who can start reviews can use Review now, or the project's Automation settings can review everyone's`;
+}
 
 export function verifySignature(secret: string, body: Buffer, signature: string | undefined): boolean {
     const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(body).digest("hex")}`);
@@ -155,8 +172,10 @@ export class Automation {
         return this.serial(`pulls:${project.id}`, async () => {
             const automation = await this.settings.automation(this.store, project);
             let pulls: Pull[];
+            let repoName = "";
             try {
                 const gh = await this.github.githubFor(project);
+                repoName = gh.repo.fullName;
                 // One more than the most, to tell whether there are more.
                 pulls = await gh.client.openPulls(gh.repo, MAX_OPEN_PULLS + 1);
             } catch (err) {
@@ -239,6 +258,12 @@ export class Automation {
                     );
                     continue;
                 }
+                const approval = needsApproval(pr, automation.reviewPullRequestsFrom, repoName);
+                if (approval) {
+                    info.status = "waiting for approval";
+                    decide("skipped", approval);
+                    continue;
+                }
                 toQueue.push({ pr, spec: specForPull(pr) });
                 info.status = "queued";
                 decide("queued", info.reviewedSha ? "new commits since the last review" : "not reviewed yet");
@@ -303,7 +328,13 @@ export class Automation {
                     };
                 }),
             deliveries: await this.store.githubDeliveries.list(project.id, 20),
+            refused: this.github.refused.get(project.id),
         };
+    }
+
+    /** A delivery to the project's own webhook whose signature didn't check out. */
+    refuse(project: Project, reason: string): void {
+        this.github.refused.note(project.id, reason, `${project.slug}'s webhook`);
     }
 
     // ---- branches ---------------------------------------------------------------------------------
@@ -581,7 +612,13 @@ export class Automation {
         const body = await readBody();
         const instance = { workspaceId: null, projectId: null, event: event ?? null, deliveryId, what: null };
         if (!verifySignature(app.webhookSecret, body, signature)) {
-            await this.github.recordDelivery({ ...instance, outcome: "refused", detail: signature ? "Bad signature." : "No signature." });
+            this.github.refused.note(
+                null,
+                signature
+                    ? "Bad signature: the app's webhook secret on GitHub doesn't match, or something changed the body on the way."
+                    : "No signature.",
+                "the GitHub App's webhook",
+            );
             throw new ApiError(401, "Bad webhook signature.");
         }
         let payload: Record<string, unknown> = {};

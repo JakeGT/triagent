@@ -29,6 +29,7 @@ interface Form {
     maxTokensBudget: string;
     reviewTimeoutMinutes: string;
     fullScanTimeoutMinutes: string;
+    reviewPullRequestsFrom: Automation["reviewPullRequestsFrom"];
 }
 
 const toForm = (a: Automation): Form => ({
@@ -40,6 +41,7 @@ const toForm = (a: Automation): Form => ({
     maxTokensBudget: a.maxTokensBudget === null ? "" : String(a.maxTokensBudget),
     reviewTimeoutMinutes: String(a.reviewTimeoutMinutes),
     fullScanTimeoutMinutes: String(a.fullScanTimeoutMinutes),
+    reviewPullRequestsFrom: a.reviewPullRequestsFrom,
 });
 
 function fromForm(f: Form): Automation {
@@ -57,6 +59,7 @@ function fromForm(f: Form): Automation {
         maxTokensBudget: f.maxTokensBudget.trim() === "" ? null : whole("Token budget", f.maxTokensBudget, 10_000, 1_000_000_000),
         reviewTimeoutMinutes: whole("Review time limit", f.reviewTimeoutMinutes, 5, 720),
         fullScanTimeoutMinutes: whole("Full scan time limit", f.fullScanTimeoutMinutes, 5, 720),
+        reviewPullRequestsFrom: f.reviewPullRequestsFrom,
     };
 }
 
@@ -150,6 +153,25 @@ export function ProjectAutomation() {
                             disabled={!editable}
                             onChange={(v) => set({ failOnCritical: v })}
                         />
+                        <Field
+                            label="Review pull requests from"
+                            hint="Each review spends this workspace's model budget. Pull requests from forks by anyone else wait until someone who can start reviews clicks Review now."
+                        >
+                            {(p) => (
+                                <NativeSelect
+                                    {...p}
+                                    value={d.reviewPullRequestsFrom}
+                                    onChange={(e) =>
+                                        set({ reviewPullRequestsFrom: e.target.value as Automation["reviewPullRequestsFrom"] })
+                                    }
+                                    disabled={!editable}
+                                    className="w-80"
+                                >
+                                    <option value="collaborators">Branches of the repository, and its collaborators</option>
+                                    <option value="everyone">Everyone, forks included</option>
+                                </NativeSelect>
+                            )}
+                        </Field>
                         <Field label="Check for pull requests every (minutes)" hint="Used when there's no webhook. 1 to 60.">
                             {(p) => (
                                 <Input

@@ -10,7 +10,11 @@ import type { Workspace } from "../store/types.ts";
 import { W } from "./common.ts";
 
 export const AnalyticsQuery = z.object({
-    project: z.string().max(40).optional().describe("A project's id; empty for every project in the workspace"),
+    project: z
+        .string()
+        .max(40)
+        .optional()
+        .describe("A project's slug, as in its address (/p/{project}); empty for every project in the workspace"),
     branch: z.string().max(200).optional().describe("One branch; empty for every branch"),
     days: z
         .enum(ANALYTICS_DAYS.map(String) as [string, ...string[]])
