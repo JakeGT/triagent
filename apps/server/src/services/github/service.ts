@@ -39,14 +39,33 @@ export interface GithubAccess {
     client: GitHubClient;
     repo: RepoTarget;
     cloneUrl: string;
-    /** A credential for one review's `git fetch`: read-only and limited to the repository where possible. */
-    tokenForJob(): Promise<string>;
+    /**
+     * A credential for one review's `git fetch`: read-only and limited to the repository where possible.
+     * `revoke`: it's the review's alone (an installation token), to be revoked when the review ends.
+     */
+    tokenForJob(): Promise<{ token: string; revoke: boolean }>;
     /** The login comments are posted as: the app's bot, or the token's owner. */
     identity(): Promise<string>;
 }
 
 /** How many pull requests' comment ids a project remembers. */
 const KEEP_COMMENT_IDS = 1000;
+
+/** A repository as a job records it: GitHub's id when known, and owner/name. */
+export interface RepoRef {
+    id: number | null;
+    fullName: string;
+}
+
+/** Whether `repo` is the repository a job was queued for (by id when both know it, otherwise by name). */
+export function sameRepository(queued: RepoRef | null, repo: RepoTarget): boolean {
+    if (!queued) return true;
+    if (queued.id !== null && repo.id !== null) return queued.id === repo.id;
+    return queued.fullName.toLowerCase() === repo.fullName.toLowerCase();
+}
+
+/** The project now points at another repository than the one a review was of. */
+export class RepositoryChanged extends Error {}
 
 export class NotConnected extends ApiError {
     constructor(message: string) {
@@ -107,14 +126,17 @@ export class Github {
                 }),
                 repo,
                 cloneUrl: this.cloneUrl(repo),
-                // Reviews only need to read the code.
-                tokenForJob: async () =>
-                    (
-                        await this.app.installationToken(conn.installationId, {
+                // Reviews only need to read the code. Never the server's own (cached) token: this one is
+                // minted for the review, and revoked when it ends.
+                tokenForJob: async () => ({
+                    token: (
+                        await this.app.mintToken(conn.installationId, {
                             repositoryIds: [conn.repositoryId],
-                            permissions: { contents: "read", metadata: "read" },
+                            permissions: { contents: "read" },
                         })
                     ).token,
+                    revoke: true,
+                }),
                 identity: async () => {
                     const info = await this.app.info();
                     if (!info) throw new NotConnected("The instance's GitHub App has been removed. An instance admin can set it up again.");
@@ -135,7 +157,7 @@ export class Github {
             client,
             repo,
             cloneUrl: this.cloneUrl(repo),
-            tokenForJob: async () => token,
+            tokenForJob: async () => ({ token, revoke: false }),
             identity: async () => {
                 const key = sha256(token);
                 const known = this.owners.get(key);
@@ -161,14 +183,29 @@ export class Github {
 
     // ---- statuses and the pull request comment ---------------------------------------------------
 
-    async setStatus(project: Project, sha: string, state: CommitState, description: string, targetUrl: string | null): Promise<void> {
+    /** The project's connection, refusing if it now points at another repository than `expect`. */
+    private async reporting(project: Project, expect: RepoRef | null): Promise<GithubAccess> {
         const gh = await this.githubFor(project);
+        if (!sameRepository(expect, gh.repo))
+            throw new RepositoryChanged(`this project now uses ${gh.repo.fullName}, and this review was of ${expect?.fullName}`);
+        return gh;
+    }
+
+    async setStatus(
+        project: Project,
+        sha: string,
+        state: CommitState,
+        description: string,
+        targetUrl: string | null,
+        expect: RepoRef | null = null,
+    ): Promise<void> {
+        const gh = await this.reporting(project, expect);
         await gh.client.setStatus(gh.repo, sha, { state, description, context: STATUS_CONTEXT, targetUrl });
     }
 
     /** Write Triagent's comment on a pull request: the one it wrote before, if it's still there, or a new one. */
-    async upsertComment(project: Project, number: number, body: string) {
-        const gh = await this.githubFor(project);
+    async upsertComment(project: Project, number: number, body: string, expect: RepoRef | null = null) {
+        const gh = await this.reporting(project, expect);
         const author = await gh.identity();
         const state = (await this.store.githubState.get(project.id)) as { comments?: Record<string, number> } | null;
         const known = state?.comments?.[String(number)] ?? null;
@@ -298,8 +335,9 @@ export class Github {
     /**
      * The way back from installing the app. The installation id in the address isn't trusted: the person
      * must have started this from Triagent (the signed state), still be allowed to manage secrets in that
-     * workspace, and GitHub must confirm, with their own authorization, that they can see the installation.
-     * Returns where to send them next.
+     * workspace, and GitHub must confirm, with their own authorization, that they can see the installation
+     * and administer the organisation it's on (or are the account, for a personal one). Returns where to
+     * send them next.
      */
     async completeInstall(user: User, query: { code?: string; installation_id?: string; state?: string; setup_action?: string }) {
         const state = this.app.readState<{ userId: string; workspaceId: string; ws: string; project: string }>(query.state, "install");
@@ -319,14 +357,33 @@ export class Github {
         if (!Number.isSafeInteger(id) || id <= 0 || typeof query.code !== "string" || !query.code)
             return { redirect: back("no-authorization"), outcome: "refused" as const };
         let visible: number[];
+        let userToken: string;
         try {
-            visible = await this.app.userInstallations(await this.app.userToken(query.code));
+            userToken = await this.app.userToken(query.code);
+            visible = await this.app.userInstallations(userToken);
         } catch (err) {
             console.error(`Linking a GitHub App installation failed: ${(err as Error).message}`);
             return { redirect: back("failed"), outcome: "refused" as const };
         }
         if (!visible.includes(id)) return { redirect: back("not-yours"), outcome: "refused" as const };
         const details = await this.app.installation(id);
+        // Seeing an installation isn't enough: any member of an organisation can. Linking one hands this
+        // workspace every repository in it, so it takes an admin of the organisation, or for a personal
+        // account's installation, that person.
+        const account = details.account;
+        try {
+            if (!account) return { redirect: back("failed"), outcome: "refused" as const };
+            if (account.type === "Organization") {
+                const membership = await this.app.orgMembership(userToken, account.login);
+                if (membership?.state !== "active" || membership.role !== "admin")
+                    return { redirect: back("not-admin"), outcome: "refused" as const };
+            } else if ((await this.app.userLogin(userToken)).toLowerCase() !== account.login.toLowerCase())
+                return { redirect: back("not-account"), outcome: "refused" as const };
+        } catch (err) {
+            console.error(`Checking who may link a GitHub App installation failed: ${(err as Error).message}`);
+            const forbidden = err instanceof GitHubError && err.status === 403;
+            return { redirect: back(forbidden ? "members-permission" : "failed"), outcome: "refused" as const };
+        }
         const actor: Actor = { name: user.displayName, userId: user.id, via: "web" };
         return this.core.write(actor, async (w) => {
             const existing = await w.tx.githubInstallations.get(id);

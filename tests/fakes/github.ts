@@ -108,6 +108,10 @@ export class FakeGitHub {
         { installationId: number; repoIds: number[] | null; permissions: Record<string, string> | null; expiresAt: number }
     >();
     readonly userTokens = new Map<string, string>();
+    /** Organisation memberships: org → login → role (`GET /user/memberships/orgs/{org}`). */
+    readonly orgRoles = new Map<string, Map<string, { role: "admin" | "member"; state: "active" | "pending" }>>();
+    /** Installation tokens revoked with `DELETE /installation/token`. */
+    readonly revoked = new Set<string>();
     readonly oauthCodes = new Map<string, string>();
     readonly manifestCodes = new Map<string, Record<string, unknown>>();
     readonly log: Logged[] = [];
@@ -226,6 +230,13 @@ export class FakeGitHub {
         };
         this.installations.set(inst.id, inst);
         return inst;
+    }
+
+    /** Make `login` a member of the organisation `org`, with `role`. */
+    orgRole(org: string, login: string, role: "admin" | "member", state: "active" | "pending" = "active"): void {
+        const roles = this.orgRoles.get(org) ?? new Map();
+        roles.set(login, { role, state });
+        this.orgRoles.set(org, roles);
     }
 
     /** A code GitHub would hand back after `login` authorised the app (installation's user authorization). */
@@ -475,6 +486,8 @@ export class FakeGitHub {
         if (installNew && req.method === "GET" && this.app && this.nextInstall) {
             const n = this.nextInstall;
             const inst = this.install(n.account, n.repos, [n.login]);
+            // Only an organisation's admins can install an app on it.
+            this.orgRole(n.account, n.login, "admin");
             const callback = new URL(String((this.app.manifest?.callback_urls as string[] | undefined)?.[0] ?? ""));
             callback.searchParams.set("code", this.oauthCode(n.login));
             callback.searchParams.set("installation_id", String(inst.id));
@@ -564,6 +577,25 @@ export class FakeGitHub {
         if (p === "/user") {
             if (auth.kind !== "pat" && auth.kind !== "user") return json(res, 401, { message: "Bad credentials" });
             return json(res, 200, { login: auth.login });
+        }
+        m = /^\/user\/memberships\/orgs\/([\w-]+)$/.exec(p);
+        if (m && req.method === "GET") {
+            if (auth.kind !== "user") return json(res, 401, { message: "Bad credentials" });
+            const membership = this.orgRoles.get(m[1] as string)?.get(auth.login as string);
+            if (!membership) return json(res, 404, { message: "Not Found" });
+            return json(res, 200, {
+                state: membership.state,
+                role: membership.role,
+                organization: { login: m[1] },
+                user: { login: auth.login },
+            });
+        }
+        if (p === "/installation/token" && req.method === "DELETE") {
+            if (auth.kind !== "installation" || !token) return json(res, 401, { message: "Bad credentials" });
+            this.installationTokens.delete(token);
+            this.revoked.add(token);
+            res.writeHead(204);
+            return res.end();
         }
         m = /^\/repos\/([\w.-]+)\/([\w.-]+)(\/.*)?$/.exec(p);
 

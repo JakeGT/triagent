@@ -1,6 +1,7 @@
 // The instance's GitHub App: created by an instance admin through GitHub's manifest flow, and stored as
 // encrypted instance secrets. It signs JWTs to mint installation tokens, each narrowed to the one
-// repository (and the permissions) a job needs, and cached until shortly before they expire.
+// repository (and the permissions) a call needs. The server's own are cached until shortly before they
+// expire; each review gets a fresh one of its own, revoked when the review ends.
 
 import { createHmac, createPrivateKey, hkdfSync, randomBytes, sign, timingSafeEqual } from "node:crypto";
 import { ApiError } from "../../errors.ts";
@@ -150,6 +151,17 @@ export class GithubApp {
         const key = JSON.stringify([installationId, narrow.repositoryIds ?? null, narrow.permissions ?? null]);
         const hit = this.tokens.get(key);
         if (hit && Date.parse(hit.expiresAt) - Date.now() > 5 * 60_000) return hit;
+        const token = await this.mintToken(installationId, narrow);
+        this.tokens.set(key, token);
+        if (this.tokens.size > 500) this.tokens.delete(this.tokens.keys().next().value as string);
+        return token;
+    }
+
+    /** A new installation token, never cached or reused: for one review, which revokes it when it ends. */
+    async mintToken(
+        installationId: number,
+        narrow: { repositoryIds?: number[]; permissions?: TokenPermissions } = {},
+    ): Promise<InstallationToken> {
         const made = await (await this.appClient()).request<{ token: string; expires_at: string }>(
             "POST",
             `/app/installations/${installationId}/access_tokens`,
@@ -158,10 +170,12 @@ export class GithubApp {
                 ...(narrow.permissions ? { permissions: narrow.permissions } : {}),
             },
         );
-        const token = { token: made.token, expiresAt: made.expires_at };
-        this.tokens.set(key, token);
-        if (this.tokens.size > 500) this.tokens.delete(this.tokens.keys().next().value as string);
-        return token;
+        return { token: made.token, expiresAt: made.expires_at };
+    }
+
+    /** Revoke an installation token before it expires (the token authenticates its own revocation). */
+    async revokeToken(token: string): Promise<void> {
+        await new GitHubClient(this.apiUrl, async () => token, "app").request("DELETE", "/installation/token");
     }
 
     /** A client acting as an installation, for one repository. */
@@ -205,7 +219,8 @@ export class GithubApp {
             setup_on_update: true,
             // People linking an installation to a workspace prove they can see it with this authorization.
             request_oauth_on_install: true,
-            default_permissions: { contents: "read", metadata: "read", pull_requests: "write", statuses: "write" },
+            // members: read, so linking an organisation's installation can check the person administers it.
+            default_permissions: { contents: "read", metadata: "read", members: "read", pull_requests: "write", statuses: "write" },
             default_events: ["pull_request", "push", "create", "delete"],
         };
     }
@@ -261,6 +276,27 @@ export class GithubApp {
         if (!res.ok || typeof data.access_token !== "string")
             throw new GitHubError(res.status, `GitHub didn't confirm who you are (${data.error_description ?? res.status}).`);
         return data.access_token;
+    }
+
+    /** The login of the person a user token belongs to. */
+    async userLogin(userToken: string): Promise<string> {
+        const me = await new GitHubClient(this.apiUrl, async () => userToken, "user").viewer();
+        if (typeof me?.login !== "string" || !me.login) throw new GitHubError(502, "GitHub didn't say who you are.");
+        return me.login;
+    }
+
+    /**
+     * A person's membership of an organisation, from their own token (null if they aren't a member).
+     * The app needs the "Organization members: read" permission for GitHub to answer.
+     */
+    async orgMembership(userToken: string, org: string): Promise<{ state: string; role: string } | null> {
+        const client = new GitHubClient(this.apiUrl, async () => userToken, "user");
+        try {
+            return await client.request<{ state: string; role: string }>("GET", `/user/memberships/orgs/${encodeURIComponent(org)}`);
+        } catch (err) {
+            if (err instanceof GitHubError && err.status === 404) return null;
+            throw err;
+        }
     }
 
     /** Ids of the installations a person's token can see. */

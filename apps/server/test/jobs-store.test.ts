@@ -55,6 +55,7 @@ export const job = (id: string, workspaceId = "w1", extra: Partial<Job> = {}): J
     error: null,
     model: null,
     credentials: null,
+    repository: { id: 42, fullName: "acme/app" },
     logLines: 0,
     logDropped: 0,
     ...extra,
@@ -93,6 +94,7 @@ for (const kind of kinds) {
             const j3 = await store.jobs.get("j3");
             assert.deepEqual(j3?.progress, { phase: "reviewing" });
             assert.deepEqual(j3?.pr, job("x").pr);
+            assert.deepEqual(j3?.repository, { id: 42, fullName: "acme/app" });
             assert.equal((await store.jobs.get("j4"))?.result?.total, 3);
             const started = await store.jobs.lastStarted();
             assert.ok(started.get("w1"));

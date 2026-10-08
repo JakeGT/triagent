@@ -293,6 +293,7 @@ const toJob = (r: Row): Job => ({
     error: r.error,
     model: r.model,
     credentials: r.credentials,
+    repository: r.repository ?? null,
     logLines: r.log_lines,
     logDropped: r.log_dropped,
 });
@@ -923,6 +924,7 @@ export class PostgresStore implements Store {
                     error: j.error,
                     model: j.model ? json(this.sql, j.model) : null,
                     credentials: j.credentials,
+                    repository: j.repository ? json(this.sql, j.repository) : null,
                 },
                 ["id"],
             ),

@@ -27,7 +27,7 @@ import {
 } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
 import type { CommitState, Pull } from "./github/client.ts";
-import { COMMENT_MARKER, type Github, NotConnected } from "./github/service.ts";
+import { COMMENT_MARKER, type Github, NotConnected, RepositoryChanged, sameRepository } from "./github/service.ts";
 import type { History } from "./history.ts";
 import type { Models } from "./models.ts";
 import type { Reports } from "./reports.ts";
@@ -78,6 +78,12 @@ export interface FinishInput {
     error?: string | null;
     headSha?: string | null;
     baseSha?: string | null;
+}
+
+/** What's sealed with a running job: the secrets to redact from its log, and its own GitHub token to revoke at the end. */
+interface JobCredentials {
+    secrets: string[];
+    revoke: string | null;
 }
 
 /** Everything a runner needs for one job, including credentials for that job only. */
@@ -216,6 +222,10 @@ export function runTokens(reported: Tokens | null, said: unknown): Tokens | null
     if (!reported) return { input: seen, output: 0, cacheRead: 0, total: seen };
     return { ...reported, input: reported.input + (seen - reported.total), total: seen };
 }
+
+/** Why a queued review won't start: its project now uses another repository. */
+const movedOn = (job: Pick<Job, "repository">, now: string) =>
+    `This project now uses ${now}, but this review was queued for ${job.repository?.fullName}. Start it again to review ${now}.`;
 
 const seconds = (from: string | null, to: string | null) =>
     from && to ? Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 1000)) : undefined;
@@ -445,6 +455,9 @@ export class Runs {
      * same commit is returned instead of queueing another.
      */
     async enqueue(actor: Actor, project: Project, spec: JobSpec): Promise<Job> {
+        // The repository it's for, so it never starts on, or reports to, another if the project moves.
+        const gh = await this.github.maybeFor(project).catch(() => null);
+        const repository = gh ? { id: gh.repo.id, fullName: gh.repo.fullName } : null;
         const created = await this.core.write(actor, async (w) => {
             const same = (await w.tx.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 100)).filter(
                 (j) => j.dedupeKey === spec.dedupeKey,
@@ -480,6 +493,7 @@ export class Runs {
                 error: null,
                 model: null,
                 credentials: null,
+                repository,
                 logLines: 0,
                 logDropped: 0,
             };
@@ -498,6 +512,7 @@ export class Runs {
                     "pending",
                     ready.ready ? "Queued for review" : "Queued: reviews are waiting (see Triagent)",
                     this.runUrl(workspace, project, job),
+                    job.repository,
                 );
             });
         }
@@ -521,7 +536,7 @@ export class Runs {
                     if (project) this.onFinished(next, project);
                     if (next.kind === "pr" && next.headSha && project)
                         this.background("Marking a cancelled review on GitHub", () =>
-                            this.github.setStatus(project, next.headSha as string, "error", "Review cancelled", null),
+                            this.github.setStatus(project, next.headSha as string, "error", "Review cancelled", null, next.repository),
                         );
                 });
                 return next;
@@ -580,7 +595,8 @@ export class Runs {
                     if (!project) continue;
                     let notConnected: string | null = null;
                     try {
-                        await this.github.githubFor(project, tx);
+                        const access = await this.github.githubFor(project, tx);
+                        if (!sameRepository(job.repository, access.repo)) notConnected = movedOn(job, access.repo.fullName);
                     } catch (err) {
                         if (!(err instanceof NotConnected)) throw err;
                         notConnected = err.message;
@@ -614,11 +630,17 @@ export class Runs {
 
         // Credentials for this job only, minted now (outside the transaction: it calls GitHub).
         let token: string;
+        let revoke: boolean;
         let gh: Awaited<ReturnType<Github["githubFor"]>>;
         try {
             gh = await this.github.githubFor(project);
-            token = await gh.tokenForJob();
+            if (!sameRepository(job.repository, gh.repo)) throw new RepositoryChanged(movedOn(job, gh.repo.fullName));
+            ({ token, revoke } = await gh.tokenForJob());
         } catch (err) {
+            if (err instanceof RepositoryChanged) {
+                await this.conclude(job.id, runner.id, { status: "failed", error: err.message });
+                return null;
+            }
             await this.conclude(job.id, runner.id, {
                 status: "failed",
                 error: `Couldn't get access to the repository: ${(err as Error).message}`,
@@ -626,14 +648,18 @@ export class Runs {
             return null;
         }
         const scope = { workspaceId: job.workspaceId, projectId: job.projectId };
-        const sealed = this.core.secrets.seal(JSON.stringify([token, model.apiKey]), scope, `job:${job.id}`);
+        const credentials: JobCredentials = { secrets: [token, model.apiKey], revoke: revoke ? token : null };
+        const sealed = this.core.secrets.seal(JSON.stringify(credentials), scope, `job:${job.id}`);
         const stillOurs = await this.store.transaction(async (tx) => {
             const current = await tx.jobs.get(job.id);
             if (current?.status !== "running" || current.runnerId !== runner.id) return false;
             await tx.jobs.put({ ...current, credentials: sealed });
             return true;
         });
-        if (!stillOurs) return null;
+        if (!stillOurs) {
+            this.revoke(job, credentials.revoke);
+            return null;
+        }
         this.redactions.set(job.id, secretForms([token, model.apiKey]));
         this.announce(job, project, "started");
         if (job.kind === "pr" && job.headSha)
@@ -644,6 +670,7 @@ export class Runs {
                     "pending",
                     "Reviewing with Open Code Review…",
                     this.runUrl(workspace, project, job),
+                    job.repository,
                 ),
             );
         return {
@@ -685,20 +712,29 @@ export class Runs {
         return { cancel: Boolean(job.cancelRequested), leaseExpiresAt: job.leaseExpiresAt as string };
     }
 
+    /** The credentials handed out for a job, from its sealed copy (older jobs kept a bare list of secrets). */
+    private credentialsOf(job: Job): JobCredentials | null {
+        if (!job.credentials) return null;
+        try {
+            const raw = JSON.parse(
+                this.core.secrets.unseal(job.credentials, { workspaceId: job.workspaceId, projectId: job.projectId }, `job:${job.id}`),
+            ) as JobCredentials | string[];
+            return Array.isArray(raw) ? { secrets: raw, revoke: null } : raw;
+        } catch (err) {
+            console.error(`Couldn't read the credentials of run ${job.id}: ${(err as Error).message}`);
+            return null;
+        }
+    }
+
+    /** Revoke a job's own GitHub token, in the background (it expires within the hour regardless). */
+    private revoke(job: Pick<Job, "id" | "title">, token: string | null): void {
+        if (token) this.background(`Revoking the GitHub token of ${job.title}`, () => this.github.app.revokeToken(token));
+    }
+
     private async redactionsFor(job: Job): Promise<string[]> {
         const hit = this.redactions.get(job.id);
         if (hit) return hit;
-        let forms: string[] = [];
-        if (job.credentials) {
-            try {
-                const secrets = JSON.parse(
-                    this.core.secrets.unseal(job.credentials, { workspaceId: job.workspaceId, projectId: job.projectId }, `job:${job.id}`),
-                ) as string[];
-                forms = secretForms(secrets);
-            } catch (err) {
-                console.error(`Couldn't read the credentials of run ${job.id} to redact its log: ${(err as Error).message}`);
-            }
-        }
+        const forms = secretForms(this.credentialsOf(job)?.secrets ?? []);
         this.redactions.set(job.id, forms);
         return forms;
     }
@@ -931,7 +967,12 @@ export class Runs {
                     },
                     project?.slug ?? null,
                 );
-                w.afterCommit(() => this.afterFinish(next, project, workspace, automation?.failOnCritical ?? true));
+                // The job's own GitHub token goes with it, however it ended.
+                const revoke = this.credentialsOf(held)?.revoke ?? null;
+                w.afterCommit(() => {
+                    this.revoke(next, revoke);
+                    this.afterFinish(next, project, workspace, automation?.failOnCritical ?? true);
+                });
                 return next;
             });
 
@@ -977,6 +1018,17 @@ export class Runs {
     private async tellGithub(job: Job, project: Project, workspace: Workspace, failOnCritical: boolean): Promise<void> {
         const sha = job.headSha as string;
         const notes: string[] = [];
+        // Only the repository this review was of: if the project points elsewhere now, say so and stop.
+        const current = await this.github.maybeFor(project).catch(() => null);
+        if (current && !sameRepository(job.repository, current.repo)) {
+            const why = `this project now uses ${current.repo.fullName}, and this review was of ${job.repository?.fullName}`;
+            await this.store.jobs.appendLog(job.id, [{ at: now(), line: `[triagent] Not reporting to GitHub: ${why}.` }], LOG_CAP_BYTES);
+            await this.store.transaction(async (tx) => {
+                const latest = await tx.jobs.get(job.id);
+                if (latest) await tx.jobs.put({ ...latest, result: { ...(latest.result ?? {}), github: [`not reported: ${why}`] } });
+            });
+            return;
+        }
         const note = async (what: string, task: () => Promise<unknown>) => {
             try {
                 await task();
@@ -1005,7 +1057,14 @@ export class Runs {
                   )
                 : [];
             await note("commit status", () =>
-                this.github.setStatus(project, sha, status.state, status.description, this.issuesUrl(workspace, project, job.branch)),
+                this.github.setStatus(
+                    project,
+                    sha,
+                    status.state,
+                    status.description,
+                    this.issuesUrl(workspace, project, job.branch),
+                    job.repository,
+                ),
             );
             await note("comment", () =>
                 this.github.upsertComment(
@@ -1022,13 +1081,14 @@ export class Runs {
                         issuesUrl: this.issuesUrl(workspace, project, job.branch),
                         issueUrl: (id) => this.issuesUrl(workspace, project, job.branch, id),
                     }),
+                    job.repository,
                 ),
             );
         } else {
             const state: CommitState = "error";
             const description = job.status === "cancelled" ? "Review cancelled" : `Review failed: ${job.error ?? "see Triagent"}`;
             await note("commit status", () =>
-                this.github.setStatus(project, sha, state, description, this.runUrl(workspace, project, job)),
+                this.github.setStatus(project, sha, state, description, this.runUrl(workspace, project, job), job.repository),
             );
         }
         await this.store.transaction(async (tx) => {

@@ -26,6 +26,18 @@ const OUTCOMES: Record<string, { ok: boolean; text: string }> = {
         ok: false,
         text: "GitHub says your account can't see that installation, so it wasn't linked. Install the app from an account that owns or administers it.",
     },
+    "not-admin": {
+        ok: false,
+        text: "Only an owner of the GitHub organisation can link its installation, so it wasn't linked. Ask one of them to install the app from here.",
+    },
+    "not-account": {
+        ok: false,
+        text: "That installation is on someone else's personal GitHub account, so it wasn't linked. Ask them to install the app from here.",
+    },
+    "members-permission": {
+        ok: false,
+        text: "The GitHub App can't check who owns the organisation. An instance admin needs to give it the Organization members (read) permission in its settings on GitHub. Then try again.",
+    },
     "not-you": { ok: false, text: "That link was started by someone else. Start the installation again from here." },
     "not-allowed": { ok: false, text: "You're no longer allowed to manage this workspace's secrets, so nothing was linked." },
     "no-authorization": {

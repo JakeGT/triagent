@@ -20,6 +20,8 @@ import { type Github, NotConnected } from "./service.ts";
 export const AUTOMATION: Actor = { name: "automation", userId: null, via: "system" };
 const GITHUB_ACTOR: Actor = { name: "GitHub", userId: null, via: "github" };
 const MAX_COMPARES = 25;
+/** The most open pull requests a check looks at (the most recently updated); ten pages from GitHub. */
+export const MAX_OPEN_PULLS = 1000;
 const TICK_MS = 30_000;
 
 export interface PullState {
@@ -52,7 +54,7 @@ export interface GithubState {
     /** Whether the last check saw automatic reviews on (switching them on sets a baseline). */
     automationSeen: boolean;
     prs: Record<string, PullState>;
-    lastCheck: { at: string; openPulls?: number; error?: string; decisions: Decision[] } | null;
+    lastCheck: { at: string; openPulls?: number; error?: string; note?: string; decisions: Decision[] } | null;
     lastPollAt: string | null;
     lastSyncAt: string | null;
     lastNightly: string | null;
@@ -155,7 +157,8 @@ export class Automation {
             let pulls: Pull[];
             try {
                 const gh = await this.github.githubFor(project);
-                pulls = await gh.client.openPulls(gh.repo);
+                // One more than the most, to tell whether there are more.
+                pulls = await gh.client.openPulls(gh.repo, MAX_OPEN_PULLS + 1);
             } catch (err) {
                 const message = (err as Error).message;
                 const s = await this.update(project, (s) => {
@@ -165,6 +168,8 @@ export class Automation {
                 });
                 return s.lastCheck;
             }
+            const capped = pulls.length > MAX_OPEN_PULLS;
+            pulls = pulls.slice(0, MAX_OPEN_PULLS);
             const before = await this.state(project);
             const enabled = automation.enabled;
             const baseline = enabled && !before.automationSeen;
@@ -238,6 +243,8 @@ export class Automation {
                 info.status = "queued";
                 decide("queued", info.reviewedSha ? "new commits since the last review" : "not reviewed yet");
             }
+            // Beyond the most a check looks at, pull requests keep what's known of them (their baseline, say).
+            if (capped) for (const [n, p] of Object.entries(before.prs)) if (!prs[n]) prs[n] = p;
             for (const { spec } of toQueue) await this.runs.enqueue(AUTOMATION, project, spec);
             const s = await this.update(project, (s) => {
                 // Keep what a run finishing meanwhile recorded.
@@ -250,7 +257,16 @@ export class Automation {
                 s.automationSeen = enabled;
                 s.lastPollAt = now();
                 s.lastError = null;
-                s.lastCheck = { at: now(), openPulls: pulls.length, decisions };
+                s.lastCheck = {
+                    at: now(),
+                    openPulls: pulls.length,
+                    ...(capped
+                        ? {
+                              note: `There are more than ${MAX_OPEN_PULLS.toLocaleString("en-GB")} open pull requests: only the ${MAX_OPEN_PULLS.toLocaleString("en-GB")} most recently updated were checked.`,
+                          }
+                        : {}),
+                    decisions,
+                };
             });
             const queued = decisions.filter((d) => d.action === "queued").map((d) => `#${d.number}`);
             if (queued.length || decisions.length)

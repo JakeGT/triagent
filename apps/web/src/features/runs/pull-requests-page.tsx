@@ -142,6 +142,7 @@ export function PullRequestsPage() {
                                 {timeAgo(data.lastCheck.at)}
                             </time>
                             {data.lastCheck.error ? `: it failed (${data.lastCheck.error})` : `: ${data.lastCheck.openPulls ?? 0} open.`}
+                            {data.lastCheck.note ? ` ${data.lastCheck.note}` : ""}
                         </p>
                     )}
                     {data.items.length === 0 ? (

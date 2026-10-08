@@ -136,9 +136,9 @@ export class GitHubClient {
         return this.request("GET", this.r(t));
     }
 
-    /** Open pull requests, most recently updated first (the first 100 are plenty for a check). */
-    openPulls(t: RepoTarget): Promise<Pull[]> {
-        return this.request("GET", `${this.r(t)}/pulls?state=open&sort=updated&direction=desc&per_page=100`);
+    /** Open pull requests, most recently updated first, a page of 100 at a time, up to `max`. */
+    openPulls(t: RepoTarget, max = 1000): Promise<Pull[]> {
+        return this.all(`${this.r(t)}/pulls?state=open&sort=updated&direction=desc`, max);
     }
 
     pull(t: RepoTarget, number: number): Promise<Pull> {

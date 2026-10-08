@@ -473,7 +473,7 @@ export interface PullRequests {
     mode: "app" | "token" | null;
     repository: string | null;
     automation: { enabled: boolean; pollMinutes: number };
-    lastCheck: { at: string; openPulls?: number; error?: string; decisions: unknown[] } | null;
+    lastCheck: { at: string; openPulls?: number; error?: string; note?: string; decisions: unknown[] } | null;
     lastError: { at: string; message: string } | null;
     items: PullRequest[];
     deliveries: GithubDelivery[];

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import { COMMENT_MARKER } from "../src/services/github/service.ts";
+import { specForBranch } from "../src/services/runs.ts";
 import { ADMIN_PASSWORD, type Session } from "./helpers.ts";
 import { eventually, finished, PAT, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
 
@@ -115,6 +116,107 @@ describe("pull requests with a token: webhooks, checks and the baseline", () => 
         );
         assert.match(deliveries[2].detail, /No signature/);
         await env.t.request(`/api/v1/w/acme/runs/${queued[0]?.id}/cancel`, { method: "POST", session: env.admin, body: {} });
+    });
+});
+
+describe("more than a page of pull requests, and a project that moves to another repository", () => {
+    let env: ReviewEnv;
+    let token: string;
+    before(async () => {
+        env = await reviewEnv();
+        ({ token } = await patProject(env, "acme"));
+        await env.fake.gitRepo("acme/app", { "src/a.ts": "a\n" });
+        await env.fake.gitRepo("acme/other", { "src/o.ts": "o\n" });
+        env.fake.pat(token, "octo", ["acme/app", "acme/other"]);
+    });
+    after(() => env.close());
+
+    const project = async () => {
+        const w = await env.t.services.store.workspaces.bySlug("acme");
+        return (await env.t.services.store.projects.bySlug(w?.id as string, "app")) as NonNullable<
+            Awaited<ReturnType<typeof env.t.services.store.projects.bySlug>>
+        >;
+    };
+
+    test("every open pull request is checked, not just the first 100", async () => {
+        for (let n = 1; n <= 130; n++) env.fake.pull("acme/app", { number: n, headRef: `b${n}` });
+        assert.equal(
+            (
+                await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
+                    method: "PATCH",
+                    session: env.admin,
+                    body: { enabled: true },
+                })
+            ).status,
+            200,
+        );
+        // The baseline: all of them listed, none reviewed.
+        const first = await env.t.services.automation.checkPulls(await project());
+        assert.equal(first?.openPulls, 130);
+        const page = (await env.t.request("/api/v1/w/acme/p/app/pull-requests", { session: env.admin })).body;
+        assert.equal(page.items.length, 130);
+        assert.ok(page.items.every((p: { baseline?: boolean }) => p.baseline));
+        // A push to the 130th is noticed and reviewed; the others still aren't.
+        const pr = env.fake.repo("acme/app").pulls.get(130);
+        if (pr) pr.headSha = randomBytes(20).toString("hex");
+        const second = await env.t.services.automation.checkPulls(await project());
+        assert.deepEqual(
+            second?.decisions.filter((d) => d.action === "queued").map((d) => d.number),
+            [130],
+        );
+        for (const j of await env.t.services.store.jobs.list({ statuses: ["queued"] }, 10))
+            await env.t.request(`/api/v1/w/acme/runs/${j.id}/cancel`, { method: "POST", session: env.admin, body: {} });
+        await env.t.request("/api/v1/w/acme/p/app/settings/automation", { method: "PATCH", session: env.admin, body: { enabled: false } });
+        for (let n = 1; n <= 130; n++) env.fake.repo("acme/app").pulls.delete(n);
+    });
+
+    test("a review reports only to the repository it reviewed: if the project moves, nothing is posted elsewhere", async () => {
+        const runs = env.t.services.runs;
+        const admin = { name: "admin", userId: null, via: "web" } as const;
+        const hello = { id: "runner-moved-0000", name: "moved", version: "1", slots: 1 };
+        for (const repo of ["acme/app", "acme/other"]) {
+            await env.fake.commit(repo, "feat", { "src/f.ts": "f\n" }, "f", "main");
+            await env.fake.openPull(repo, { number: 7, headRef: "feat" });
+        }
+        const spec = (await import("../src/services/runs.ts")).specForPull({
+            number: 7,
+            title: "Seven",
+            state: "open",
+            html_url: "https://github.com/acme/app/pull/7",
+            user: { login: "octo" },
+            head: { ref: "feat", sha: env.fake.repo("acme/app").branches.get("feat") as string, repo: { full_name: "acme/app" } },
+            base: { ref: "main", sha: "0".repeat(40), repo: { full_name: "acme/app" } },
+        });
+
+        // Started on acme/app; the project then moves to acme/other before the review finishes.
+        let job = await runs.enqueue(admin, await project(), spec);
+        assert.deepEqual(job.repository, { id: null, fullName: "acme/app" });
+        let claimed = await runs.claim(hello);
+        assert.ok(claimed);
+        await env.t.services.projects.update(admin, await project(), { repoUrl: "https://github.com/acme/other" });
+        await runs.finish(hello, claimed.id, { status: "done", report: { comments: [{ path: "src/f.ts", content: "A finding here." }] } });
+        await runs.settled();
+        const other = env.fake.repo("acme/other");
+        assert.equal(other.comments.get(7), undefined, "nothing was posted on the other repository's #7");
+        assert.equal(other.statuses.length, 0);
+        const log = (await env.t.request(`/api/v1/w/acme/runs/${claimed.id}?after=0`, { session: env.admin })).body.logLines.map(
+            (l: { line: string }) => l.line,
+        );
+        assert.ok(
+            log.some((l: string) => /Not reporting to GitHub: this project now uses acme\/other, and this review was of acme\/app/.test(l)),
+        );
+
+        // Queued for acme/app, still waiting when the project moves: it never starts on acme/other's code.
+        await env.t.services.projects.update(admin, await project(), { repoUrl: "https://github.com/acme/app" });
+        job = await runs.enqueue(admin, await project(), { ...spec, headSha: randomBytes(20).toString("hex") });
+        await env.t.services.projects.update(admin, await project(), { repoUrl: "https://github.com/acme/other" });
+        claimed = await runs.claim(hello);
+        assert.equal(claimed, null);
+        const failed = await env.t.services.store.jobs.get(job.id);
+        assert.equal(failed?.status, "failed");
+        assert.match(failed?.error ?? "", /This project now uses acme\/other, but this review was queued for acme\/app/);
+        await runs.settled();
+        assert.equal(other.statuses.length, 0);
     });
 });
 
@@ -247,7 +349,13 @@ describe("the GitHub App", () => {
         );
         assert.equal(manifest.hook_attributes.url, "http://triagent.test/api/v1/github/app/webhook");
         assert.equal(manifest.request_oauth_on_install, true);
-        assert.deepEqual(manifest.default_permissions, { contents: "read", metadata: "read", pull_requests: "write", statuses: "write" });
+        assert.deepEqual(manifest.default_permissions, {
+            contents: "read",
+            metadata: "read",
+            members: "read",
+            pull_requests: "write",
+            statuses: "write",
+        });
         // Someone else can't use the admin's form.
         assert.equal((await env.t.request(start.body.formUrl, { session: mallory })).status, 403);
 
@@ -286,6 +394,8 @@ describe("the GitHub App", () => {
     test("linking an installation needs GitHub to confirm the person can see it", async () => {
         const acme = env.fake.install("acme", ["acme/app"], ["alice"]);
         const evil = env.fake.install("evil", ["evil/app"], ["mal"]);
+        env.fake.orgRole("acme", "alice", "admin");
+        env.fake.orgRole("evil", "mal", "admin");
         // Mallory claims acme's installation id: GitHub says her account can't see it.
         let r = await link(mallory, "evil", acme.id, "mal");
         assert.match(r.location, /\?github=not-yours$/);
@@ -310,8 +420,9 @@ describe("the GitHub App", () => {
         assert.equal((await env.t.services.store.githubInstallations.get(acme.id))?.accountLogin, "acme");
         r = await link(mallory, "evil", evil.id, "mal");
         assert.match(r.location, /github=linked$/);
-        // An installation already linked to a workspace can't be taken by another.
+        // An installation already linked to a workspace can't be taken by another, even by an admin of it.
         env.fake.installations.get(acme.id)?.users.add("mal");
+        env.fake.orgRole("acme", "mal", "admin");
         r = await link(mallory, "evil", acme.id, "mal");
         assert.match(r.location, /github=taken$/);
         assert.equal(
@@ -369,6 +480,35 @@ describe("the GitHub App", () => {
         assert.equal(settings.repository.fullName, "acme/app");
         const tested = await env.t.request("/api/v1/w/acme/p/app/settings/github/test", { method: "POST", session: env.admin, body: {} });
         assert.equal(tested.body.mode, "app");
+    });
+
+    test("an organisation's installation is linked only by one of its admins; a personal account's, only by that account", async () => {
+        // Bob can see corp's installation (he's a member), but doesn't administer corp.
+        const corp = env.fake.install("corp", ["corp/app"], ["bob"]);
+        env.fake.orgRole("corp", "bob", "member");
+        let r = await link(env.admin, "acme", corp.id, "bob");
+        assert.match(r.location, /\?github=not-admin$/);
+        assert.equal(await env.t.services.store.githubInstallations.get(corp.id), null);
+        // An invitation to be an admin isn't the same as being one.
+        env.fake.orgRole("corp", "bob", "admin", "pending");
+        r = await link(env.admin, "acme", corp.id, "bob");
+        assert.match(r.location, /\?github=not-admin$/);
+        env.fake.orgRole("corp", "bob", "admin");
+        r = await link(env.admin, "acme", corp.id, "bob");
+        assert.match(r.location, /\?github=linked$/);
+
+        // A personal account's installation: Dave can see it (a collaborator), but it isn't his account.
+        const carol = env.fake.install("carol", ["carol/tool"], ["carol", "dave"], { account: { login: "carol", type: "User" } });
+        r = await link(env.admin, "acme", carol.id, "dave");
+        assert.match(r.location, /\?github=not-account$/);
+        assert.equal(await env.t.services.store.githubInstallations.get(carol.id), null);
+        r = await link(env.admin, "acme", carol.id, "carol");
+        assert.match(r.location, /\?github=linked$/);
+        for (const id of [corp.id, carol.id])
+            assert.equal(
+                (await env.t.request(`/api/v1/w/acme/github/installations/${id}`, { method: "DELETE", session: env.admin })).status,
+                200,
+            );
     });
 
     test("the app's webhook: verified, then routed by installation and repository to the right workspace's project", async () => {
@@ -455,13 +595,17 @@ describe("the GitHub App", () => {
         const mints = env.fake.log.slice(logged).filter((l) => /\/access_tokens$/.test(l.path));
         assert.ok(mints.length >= 1);
         for (const m of mints) assert.deepEqual((m.body as { repository_ids: number[] }).repository_ids, [repoId]);
-        assert.ok(
-            mints.some(
-                (m) =>
-                    JSON.stringify((m.body as { permissions: object }).permissions) ===
-                    JSON.stringify({ contents: "read", metadata: "read" }),
-            ),
+        // The runner's token: minted for this review alone, reading contents only, and revoked when it ended.
+        const forJob = mints.filter(
+            (m) => JSON.stringify((m.body as { permissions: object }).permissions) === JSON.stringify({ contents: "read" }),
         );
+        assert.equal(forJob.length, 1);
+        const fetched = [...new Set(env.fake.gitLog.filter((g) => g.token.startsWith("ghs_")).map((g) => g.token))];
+        assert.equal(fetched.length, 1);
+        assert.ok(env.fake.revoked.has(fetched[0] as string), "the review's token was revoked");
+        // The server's own token, for statuses and comments, is another, and still works.
+        assert.ok(env.fake.installationTokens.size > 0);
+        assert.ok(![...env.fake.installationTokens.keys()].some((t) => env.fake.revoked.has(t)));
         assert.ok(env.fake.repo("acme/app").statuses.every((s) => s.by === "installation"));
         const comments = env.fake.repo("acme/app").comments.get(1) ?? [];
         assert.equal(comments.length, 2);
@@ -469,6 +613,38 @@ describe("the GitHub App", () => {
         assert.equal(comments[1]?.user, `${env.fake.app?.slug}[bot]`);
         assert.match(comments[1]?.body ?? "", /Open Code Review/);
         assert.ok(env.fake.gitLog.some((g) => g.token.startsWith("ghs_")));
+    });
+
+    test("each review's token is its own, and is revoked however the review ends: cancelled, or its runner lost", async () => {
+        const runs = env.t.services.runs;
+        const acme = (await env.t.services.store.workspaces.bySlug("acme")) as NonNullable<
+            Awaited<ReturnType<typeof env.t.services.store.workspaces.bySlug>>
+        >;
+        const project = (await env.t.services.store.projects.bySlug(acme.id, "app")) as NonNullable<
+            Awaited<ReturnType<typeof env.t.services.store.projects.bySlug>>
+        >;
+        for (const r of env.runners) await r.stop();
+        const hello = { id: "runner-manual-0000", name: "manual", version: "1", slots: 1 };
+        const tokens: string[] = [];
+        for (const how of ["cancelled", "lost"] as const) {
+            await runs.enqueue({ name: "admin", userId: null, via: "web" }, project, specForBranch("full", "main", null));
+            const job = await runs.claim(hello);
+            assert.ok(job);
+            tokens.push(job.git.token);
+            assert.ok(env.fake.installationTokens.has(job.git.token));
+            if (how === "cancelled") await runs.finish(hello, job.id, { status: "cancelled" });
+            else {
+                const stored = await env.t.services.store.jobs.get(job.id);
+                await env.t.services.store.jobs.put({
+                    ...(stored as NonNullable<typeof stored>),
+                    leaseExpiresAt: new Date(Date.now() - 1000).toISOString(),
+                });
+                assert.equal(await runs.sweep(), 1);
+            }
+            await runs.settled();
+            assert.ok(env.fake.revoked.has(job.git.token), `the token was revoked when the review was ${how}`);
+        }
+        assert.notEqual(tokens[0], tokens[1]);
     });
 
     test("removing the app unlinks its installations", async () => {

@@ -322,6 +322,11 @@ export interface Job {
     model: { provider: string; model: string; keySource: "workspace" | "instance"; budget?: number | null } | null;
     /** The credentials handed to the runner, sealed, so log lines can be redacted; cleared when it ends. */
     credentials: string | null;
+    /**
+     * The repository it was queued for: GitHub's id (when known: the app's repositories) and owner/name.
+     * It only starts on, and reports to, that repository. Null for jobs queued before this was kept.
+     */
+    repository: { id: number | null; fullName: string } | null;
     /** Kept by the store: lines written so far (the last line's seq), and how many were dropped from the front. */
     logLines: number;
     logDropped: number;
