@@ -3,7 +3,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useMatches, useParams } from "@tanstack/react-router";
-import { Activity, Bot, Bug, FileCode, FolderGit2, GitCompare, LayoutDashboard, ListChecks, Plus, Settings } from "lucide-react";
+import { Activity, BarChart3, Bot, Bug, FileCode, FolderGit2, GitCompare, LayoutDashboard, ListChecks, Plus, Settings } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 import { BranchPicker, ProjectPicker, WorkspaceSwitcher } from "@/components/layout/pickers";
 import { UserMenu } from "@/components/layout/user-menu";
@@ -153,6 +153,13 @@ export function AppSidebar() {
                                 </NavItem>
                             </Group>
                             <Group title="Insights">
+                                <NavItem label="Analytics" icon={<BarChart3 />} active={pathname === `/w/${ws}/analytics`}>
+                                    {(c) => (
+                                        <Link to="/w/$ws/analytics" params={{ ws }}>
+                                            {c}
+                                        </Link>
+                                    )}
+                                </NavItem>
                                 <NavItem label="Activity" icon={<Activity />} active={active("/activity")}>
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/activity" params={params}>

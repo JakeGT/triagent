@@ -48,6 +48,11 @@
     --st-wont_fix: #6a6170;
     --diff-add: #e3f4e7;
     --diff-del: #fbe7e6;
+    /* Chart series (identity only, always with a legend and a table view); checked for colour-blind separation. */
+    --chart-1: #2a78d6;
+    --chart-2: #eb6834;
+    --chart-3: #1baf7a;
+    --chart-grid: oklch(0.92 0.005 240);
 }
 
 .dark {
@@ -89,6 +94,10 @@
     --st-wont_fix: #b5aabb;
     --diff-add: #173523;
     --diff-del: #42201f;
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-grid: oklch(1 0 0 / 10%);
 }
 
 @theme inline {
@@ -135,6 +144,10 @@
     --color-st-wont_fix: var(--st-wont_fix);
     --color-diff-add: var(--diff-add);
     --color-diff-del: var(--diff-del);
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
+    --color-chart-3: var(--chart-3);
+    --color-chart-grid: var(--chart-grid);
 }
 
 @layer base {

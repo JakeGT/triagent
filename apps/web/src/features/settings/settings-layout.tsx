@@ -100,11 +100,18 @@ export function SettingsLayout() {
     const workspaceItems: Item[] = [
         wsLink("/projects", "Projects", "/w/$ws/settings/projects"),
         wsLink("/review-model", "Review model & keys", "/w/$ws/settings/review-model"),
+        wsLink("/model-prices", "Model prices", "/w/$ws/settings/model-prices"),
         wsLink("/members", "Members", "/w/$ws/settings/members"),
         ...(can("tokens") ? [wsLink("/tokens", "API tokens", "/w/$ws/settings/tokens")] : []),
         ...(can("members") ? [wsLink("/audit", "Audit log", "/w/$ws/settings/audit")] : []),
     ];
-    const instanceItems: Item[] = me.user.isInstanceAdmin ? [wsLink("/users", "Users", "/w/$ws/settings/users")] : [];
+    const instanceItems: Item[] = me.user.isInstanceAdmin
+        ? [
+              wsLink("/users", "Users", "/w/$ws/settings/users"),
+              wsLink("/instance-model", "Instance model key", "/w/$ws/settings/instance-model"),
+              wsLink("/instance-workspaces", "Workspaces", "/w/$ws/settings/instance-workspaces"),
+          ]
+        : [];
     const accountItems: Item[] = [
         wsLink("/notifications", "Notifications", "/w/$ws/settings/notifications"),
         wsLink("/password", "Password", "/w/$ws/settings/password"),
