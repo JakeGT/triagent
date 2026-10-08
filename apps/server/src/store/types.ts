@@ -235,6 +235,12 @@ export interface ReviewDetails {
     estimatedTokens?: boolean;
     /** Findings this review reported for the first time on its branch, by the reviewer's severity: when each first appeared. */
     addedIds?: Partial<Record<Severity, string[]>>;
+    /**
+     * A review run with several models has a record for each model (its own findings, tokens and time),
+     * all with the same scan: the run's id, its models, and the review's overall outcome. Only the lead
+     * record (the first model's) carries what the merged report did to the branch (counts, addedIds).
+     */
+    scan?: { id: string; models: string[]; lead: boolean; status: "done" | "partial" | "failed" | "cancelled"; findings: number | null };
 }
 
 /** One finished review: a run on the server, or a report someone uploaded. Kept for analytics and allowances. */
@@ -330,7 +336,14 @@ export interface Job {
      * instance key, out of the workspace's allowance: set aside until it finishes, and charged in full
      * if it ends without saying what it used).
      */
-    model: { provider: string; model: string; keySource: "workspace" | "instance"; budget?: number | null } | null;
+    model: {
+        provider: string;
+        model: string;
+        keySource: "workspace" | "instance";
+        budget?: number | null;
+        /** Every model, in order, when it runs with several (the first is the one above). */
+        models?: { provider: string; model: string; label: string }[];
+    } | null;
     /** The credentials handed to the runner, sealed, so log lines can be redacted; cleared when it ends. */
     credentials: string | null;
     /**

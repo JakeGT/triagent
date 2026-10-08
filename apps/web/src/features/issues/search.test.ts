@@ -22,6 +22,15 @@ describe("issue filters in the URL", () => {
         });
     });
 
+    it("reads the found-by filter (at least two models) and the agreement sort", () => {
+        const s = parseIssueSearch(parseSearch("?foundBy=2&sort=agreement"));
+        expect(s).toEqual({ foundBy: 2, sort: "agreement" });
+        expect(issueApiQuery(s).foundBy).toBe("2");
+        expect(activeFilters(s)).toBe(1);
+        expect(parseIssueSearch(parseSearch("?foundBy=1"))).toEqual({});
+        expect(parseIssueSearch(parseSearch("?foundBy=two"))).toEqual({});
+    });
+
     it("drops values the server wouldn't accept", () => {
         expect(parseIssueSearch(parseSearch("?severity=urgent,low&status=done&sort=random&page=-2&hasSuggestion=maybe"))).toEqual({
             severity: ["low"],

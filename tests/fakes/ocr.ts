@@ -4,7 +4,8 @@
 //
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
 // (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5", "fake/orphan" (leaves a process behind
-// in its group). It also prints what tests check: its arguments, which environment variables it got,
+// in its group), and for reviews with several models "wordy" (the same findings, put another way, two lines
+// lower) and "extra" (one more finding, at line 40 of the first file). It also prints what tests check: its arguments, which environment variables it got,
 // the model key (the server must redact it), its user config (~/.opencodereview/config.json, which the
 // runner writes for Amazon Bedrock, taking the model from it as OCR does), and the review rules it found. Like the real one, it leaves
 // out files the root .gitignore matches and files git calls binary, and reads rule files rule.json names.
@@ -129,14 +130,21 @@ const content = (f: string) => {
 const report = {
     status: "completed",
     session_id: "fake-session",
-    comments: files.map((path) => ({
-        path,
-        content: `A problem found in ${path} by the fake reviewer.`,
-        severity: content(path).includes("CRITICAL") ? "critical" : "high",
-        category: "bug",
-        start_line: 1,
-        end_line: 1,
-    })),
+    comments: [
+        ...files.map((path) => ({
+            path,
+            content: model.includes("wordy")
+                ? `Looking closely at ${path}, the fake reviewer sees a problem here.`
+                : `A problem found in ${path} by the fake reviewer.`,
+            severity: content(path).includes("CRITICAL") ? "critical" : model.includes("wordy") ? "medium" : "high",
+            category: "bug",
+            start_line: model.includes("wordy") ? 3 : 1,
+            end_line: model.includes("wordy") ? 3 : 1,
+        })),
+        ...(model.includes("extra") && files[0]
+            ? [{ path: files[0], content: `Only ${model} noticed this.`, severity: "low", category: "style", start_line: 40, end_line: 40 }]
+            : []),
+    ],
     project_summary: args[0] === "scan" ? "## Top issues\n\n- **Everything**: it's all fake.\n" : "",
     summary: { total_tokens: 1500, input_tokens: 1200, output_tokens: 300, cache_read_tokens: 100, files_reviewed: files.length },
     manifest: { execution: { ocr_version: "v1.12.12-fake" } },

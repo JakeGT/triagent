@@ -62,6 +62,7 @@ const PHASES: Record<string, string> = {
 export function progressText(run: Pick<Run, "progress" | "cancelRequested">): string {
     const p = run.progress;
     const parts = [PHASES[p.phase ?? "starting"] ?? p.phase ?? "Starting"];
+    if (p.model) parts[0] = `${parts[0]} with ${p.model}`;
     if (p.files) parts.push(plural(p.files, "file"));
     if (p.groups) parts.push(`${plural(p.groups, "group")} seen${p.current ? ` (now ${p.current})` : ""}`);
     if (p.round) parts.push(`round ${p.round}`);

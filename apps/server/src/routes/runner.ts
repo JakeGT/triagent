@@ -7,6 +7,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
 import { z } from "zod";
+import { MAX_MODELS } from "../domain/merge.ts";
 import { ApiError, notFound } from "../errors.ts";
 import { parseJson } from "../http/mount.ts";
 import { type HandlerResult, json, type RequestContext, type Route, route } from "../http/route.ts";
@@ -94,21 +95,35 @@ export const runnerRoutes: Route[] = [
         {
             method: "POST",
             path: "/internal/runner/jobs/{jobId}/finish",
-            summary: "How the job ended, with OCR's report",
+            summary: "How the job ended, with OCR's report (or each model's, for a review run with several)",
             body: Job.extend({
                 status: z.enum(["done", "failed", "cancelled"]),
                 report: z.unknown().optional(),
+                parts: z
+                    .array(
+                        z.object({
+                            status: z.enum(["done", "failed", "cancelled"]),
+                            report: z.unknown().optional(),
+                            error: z.string().max(10_000).nullable().optional(),
+                            tokens: z.number().min(0).nullable().optional(),
+                            seconds: z.number().min(0).nullable().optional(),
+                        }),
+                    )
+                    .max(MAX_MODELS)
+                    .optional(),
                 error: z.string().max(10_000).nullable().optional(),
                 headSha: z.string().max(40).nullable().optional(),
                 baseSha: z.string().max(40).nullable().optional(),
             }),
-            bodyLimit: 30 * 1024 * 1024,
+            // A report each, for a review run with several models.
+            bodyLimit: MAX_MODELS * 30 * 1024 * 1024,
         },
         async (services, body, params) =>
             json(
                 await services.runs.finish({ ...body.runner, version: body.runner.version ?? null }, params.jobId as string, {
                     status: body.status,
                     report: body.report,
+                    ...(body.parts ? { parts: body.parts } : {}),
                     error: body.error ?? null,
                     headSha: body.headSha ?? null,
                     baseSha: body.baseSha ?? null,

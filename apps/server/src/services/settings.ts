@@ -4,10 +4,12 @@
 
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { MAX_MODELS } from "../domain/merge.ts";
 import { badRequest } from "../errors.ts";
 import type { Project, Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
-import { type ModelChoice, ModelSetup, type SecretKind } from "./model-setup.ts";
+import { MODEL_NAME, type ModelChoice, ModelSetup, type SecretKind } from "./model-setup.ts";
+import { PROVIDER_IDS, providerById } from "./providers.ts";
 import type { SecretScope } from "./secrets.ts";
 
 /** The smallest token budget a review can run with. */
@@ -34,6 +36,14 @@ export const AutomationSchema = z.object({
      * spending the workspace's model budget). Others wait until someone who can start reviews does.
      */
     reviewPullRequestsFrom: z.enum(["collaborators", "everyone"]),
+    /**
+     * The models reviews run with, in order: each reviews the change, and their findings are merged into
+     * one list (domain/merge.ts), the first model's wording leading. Each uses the workspace's key for its
+     * provider. Empty: the workspace's own model (or the instance's, with an allowance).
+     */
+    models: z
+        .array(z.object({ provider: z.string().max(40), model: z.string().trim().regex(MODEL_NAME, "isn't a valid model name") }).strict())
+        .max(MAX_MODELS),
 });
 export type Automation = z.infer<typeof AutomationSchema>;
 
@@ -47,6 +57,7 @@ export const AUTOMATION_DEFAULTS: Automation = {
     reviewTimeoutMinutes: 45,
     fullScanTimeoutMinutes: 120,
     reviewPullRequestsFrom: "collaborators",
+    models: [],
 };
 
 const GITHUB_TOKEN = "github-token";
@@ -78,13 +89,18 @@ export class Settings {
     async setAutomation(actor: Actor, project: Project, patch: Partial<Automation>) {
         const parsed = AutomationSchema.partial().strict().safeParse(patch);
         if (!parsed.success) throw badRequest(parsed.error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "));
+        const models = parsed.data.models ?? [];
+        const unknown = models.find((m) => !providerById(m.provider));
+        if (unknown) throw badRequest(`Unknown provider "${unknown.provider}". Choose one of: ${PROVIDER_IDS.join(", ")}.`);
+        if (new Set(models.map((m) => `${m.provider}\0${m.model}`)).size < models.length)
+            throw badRequest("Each model can only be listed once.");
         return this.core.write(actor, async (w) => {
             const before = await this.automation(w.tx, project);
             const next = { ...before, ...parsed.data };
             await w.tx.settings.put({ workspaceId: project.workspaceId, projectId: project.id, key: "automation", value: next });
             const changes = Object.fromEntries(
                 Object.keys(parsed.data)
-                    .filter((k) => before[k as keyof Automation] !== next[k as keyof Automation])
+                    .filter((k) => JSON.stringify(before[k as keyof Automation]) !== JSON.stringify(next[k as keyof Automation]))
                     .map((k) => [k, { from: before[k as keyof Automation], to: next[k as keyof Automation] }]),
             );
             if (Object.keys(changes).length)

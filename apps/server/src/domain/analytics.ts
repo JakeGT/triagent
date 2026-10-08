@@ -230,6 +230,51 @@ export type AnalyticsResult = ReturnType<typeof analyse>;
 
 // ---- reviews -------------------------------------------------------------------------------
 
+/**
+ * Reviews as people count them: a review run with several models (records sharing `details.scan`) as
+ * one, with the scan's outcome and merged findings, its models' tokens, costs and time added up.
+ */
+export function scans(recs: readonly ReviewRecord[], costs: ReadonlyMap<string, number | null>) {
+    const out: { r: ReviewRecord; cost: number | null }[] = [];
+    const byScan = new Map<string, ReviewRecord[]>();
+    for (const r of recs) {
+        const id = r.details.scan?.id;
+        if (!id) out.push({ r, cost: costs.get(r.id) ?? null });
+        else byScan.set(id, [...(byScan.get(id) ?? []), r]);
+    }
+    for (const [id, group] of byScan) {
+        const lead = group.find((r) => r.details.scan?.lead) ?? (group[0] as ReviewRecord);
+        const scan = lead.details.scan as NonNullable<ReviewRecord["details"]["scan"]>;
+        const known = group.map((r) => r.tokens).filter((t): t is NonNullable<ReviewRecord["tokens"]> => t !== null);
+        const priced = group.map((r) => costs.get(r.id) ?? null).filter((c): c is number => c !== null);
+        out.push({
+            r: {
+                ...lead,
+                id,
+                status: scan.status,
+                model: scan.models.join(" + "),
+                tokens: known.length
+                    ? known.reduce((a, t) => ({
+                          input: a.input + t.input,
+                          output: a.output + t.output,
+                          cacheRead: a.cacheRead + t.cacheRead,
+                          total: a.total + t.total,
+                      }))
+                    : null,
+                details: {
+                    ...lead.details,
+                    runSeconds: group.reduce((n, r) => n + (r.details.runSeconds ?? 0), 0),
+                    ...(scan.findings !== null
+                        ? { findings: { ...(lead.details.findings ?? { bySeverity: zeroes() }), total: scan.findings } }
+                        : {}),
+                },
+            },
+            cost: priced.length ? priced.reduce((a, b) => a + b, 0) : null,
+        });
+    }
+    return out;
+}
+
 function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof rangeOf>, input: AnalyticsInput) {
     const series = range.buckets.map((date) => ({ date, done: 0, partial: 0, failed: 0, cancelled: 0, tokens: 0, cost: 0 }));
     const byDate = new Map(series.map((d) => [d.date, d]));
@@ -270,14 +315,12 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
         return g;
     };
 
+    // Each model's own record: tokens, cost and the by-model comparison.
     for (const r of recs) {
         const price = r.model ? input.price(r.model) : null;
         const c = costOf(r.tokens, price);
         costs.set(r.id, c);
         const found = r.status === "done" || r.status === "partial" ? (r.details.findings?.total ?? 0) : 0;
-        byStatus[r.status]++;
-        if (r.source === "run") runs++;
-        findings += found;
         if (r.tokens) {
             tokens.total += r.tokens.total;
             tokens.input += r.tokens.input;
@@ -289,6 +332,33 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
                 tokens.estimatedTotal += r.tokens.total;
             }
         }
+        if (c === null && r.tokens?.total) {
+            const model = r.model ?? UNKNOWN_MODEL;
+            const u = unpriced.get(model) ?? { model, reviews: 0, tokens: 0 };
+            u.reviews++;
+            u.tokens += r.tokens.total;
+            unpriced.set(model, u);
+        }
+        const key = r.model ?? UNKNOWN_MODEL;
+        const g = group("model", key);
+        g.reviews++;
+        g[r.status]++;
+        g.tokens += r.tokens?.total ?? 0;
+        g.findings += found;
+        if (c !== null) g.cost = (g.cost ?? 0) + c;
+        if ((r.status === "done" || r.status === "partial") && r.details.runSeconds !== undefined) {
+            const list = runTimes.model.get(key) ?? [];
+            list.push(r.details.runSeconds);
+            runTimes.model.set(key, list);
+        }
+    }
+
+    // Each review once: a review run with several models is one scan, however many records it has.
+    for (const { r, cost: c } of scans(recs, costs)) {
+        const found = r.status === "done" || r.status === "partial" ? (r.details.findings?.total ?? 0) : 0;
+        byStatus[r.status]++;
+        if (r.source === "run") runs++;
+        findings += found;
         if (c !== null) {
             cost += c;
             priced++;
@@ -297,32 +367,21 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
                 const k = `${r.projectId}:${r.details.prNumber}`;
                 prs.set(k, (prs.get(k) ?? 0) + c);
             }
-        } else if (r.tokens?.total) {
-            const model = r.model ?? UNKNOWN_MODEL;
-            const u = unpriced.get(model) ?? { model, reviews: 0, tokens: 0 };
-            u.reviews++;
-            u.tokens += r.tokens.total;
-            unpriced.set(model, u);
         }
         const finished = r.status === "done" || r.status === "partial";
         if (finished && r.details.runSeconds !== undefined) runSeconds.push(r.details.runSeconds);
         if (r.details.queueSeconds !== undefined) queueSeconds.push(r.details.queueSeconds);
 
-        for (const [which, key] of [
-            ["model", r.model ?? UNKNOWN_MODEL],
-            ["kind", r.kind],
-        ] as const) {
-            const g = group(which, key);
-            g.reviews++;
-            g[r.status]++;
-            g.tokens += r.tokens?.total ?? 0;
-            g.findings += found;
-            if (c !== null) g.cost = (g.cost ?? 0) + c;
-            if (finished && r.details.runSeconds !== undefined) {
-                const list = runTimes[which].get(key) ?? [];
-                list.push(r.details.runSeconds);
-                runTimes[which].set(key, list);
-            }
+        const g = group("kind", r.kind);
+        g.reviews++;
+        g[r.status]++;
+        g.tokens += r.tokens?.total ?? 0;
+        g.findings += found;
+        if (c !== null) g.cost = (g.cost ?? 0) + c;
+        if (finished && r.details.runSeconds !== undefined) {
+            const list = runTimes.kind.get(r.kind) ?? [];
+            list.push(r.details.runSeconds);
+            runTimes.kind.set(r.kind, list);
         }
 
         const d = byDate.get(range.key(r.at) ?? "");
@@ -331,6 +390,7 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             d.tokens += r.tokens?.total ?? 0;
             d.cost += c ?? 0;
         }
+        costs.set(r.id, c);
     }
 
     const finish = (which: "model" | "kind") =>
@@ -343,7 +403,8 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             .sort((a, b) => b.reviews - a.reviews || a.key.localeCompare(b.key));
 
     const prCosts = [...prs.values()];
-    const latest = [...recs]
+    const latest = scans(recs, costs)
+        .map((x) => x.r)
         .sort((a, b) => b.at.localeCompare(a.at))
         .slice(0, 15)
         .map((r) => ({
@@ -366,10 +427,10 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
 
     return {
         section: {
-            total: recs.length,
+            total: byStatus.done + byStatus.partial + byStatus.failed + byStatus.cancelled,
             byStatus,
             runs,
-            uploads: recs.length - runs,
+            uploads: byStatus.done + byStatus.partial + byStatus.failed + byStatus.cancelled - runs,
             runSeconds: { median: median(runSeconds), p90: quantile(runSeconds, 0.9), recorded: runSeconds.length },
             queueSeconds: { median: median(queueSeconds), p90: quantile(queueSeconds, 0.9), recorded: queueSeconds.length },
             tokens,

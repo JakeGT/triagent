@@ -57,12 +57,18 @@ export function issueMarkdown(v: IssueDetail, branch: string): string {
         `- **Branch:** ${branch}`,
         `- **Revision:** ${v.rev}`,
     ];
+    if (v.foundBy) facts.push(`- **Found by:** ${v.foundBy.join(", ")}`);
     if (v.duplicateOf) facts.push(`- **Duplicate of:** ${v.duplicateOf}`);
     if (v.needsDiscussion) facts.push("- **Needs discussion:** yes (agree an approach before fixing)");
     const out = [`## ${v.id}: ${v.title}`, "", ...facts, "", v.content];
     const lang = langOf(v.path);
     if (v.existingCode) out.push("", "**Existing code:**", "", fence(v.existingCode, lang));
     if (v.suggestionCode) out.push("", "**Suggested change:**", "", fence(v.suggestionCode, lang));
+    for (const o of v.alsoFound) {
+        const where = o.startLine ? ` at line ${o.startLine}${o.endLine && o.endLine !== o.startLine ? `-${o.endLine}` : ""}` : "";
+        const rated = [o.severity, o.category].filter(Boolean).join("/");
+        out.push("", `**${o.model} also found it**${rated ? ` (${rated})` : ""}${where}:`, "", o.content);
+    }
     if (v.duplicates.length) out.push("", `**Duplicates of this issue:** ${v.duplicates.map((d) => d.id).join(", ")}`);
     out.push(...notesMarkdown(v.notes));
     if (v.tasks.length) out.push("", `**Related tasks:** ${v.tasks.map((t) => `${t.id} (${t.title.replace(/`/g, "")})`).join("; ")}`);

@@ -23,6 +23,8 @@ export interface Progress {
     toolFailures?: number;
     /** The most model tokens OCR has said it used so far (its report may never come: a time limit, a cancel). */
     tokens?: number;
+    /** With several models: which one is reviewing now, e.g. "gpt-5 (2 of 3)". */
+    model?: string;
 }
 
 const UNIT: Record<string, number> = { "": 1, K: 1_000, M: 1_000_000 };
@@ -41,8 +43,11 @@ export function tokensSaid(line: string): number | null {
     return null;
 }
 
-/** Progress after one more line of OCR's stderr. `seen` collects the group names met so far. */
-export function readProgress(before: Progress, line: string, seen: Set<string>): Progress {
+/**
+ * Progress after one more line of OCR's stderr. `seen` collects the group names met so far; `base` is
+ * the tokens earlier models used, in a job with several.
+ */
+export function readProgress(before: Progress, line: string, seen: Set<string>, base = 0): Progress {
     const p: Progress = { toolCalls: 0, toolFailures: 0, ...before };
     const changed = /\b(\d+) file\(s\) (?:changed|selected|to scan)[^,]*, reviewing (\d+)/.exec(line);
     const scanning = /\b(?:scanning|reviewing) (\d+) file\(s\)/i.exec(line);
@@ -64,7 +69,7 @@ export function readProgress(before: Progress, line: string, seen: Set<string>):
         p.roundsFailed = (p.roundsFailed ?? 0) + 1;
     }
     const said = tokensSaid(line);
-    if (said !== null) p.tokens = Math.max(p.tokens ?? 0, said);
+    if (said !== null) p.tokens = Math.max(p.tokens ?? 0, base + said);
     if (/^\s*\[ocr\]\s+▶/.test(line)) p.toolCalls = (p.toolCalls ?? 0) + 1;
     if (/^\s*\[ocr\]\s+✘/.test(line)) p.toolFailures = (p.toolFailures ?? 0) + 1;
     if (/\bplan(?:ning)? phase\b/i.test(line) && !/skipping/i.test(line)) p.phase = "planning";

@@ -12,20 +12,27 @@ export interface ReviewGaps {
     groups: number;
     files: string[];
     reasons: string[];
+    /** Models whose review failed, when the review ran with several. */
+    models: string[];
     note: string;
 }
 
 /**
  * What OCR says it couldn't finish, from its report's warnings (e.g. `review_round_failed` for a group of
  * files). It still reports such a run as complete, with the findings it did get. Warnings about repairs it
- * made along the way lose nothing and don't count. Null when nothing was lost.
+ * made along the way lose nothing and don't count. A review run with several models also lists those that
+ * failed (`model_failed`, domain/merge.ts). Null when nothing was lost.
  */
 export function reviewGaps(report: unknown): ReviewGaps | null {
     const warnings = Array.isArray(obj(report).warnings) ? (obj(report).warnings as unknown[]) : [];
     // Only warnings OCR writes (objects with a string type); anything else in the list is skipped.
     const text = (v: unknown) => (typeof v === "string" ? v : "");
-    const lost = warnings.map(obj).filter((w) => /fail|budget|skip|timeout|cancel|incomplete/i.test(text(w.type)));
-    if (!lost.length) return null;
+    const failedModels = warnings.map(obj).filter((w) => text(w.type) === "model_failed");
+    const lost = warnings
+        .map(obj)
+        .filter((w) => text(w.type) !== "model_failed" && /fail|budget|skip|timeout|cancel|incomplete/i.test(text(w.type)));
+    if (!lost.length && !failedModels.length) return null;
+    const models = [...new Set(failedModels.map((w) => text(w.model).slice(0, 200)).filter(Boolean))].slice(0, 10);
     const files = [
         ...new Set(
             lost.flatMap((w) =>
@@ -40,10 +47,16 @@ export function reviewGaps(report: unknown): ReviewGaps | null {
     const n = lost.length;
     const shown = files.slice(0, 3).join(", ");
     const more = files.length > 3 ? ` and ${files.length - 3} more file${files.length - 3 === 1 ? "" : "s"}` : "";
-    const note =
-        `Part of the review didn't finish: ${n} file group${n === 1 ? "" : "s"}${files.length ? ` (${shown}${more})` : ""}` +
-        `${reasons.length ? `, ${reasons.slice(0, 2).join("; ")}${reasons.length > 2 ? "; …" : ""}` : ""}. The findings it did get are included.`;
-    return { groups: n, files, reasons, note };
+    const parts: string[] = [];
+    // Not why: a model's error is the runner's (paths, OCR's output), and this note is posted on GitHub.
+    if (models.length) parts.push(`${models.join(", ")} didn't finish`);
+    if (n)
+        parts.push(
+            `${n} file group${n === 1 ? "" : "s"}${files.length ? ` (${shown}${more})` : ""}` +
+                `${reasons.length ? `, ${reasons.slice(0, 2).join("; ")}${reasons.length > 2 ? "; …" : ""}` : ""}`,
+        );
+    const note = `Part of the review didn't finish: ${parts.join("; and ")}. The findings it did get are included.`;
+    return { groups: n, files, reasons, models, note };
 }
 
 const ZWSP = "​";
@@ -83,6 +96,8 @@ export interface CommentInput {
     /** The branch's most urgent issues (critical and high), in priority order. */
     urgent: readonly Pick<Issue, "id" | "severity" | "path" | "startLine" | "title">[];
     gaps: ReviewGaps | null;
+    /** The models it ran with, when there were several. */
+    models?: readonly string[] | null;
     failOnCritical: boolean;
     commit: string;
     /** Links into Triagent: the branch's issues, and one issue. */
@@ -111,6 +126,11 @@ export function commentBody(c: CommentInput): string {
             lines.push("");
         }
     }
+    if (c.models && c.models.length > 1)
+        lines.push(
+            `Reviewed by ${c.models.length} models: ${c.models.map((m) => code(m)).join(", ")}. Findings show which found them.`,
+            "",
+        );
     if (c.gaps)
         lines.push(`> [!WARNING]`, `> **Partial review.** ${plain(c.gaps.note, 600)} Review it again from Triagent, or push again.`, "");
     if (c.failOnCritical && c.bySeverity.critical)

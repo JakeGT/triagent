@@ -28,7 +28,44 @@ const SORT_LABEL: Record<IssueSort, string> = {
     path: "File path",
     updated: "Recently changed",
     index: "Report order",
+    agreement: "Most models agree",
 };
+
+/** Found by at least n of the review's models: shown when it ran with several. */
+function FoundBy({ models, search, onChange }: { models: string[]; search: IssueSearch; onChange(next: IssueSearch): void }) {
+    const n = models.length;
+    const label = (k: number) => (k === n ? `All ${n} models` : `At least ${k} of ${n}`);
+    return (
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="border-dashed">
+                    Found by
+                    {search.foundBy && (
+                        <Badge variant="secondary" className="rounded-sm px-1 font-normal">
+                            {label(Math.min(search.foundBy, n))}
+                        </Badge>
+                    )}
+                </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    This review ran with {models.join(", ")}.
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                    value={String(search.foundBy ?? "")}
+                    onValueChange={(v) => onChange(withFilter(search, { foundBy: v ? Number(v) : undefined }))}
+                >
+                    <DropdownMenuRadioItem value="">Any model</DropdownMenuRadioItem>
+                    {Array.from({ length: n - 1 }, (_, i) => i + 2).map((k) => (
+                        <DropdownMenuRadioItem key={k} value={String(k)}>
+                            {label(k)}
+                        </DropdownMenuRadioItem>
+                    ))}
+                </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+        </DropdownMenu>
+    );
+}
 
 function Facet<T extends string>({
     label,
@@ -155,11 +192,14 @@ function MoreFilters({ search, onChange }: { search: IssueSearch; onChange(next:
 export function IssueFilters({
     search,
     counts,
+    models,
     onChange,
     searchRef,
 }: {
     search: IssueSearch;
     counts: Counts | undefined;
+    /** The models the review ran with, when it ran with several. */
+    models?: string[] | null;
     onChange(next: IssueSearch, options?: { replace?: boolean }): void;
     searchRef: RefObject<HTMLInputElement | null>;
 }) {
@@ -219,6 +259,7 @@ export function IssueFilters({
                 counts={counts?.category}
                 onToggle={(v) => onChange(withFilter(search, { category: toggle(search.category, v) }))}
             />
+            {models && models.length > 1 && <FoundBy models={models} search={search} onChange={onChange} />}
             <MoreFilters search={search} onChange={onChange} />
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -234,7 +275,7 @@ export function IssueFilters({
                             onChange({ ...search, sort: v === "priority" ? undefined : (v as IssueSort), page: undefined })
                         }
                     >
-                        {ISSUE_SORTS.map((s) => (
+                        {ISSUE_SORTS.filter((s) => s !== "agreement" || (models && models.length > 1)).map((s) => (
                             <DropdownMenuRadioItem key={s} value={s}>
                                 {SORT_LABEL[s]}
                             </DropdownMenuRadioItem>

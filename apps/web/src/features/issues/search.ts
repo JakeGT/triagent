@@ -30,6 +30,8 @@ export interface IssueSearch {
     needsDiscussion?: boolean;
     duplicates?: boolean;
     adjusted?: boolean;
+    /** Only findings at least this many models found (reviews run with several). */
+    foundBy?: number;
     sort?: IssueSort;
     /** From 1. */
     page?: number;
@@ -73,6 +75,8 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
         const v = flag(raw[k]);
         if (v !== undefined) out[k] = v;
     }
+    const foundBy = Number(raw.foundBy);
+    if (Number.isInteger(foundBy) && foundBy >= 2 && foundBy <= 10) out.foundBy = foundBy;
     const sort = text(raw.sort);
     if (sort && (ISSUE_SORTS as readonly string[]).includes(sort) && sort !== "priority") out.sort = sort as IssueSort;
     const page = Number(raw.page);
@@ -96,6 +100,7 @@ export function issueApiQuery(s: IssueSearch, pageSize = PAGE_SIZE): Record<stri
         needsDiscussion: bool(s.needsDiscussion),
         duplicates: bool(s.duplicates),
         adjusted: bool(s.adjusted),
+        foundBy: s.foundBy ? String(s.foundBy) : undefined,
         sort: s.sort,
         limit: String(pageSize),
         offset: s.page && s.page > 1 ? String((s.page - 1) * pageSize) : undefined,
@@ -115,6 +120,7 @@ export function activeFilters(s: IssueSearch): number {
     for (const k of ["severity", "category", "status"] as const) if (s[k]?.length) n++;
     for (const k of ["path", "q", "assignee", "task"] as const) if (s[k]) n++;
     for (const k of FLAGS) if (s[k] !== undefined) n++;
+    if (s.foundBy) n++;
     return n;
 }
 

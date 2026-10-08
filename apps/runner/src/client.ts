@@ -15,8 +15,19 @@ export interface ClaimedJob {
     headSha: string | null;
     timeoutMinutes: number;
     maxTokensBudget: number | null;
-    /** The protocol OCR speaks to the model, and this job's credentials for it. */
+    /** The protocol OCR speaks to the model, and this job's credentials for it: the first of `models`. */
     model: RunnerModel;
+    /** Every model to review with, in order, each with how people know it. */
+    models?: (RunnerModel & { label: string })[];
+}
+
+/** How one model's review went, in a job with several. */
+export interface FinishPart {
+    status: "done" | "failed" | "cancelled";
+    report?: unknown;
+    error?: string | null;
+    tokens?: number | null;
+    seconds?: number | null;
 }
 
 export interface RunnerIdentity {
@@ -85,6 +96,7 @@ export class ServerClient {
         outcome: {
             status: "done" | "failed" | "cancelled";
             report?: unknown;
+            parts?: FinishPart[];
             error?: string | null;
             headSha?: string | null;
             baseSha?: string | null;

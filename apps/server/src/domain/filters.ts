@@ -16,6 +16,8 @@ export interface IssueFilters {
     duplicates: boolean | null;
     /** Only findings whose rating someone corrected (or only ones nobody did). */
     adjusted: boolean | null;
+    /** Only findings at least this many models found (reviews run with several), or null for any. */
+    foundBy: number | null;
     ids: string[];
     sort: IssueSort;
     limit: number;
@@ -85,6 +87,10 @@ export function parseFilters(input: Input, { maxLimit = 500, defaultLimit = 50 }
         needsDiscussion: flag(get("needsDiscussion", "needs_discussion"), "needsDiscussion"),
         duplicates: flag(get("duplicates"), "duplicates"),
         adjusted: flag(get("adjusted"), "adjusted"),
+        foundBy:
+            get("foundBy", "found_by") == null || get("foundBy", "found_by") === ""
+                ? null
+                : whole(get("foundBy", "found_by"), 1, 1, 10, "foundBy"),
         ids: list(get("ids")),
         sort: oneOf([sort], ISSUE_SORTS, "sort")[0] as IssueSort,
         limit: whole(get("limit"), defaultLimit, 1, maxLimit, "limit"),
@@ -96,5 +102,6 @@ export function describeFilters(f: IssueFilters): string {
     const parts: string[] = [];
     for (const k of ["severity", "category", "status"] as const) if (f[k].length) parts.push(`${k}=${f[k].join(",")}`);
     for (const k of ["path", "q", "task", "assignee"] as const) if (f[k]) parts.push(`${k}=${f[k]}`);
+    if (f.foundBy) parts.push(`found by at least ${f.foundBy} models`);
     return parts.length ? ` for ${parts.join(", ")}` : "";
 }

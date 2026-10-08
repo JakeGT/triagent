@@ -5,7 +5,7 @@ import { CATEGORIES, type Category, DONE_STATUSES, SEVERITIES, type Severity, ST
 import { notFound } from "../errors.ts";
 import type { ActivityRow, ItemKind, Note, TriageRecord } from "../store/types.ts";
 import type { IssueFilters } from "./filters.ts";
-import { type Issue, priorityCompare, type Review, severityWeight, type Task } from "./report.ts";
+import { type Issue, type OtherFinding, priorityCompare, type Review, severityWeight, type Task } from "./report.ts";
 
 /** A finding with corrections applied. `reviewer*` hold the reviewer's own rating when it was changed. */
 export interface EffectiveIssue extends Issue {
@@ -28,6 +28,8 @@ export interface IssueSummary {
     title: string;
     hasSuggestion: boolean;
     addedBy: string | null;
+    /** The models that found it, when the review ran with several; null otherwise. */
+    foundBy: string[] | null;
     sourceUrl: string | null;
     noteCount: number;
     rev: number;
@@ -41,6 +43,8 @@ export interface IssueDetail extends IssueSummary {
     content: string;
     existingCode: string | null;
     suggestionCode: string | null;
+    /** What the other models that found it said (reviews run with several). */
+    alsoFound: OtherFinding[];
     notes: Note[];
     duplicates: { id: string; title: string; path: string; startLine: number | null }[];
     duplicateOfTitle: string | null;
@@ -160,6 +164,7 @@ export class BranchView {
             title: x.title,
             hasSuggestion: x.suggestionCode !== null,
             addedBy: x.addedBy,
+            foundBy: x.foundBy ? [...x.foundBy] : null,
             sourceUrl: this.sourceUrl(x),
             noteCount: r?.notes.length ?? 0,
             rev: r?.rev ?? 0,
@@ -177,6 +182,7 @@ export class BranchView {
             content: x.content,
             existingCode: x.existingCode,
             suggestionCode: x.suggestionCode,
+            alsoFound: [...x.alsoFound],
             notes: r?.notes ?? [],
             duplicates: this.duplicatesOf(x.id).map((id) => {
                 const d = this.issue(id) as EffectiveIssue;
@@ -220,6 +226,7 @@ export class BranchView {
             if (f.adjusted !== null && Boolean(x.reviewerSeverity || x.reviewerCategory) !== f.adjusted) return false;
             if (f.needsDiscussion !== null && Boolean(r?.needsDiscussion) !== f.needsDiscussion) return false;
             if (f.duplicates !== null && Boolean(r?.duplicateOf) !== f.duplicates) return false;
+            if (f.foundBy !== null && (x.foundBy?.length ?? 1) < f.foundBy) return false;
             if (f.assignee) {
                 const a = r?.assignee ?? null;
                 if (f.assignee === "none" ? a !== null : (a ?? "").toLowerCase() !== f.assignee.toLowerCase()) return false;
@@ -237,6 +244,7 @@ export class BranchView {
             index: (a, b) => a.index - b.index,
             path: (a, b) => a.path.localeCompare(b.path) || (a.startLine ?? 0) - (b.startLine ?? 0),
             updated: (a, b) => updated(b).localeCompare(updated(a)) || priorityCompare(a, b),
+            agreement: (a, b) => (b.foundBy?.length ?? 1) - (a.foundBy?.length ?? 1) || priorityCompare(a, b),
         };
         return out.sort(compare[f.sort]);
     }
@@ -249,6 +257,8 @@ export class BranchView {
             offset: f.offset,
             limit: f.limit,
             counts: this.counts(all),
+            /** The models the review ran with, when it ran with several (findings say which found them). */
+            models: this.review.meta.models,
             items: full ? page.map((x) => this.detail(x)) : page.map((x) => this.summary(x)),
         };
     }

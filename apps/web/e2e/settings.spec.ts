@@ -80,7 +80,8 @@ test("a viewer sees settings and issues but can't change them", async ({ page, a
         await expect(nav.getByRole("link", { name: hidden })).toHaveCount(0);
 
     await page.goto(`/w/${ws}/p/${project}/settings/automation`);
-    await expect(page.getByText(/take effect when automatic reviews arrive/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review models" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Review with several models" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Save/ })).toHaveCount(0);
 
     await page.goto(`/w/${ws}/settings/members`);

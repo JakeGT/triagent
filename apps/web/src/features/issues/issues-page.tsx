@@ -86,6 +86,7 @@ export function IssuesPage() {
     const query = useQuery(issuesQuery(ws, slug, branch, issueApiQuery(search)));
     const data = query.data;
     const items = useMemo(() => data?.items ?? [], [data]);
+    const modelCount = data?.models?.length ?? 0;
     const page = search.page ?? 1;
     const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
@@ -163,6 +164,13 @@ export function IssuesPage() {
                                 {x.path}
                                 {x.startLine ? `:${lines(x.startLine, x.endLine)}` : ""}
                             </span>
+                            {x.foundBy && modelCount > 1 && (
+                                <span className="text-xs text-muted-foreground" title={x.foundBy.join(", ")}>
+                                    Found by{" "}
+                                    {x.foundBy.length === modelCount ? `all ${modelCount} models` : `${x.foundBy.length} of ${modelCount}`}
+                                    <span className="sr-only">: {x.foundBy.join(", ")}</span>
+                                </span>
+                            )}
                         </div>
                     );
                 },
@@ -189,7 +197,7 @@ export function IssuesPage() {
             },
             { id: "flags", header: () => <span className="sr-only">Flags</span>, cell: ({ row }) => <Flags issue={row.original} /> },
         ];
-    }, [canTriage, issueId, ws, slug, detailSearch]);
+    }, [canTriage, issueId, ws, slug, detailSearch, modelCount]);
 
     const table = useReactTable({
         data: items,
@@ -267,7 +275,7 @@ export function IssuesPage() {
                         {summary && <span className="sr-only"> on branch {branch}</span>}
                     </p>
                 </div>
-                <IssueFilters search={search} counts={data?.counts} onChange={setSearch} searchRef={searchRef} />
+                <IssueFilters search={search} counts={data?.counts} models={data?.models} onChange={setSearch} searchRef={searchRef} />
                 {selectedIds.length > 0 && canTriage && (
                     <BulkBar ids={selectedIds} onClear={() => setSelection({})} refs={{ ws, project: slug, branch }} />
                 )}

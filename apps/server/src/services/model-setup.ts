@@ -55,7 +55,7 @@ export interface ModelChoice {
 
 export type SecretKind = "key" | "accessKeyId";
 
-const MODEL_NAME = /^[\w.:/@+-]{1,150}$/;
+export const MODEL_NAME = /^[\w.:/@+-]{1,150}$/;
 const FALLBACK = "openrouter";
 const INSTANCE: SecretScope = { workspaceId: null, projectId: null };
 const INSTANCE_KEY = "instance-model";
@@ -191,15 +191,16 @@ export class ModelSetup {
     }
 
     /**
-     * What the chosen provider (or `provider`) would run with now, or what it still needs (for `listing` its
-     * models, everything but a model). Reveals secrets: never return it as is.
+     * What the chosen provider (or `provider`, with `model` rather than the one chosen for it) would run
+     * with now, or what it still needs (for `listing` its models, everything but a model). Reveals
+     * secrets: never return it as is.
      */
-    async resolve(repos: Repos, place: Place, provider?: string, listing = false): Promise<Resolution> {
+    async resolve(repos: Repos, place: Place, provider?: string, listing = false, modelName?: string): Promise<Resolution> {
         const stored = await this.stored(repos, place);
         const spec = providerById(provider ?? stored.provider) as ProviderSpec;
         const opts = stored.options?.[spec.id] ?? {};
         const scope = this.scope(place);
-        const model = stored.models[spec.id] ?? defaultModel(spec);
+        const model = modelName ?? stored.models[spec.id] ?? defaultModel(spec);
         const apiKey = await this.core.secrets.reveal(repos, scope, modelKeyName(spec.id));
         const accessKeyId = spec.fields.includes("accessKeyId")
             ? await this.core.secrets.reveal(repos, scope, accessKeyIdName(spec.id))

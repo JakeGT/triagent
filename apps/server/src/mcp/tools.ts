@@ -53,6 +53,13 @@ const filterProps = {
     path: z.string().max(500).optional().describe("A file, or a folder ending in /"),
     q: z.string().max(200).optional().describe("Words that must all appear"),
     task: z.string().max(100).optional().describe("Only issues linked to this task"),
+    foundBy: z
+        .number()
+        .int()
+        .min(1)
+        .max(10)
+        .optional()
+        .describe("Only findings at least this many models found (for reviews run with several models)"),
 };
 const editProps = {
     status: z.enum(STATUSES).optional(),
@@ -101,8 +108,9 @@ const line = (x: {
     startLine: number | null;
     title: string;
     assignee?: string | null;
+    foundBy?: string[] | null;
 }) =>
-    `- ${x.id} [${x.severity}/${x.category}/${x.status}${x.assignee ? ` @${x.assignee}` : ""}] \`${x.path}${x.startLine ? `:${x.startLine}` : ""}\` — ${x.title}`;
+    `- ${x.id} [${x.severity}/${x.category}/${x.status}${x.assignee ? ` @${x.assignee}` : ""}] \`${x.path}${x.startLine ? `:${x.startLine}` : ""}\` — ${x.title}${x.foundBy ? ` (found by ${x.foundBy.join(", ")})` : ""}`;
 
 function tool(t: Tool): Tool {
     return t;

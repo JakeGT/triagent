@@ -1,11 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Info } from "lucide-react";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
 import { CheckField, Field, FieldError, NativeSelect } from "@/components/field";
 import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -13,7 +11,8 @@ import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
 import { automationQuery, keys } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
-import type { Automation } from "@/lib/types";
+import type { Automation, ModelRef } from "@/lib/types";
+import { ProjectModels } from "./project-models";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
@@ -29,6 +28,7 @@ interface Form {
     reviewTimeoutMinutes: string;
     fullScanTimeoutMinutes: string;
     reviewPullRequestsFrom: Automation["reviewPullRequestsFrom"];
+    models: ModelRef[];
 }
 
 const toForm = (a: Automation): Form => ({
@@ -41,6 +41,7 @@ const toForm = (a: Automation): Form => ({
     reviewTimeoutMinutes: String(a.reviewTimeoutMinutes),
     fullScanTimeoutMinutes: String(a.fullScanTimeoutMinutes),
     reviewPullRequestsFrom: a.reviewPullRequestsFrom,
+    models: a.models ?? [],
 });
 
 function fromForm(f: Form): Automation {
@@ -59,6 +60,11 @@ function fromForm(f: Form): Automation {
         reviewTimeoutMinutes: whole("Review time limit", f.reviewTimeoutMinutes, 5, 720),
         fullScanTimeoutMinutes: whole("Full scan time limit", f.fullScanTimeoutMinutes, 5, 720),
         reviewPullRequestsFrom: f.reviewPullRequestsFrom,
+        models: f.models.map((m, i) => {
+            const model = m.model.trim();
+            if (!model) throw new Error(`Give model ${i + 1} a name, or remove it.`);
+            return { provider: m.provider, model };
+        }),
     };
 }
 
@@ -102,13 +108,6 @@ export function ProjectAutomation() {
     const set = (patch: Partial<Form>) => d && form.setDraft({ ...d, ...patch });
     return (
         <SettingsPage title="Automation" description={`How ${project.name} is reviewed automatically.`}>
-            <Alert role="note">
-                <Info />
-                <AlertTitle>These settings take effect when automatic reviews arrive</AlertTitle>
-                <AlertDescription>
-                    Triagent doesn't run reviews by itself yet. You can set them now; they'll be used once automatic reviews are available.
-                </AlertDescription>
-            </Alert>
             {query.isError ? (
                 <LoadError error={query.error} onRetry={() => query.refetch()} />
             ) : !d ? (
@@ -123,6 +122,9 @@ export function ProjectAutomation() {
                 >
                     {!editable && <ReadOnlyNote />}
                     <ChangedElsewhere show={form.changedElsewhere} onReload={form.reload} what="These settings" />
+                    <SettingsSection title="Review models">
+                        <ProjectModels ws={ws} value={d.models} disabled={!editable} onChange={(models) => set({ models })} />
+                    </SettingsSection>
                     <SettingsSection title="Pull requests">
                         <Toggle
                             label="Review pull requests automatically"

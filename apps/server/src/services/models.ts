@@ -13,15 +13,19 @@
 // The result says which of OCR's protocols to use and carries everything OCR needs for it (services/
 // model-setup.ts): a URL and key, or for Amazon Bedrock a region and an AWS access key.
 
+import { modelLabels } from "../domain/merge.ts";
 import type { Repos, ReviewRecord, Workspace } from "../store/types.ts";
 import { type Allowances, nextMonthStart, resetDay } from "./allowances.ts";
 import type { Core } from "./core.ts";
 import type { History } from "./history.ts";
 import { ModelSetup, type ResolvedModel } from "./model-setup.ts";
-import { MIN_TOKENS_BUDGET } from "./settings.ts";
+import { providerById } from "./providers.ts";
+import { type Automation, MIN_TOKENS_BUDGET } from "./settings.ts";
 
 export interface RunModel extends ResolvedModel {
     ready: true;
+    /** How people know it in a review run with several models (domain/merge.ts). */
+    label: string;
     keySource: NonNullable<ReviewRecord["keySource"]>;
     /**
      * With the instance key: the month's allowance, the tokens used, the budgets of its reviews running
@@ -57,7 +61,7 @@ export class Models {
     /** What a review in `workspace` would run with now, or why it can't run yet. */
     async forRun(workspace: Workspace, repos: Repos = this.core.store): Promise<RunModel | NotReady> {
         const own = await this.setup.resolve(repos, { kind: "workspace", workspace });
-        if (own.ready) return { ...own.model, ready: true, keySource: "workspace" };
+        if (own.ready) return { ...own.model, ready: true, label: own.model.model, keySource: "workspace" };
 
         const addKey = `Add ${own.missing} in Settings → Review model & keys.`;
         if (!this.allowances || !this.history) return { ready: false, reason: addKey };
@@ -92,9 +96,38 @@ export class Models {
         return {
             ...instance.model,
             ready: true,
+            label: instance.model.model,
             keySource: "instance",
             allowance: { monthlyTokens: grant.monthlyTokens, used, reserved, remaining, resetsAt: nextMonthStart(now).toISOString() },
         };
+    }
+
+    /**
+     * The models a project's reviews run with now, in order, or why they can't run yet. With none listed
+     * in its settings, the workspace's model (`forRun`); otherwise each listed model, with the
+     * workspace's key for its provider.
+     */
+    async forProject(
+        workspace: Workspace,
+        automation: Pick<Automation, "models">,
+        repos: Repos = this.core.store,
+    ): Promise<{ ready: true; models: RunModel[] } | NotReady> {
+        if (!automation.models.length) {
+            const one = await this.forRun(workspace, repos);
+            return one.ready ? { ready: true, models: [one] } : one;
+        }
+        const labels = modelLabels(automation.models, (id) => providerById(id)?.name ?? id);
+        const models: RunModel[] = [];
+        for (const [i, m] of automation.models.entries()) {
+            const r = await this.setup.resolve(repos, { kind: "workspace", workspace }, m.provider, false, m.model);
+            if (!r.ready)
+                return {
+                    ready: false,
+                    reason: `Add ${r.missing} in Settings → Review model & keys: this project's reviews use ${labels[i]}. Or take it out of the project's review settings.`,
+                };
+            models.push({ ...r.model, ready: true, label: labels[i] as string, keySource: "workspace" });
+        }
+        return { ready: true, models };
     }
 
     /** Why a model's person-given URL can't be used now (see services/model-urls.ts), or null. */

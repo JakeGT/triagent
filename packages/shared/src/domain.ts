@@ -12,7 +12,8 @@ export type Status = (typeof STATUSES)[number];
 /** Statuses that count as dealt with. */
 export const DONE_STATUSES: ReadonlySet<Status> = new Set(["resolved", "wont_fix"]);
 
-export const ISSUE_SORTS = ["priority", "path", "severity", "updated", "index"] as const;
+/** "agreement": found by the most models first (reviews run with several), then by priority. */
+export const ISSUE_SORTS = ["priority", "path", "severity", "updated", "index", "agreement"] as const;
 export type IssueSort = (typeof ISSUE_SORTS)[number];
 
 /** What a report covers: the whole codebase, or only a pull request's or branch's changes. */

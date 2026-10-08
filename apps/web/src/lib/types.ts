@@ -140,6 +140,8 @@ export interface IssueSummary {
     title: string;
     hasSuggestion: boolean;
     addedBy: string | null;
+    /** The models that found it, when the review ran with several; null otherwise. */
+    foundBy: string[] | null;
     sourceUrl: string | null;
     noteCount: number;
     rev: number;
@@ -149,10 +151,22 @@ export interface IssueSummary {
     updatedAt: string | null;
 }
 
+export interface OtherFinding {
+    model: string;
+    severity: Severity | null;
+    category: Category | null;
+    startLine: number | null;
+    endLine: number | null;
+    content: string;
+    suggestionCode: string | null;
+}
+
 export interface IssueDetail extends IssueSummary {
     content: string;
     existingCode: string | null;
     suggestionCode: string | null;
+    /** What the other models that found it said (reviews run with several). */
+    alsoFound: OtherFinding[];
     notes: Note[];
     duplicates: { id: string; title: string; path: string; startLine: number | null }[];
     duplicateOfTitle: string | null;
@@ -167,6 +181,8 @@ export interface Counts {
 }
 
 export interface IssueList {
+    /** The models the review ran with, when it ran with several. */
+    models?: string[] | null;
     branch: string;
     total: number;
     offset: number;
@@ -241,6 +257,8 @@ export interface ReviewMeta {
     llm: unknown;
     summary: unknown;
     warnings: { file: string; message: string; type: string }[];
+    /** The models the review ran with, when it ran with several. */
+    models: string[] | null;
 }
 
 export interface ActivityRow {
@@ -335,6 +353,13 @@ export interface Automation {
     reviewTimeoutMinutes: number;
     fullScanTimeoutMinutes: number;
     reviewPullRequestsFrom: "collaborators" | "everyone";
+    /** The models reviews run with, in order; empty for the workspace's model. */
+    models: ModelRef[];
+}
+
+export interface ModelRef {
+    provider: string;
+    model: string;
 }
 
 export interface GithubSettings {
@@ -413,6 +438,8 @@ export interface RunProgress {
     roundsFailed?: number;
     toolCalls?: number;
     toolFailures?: number;
+    /** With several models: which one is reviewing now, e.g. "gpt-5 (2 of 3)". */
+    model?: string;
 }
 
 export interface Run {
@@ -438,15 +465,32 @@ export interface Run {
     result: {
         total: number | null;
         bySeverity: Record<Severity, number> | null;
-        gaps: { groups: number; files: string[]; reasons: string[]; note: string } | null;
+        gaps: { groups: number; files: string[]; reasons: string[]; models?: string[]; note: string } | null;
         counts: { added: number; carriedOver: number; removed: number; reopened: number } | null;
         tokens: { input: number; output: number; cacheRead: number; total: number } | null;
         github?: string[];
+        /** A review run with several models: how each went. */
+        models?: {
+            label: string;
+            provider: string;
+            model: string;
+            status: "done" | "partial" | "failed" | "cancelled";
+            total: number | null;
+            tokens: number | null;
+            seconds: number | null;
+            error: string | null;
+        }[];
         /** A made-up run in the tutorial's example project: nothing ran. */
         example?: boolean;
     } | null;
     error: string | null;
-    model: { provider: string; model: string; keySource: "workspace" | "instance" } | null;
+    model: {
+        provider: string;
+        model: string;
+        keySource: "workspace" | "instance";
+        /** Every model, when it runs with several. */
+        models?: { provider: string; model: string; label: string }[];
+    } | null;
     log: { lines: number; dropped: number };
     /** For a queued run: why it hasn't started. */
     waiting?: string | null;

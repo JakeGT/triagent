@@ -11,6 +11,7 @@ import type { Severity } from "@triagent/shared";
 import { modelSecrets, type RunnerModel } from "@triagent/shared/model";
 import { redactDeep, redactor } from "@triagent/shared/redact";
 import { parseFilters } from "../domain/filters.ts";
+import { type ModelReport, mergeReports } from "../domain/merge.ts";
 import { isValidBranch } from "../domain/names.ts";
 import type { RawReport } from "../domain/report.ts";
 import { reportMetrics } from "../domain/review-metrics.ts";
@@ -31,7 +32,7 @@ import type { Actor, Core } from "./core.ts";
 import type { CommitState, Pull } from "./github/client.ts";
 import { COMMENT_MARKER, type Github, NotConnected, RepositoryChanged, sameRepository } from "./github/service.ts";
 import type { History } from "./history.ts";
-import type { Models } from "./models.ts";
+import type { Models, RunModel } from "./models.ts";
 import type { Reports } from "./reports.ts";
 import type { Settings } from "./settings.ts";
 
@@ -74,9 +75,21 @@ export interface RunnerHello {
     slots: number;
 }
 
+/** How one model's review went, in a run with several (in the order the job gave them). */
+export interface FinishPart {
+    status: "done" | "failed" | "cancelled";
+    report?: unknown;
+    error?: string | null;
+    /** The most tokens OCR said it used while running. */
+    tokens?: number | null;
+    seconds?: number | null;
+}
+
 export interface FinishInput {
     status: "done" | "failed" | "cancelled";
     report?: unknown;
+    /** A run with several models: how each went. `report` is unused then; the server merges these. */
+    parts?: FinishPart[];
     error?: string | null;
     headSha?: string | null;
     baseSha?: string | null;
@@ -102,8 +115,10 @@ export interface ClaimedJob {
     headSha: string | null;
     timeoutMinutes: number;
     maxTokensBudget: number | null;
-    /** The protocol OCR speaks to the model and this job's credentials for it. */
+    /** The protocol OCR speaks to the model and this job's credentials for it: the first of `models`. */
     model: RunnerModel;
+    /** Every model to review with, in order, each with how people know it. One, unless the project lists several. */
+    models: (RunnerModel & { label: string })[];
 }
 
 type View = ReturnType<Runs["view"]>;
@@ -164,6 +179,7 @@ const PROGRESS_KEYS = new Set([
     "toolFailures",
     "message",
     "tokens",
+    "model",
 ]);
 
 /** Only what the progress view shows, bounded, its text redacted like the log. */
@@ -204,9 +220,44 @@ export function runTokens(reported: Tokens | null, said: unknown): Tokens | null
     return { ...reported, input: reported.input + (seen - reported.total), total: seen };
 }
 
+/** One model's outcome in a run with several. */
+interface Part {
+    provider: string;
+    model: string;
+    label: string;
+    status: "done" | "partial" | "failed" | "cancelled";
+    report: RawReport | null;
+    metrics: ReturnType<typeof reportMetrics> | null;
+    tokens: Tokens | null;
+    seconds: number | null;
+    error: string | null;
+}
+
+/** Tokens added up across models; null when none of them said. */
+export function sumTokens(list: readonly (Tokens | null)[]): Tokens | null {
+    const known = list.filter((t): t is Tokens => t !== null);
+    if (!known.length) return null;
+    return known.reduce((a, t) => ({
+        input: a.input + t.input,
+        output: a.output + t.output,
+        cacheRead: a.cacheRead + t.cacheRead,
+        total: a.total + t.total,
+    }));
+}
+
 /** Why a queued review won't start: its project now uses another repository. */
 const movedOn = (job: Pick<Job, "repository">, now: string) =>
     `This project now uses ${now}, but this review was queued for ${job.repository?.fullName}. Start it again to review ${now}.`;
+
+/** Only what a runner needs of a model: never the rest of what the server knows about it. */
+const forRunner = (m: RunModel): RunnerModel => ({
+    provider: m.provider,
+    protocol: m.protocol,
+    url: m.url,
+    model: m.model,
+    apiKey: m.apiKey,
+    ...(m.aws ? { aws: m.aws } : {}),
+});
 
 const seconds = (from: string | null, to: string | null) =>
     from && to ? Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 1000)) : undefined;
@@ -294,9 +345,11 @@ export class Runs {
         return (await this.store.runners.list()).filter((r) => t - Date.parse(r.lastSeenAt) < RUNNER_GONE_MS);
     }
 
-    /** Whether reviews in the workspace can start now, and if not, why. */
-    async readiness(workspace: Workspace): Promise<{ ready: boolean; reason: string | null }> {
-        const model = await this.models.forRun(workspace);
+    /** Whether reviews in the workspace (in one project, if given: it may list its own models) can start now, and if not, why. */
+    async readiness(workspace: Workspace, project?: Project): Promise<{ ready: boolean; reason: string | null }> {
+        const model = project
+            ? await this.models.forProject(workspace, await this.settings.automation(this.store, project))
+            : await this.models.forRun(workspace);
         if (!model.ready) return { ready: false, reason: model.reason };
         if (!this.core.config.runnerSecret)
             return { ready: false, reason: "No runner can connect: the server has no TRIAGENT_RUNNER_SECRET set." };
@@ -312,17 +365,24 @@ export class Runs {
     async list(workspace: Workspace, filter: { projectId?: string; limit?: number; runnerDetails?: boolean } = {}) {
         const projects = await this.slugs(workspace.id);
         const active = (await this.store.jobs.active()).filter((j) => j.workspaceId === workspace.id);
-        const readiness = await this.readiness(workspace);
+        const only = filter.projectId ? projects.get(filter.projectId) : undefined;
+        const readiness = await this.readiness(workspace, only);
+        // Each queued review waits on its own project's models.
+        const reasons = new Map<string, string | null>();
+        for (const j of active) {
+            const p = projects.get(j.projectId);
+            if (j.status !== "queued" || reasons.has(j.projectId) || !p) continue;
+            reasons.set(j.projectId, (await this.readiness(workspace, p)).reason);
+        }
         const cfg = this.core.config;
         const allRunning = (await this.store.jobs.active()).filter((j) => j.status === "running").length;
         const wsRunning = active.filter((j) => j.status === "running").length;
-        const waiting =
-            readiness.reason ??
-            (wsRunning >= cfg.reviewConcurrencyPerWorkspace
+        const busy =
+            wsRunning >= cfg.reviewConcurrencyPerWorkspace
                 ? "Waiting for this workspace's running review to finish."
                 : allRunning >= cfg.reviewConcurrency
                   ? "Waiting for a free slot: the instance is running as many reviews as it allows."
-                  : "Waiting for a runner to pick it up.");
+                  : "Waiting for a runner to pick it up.";
         const mine = (j: Job) => !filter.projectId || j.projectId === filter.projectId;
         const runners = await this.connectedRunners();
         const recent = (
@@ -346,7 +406,7 @@ export class Runs {
             running: active.filter((j) => j.status === "running" && mine(j)).map((j) => this.view(j, projects.get(j.projectId) ?? null)),
             queued: active
                 .filter((j) => j.status === "queued" && mine(j))
-                .map((j) => this.view(j, projects.get(j.projectId) ?? null, waiting)),
+                .map((j) => this.view(j, projects.get(j.projectId) ?? null, reasons.get(j.projectId) ?? busy)),
             recent,
             counts: {
                 running: active.filter((j) => j.status === "running" && mine(j)).length,
@@ -489,7 +549,7 @@ export class Runs {
             const job = created.job;
             this.background(`Marking ${job.title} as queued on GitHub`, async () => {
                 const workspace = await this.store.workspaces.get(project.workspaceId);
-                const ready = workspace ? await this.readiness(workspace) : { ready: false, reason: null };
+                const ready = workspace ? await this.readiness(workspace, project) : { ready: false, reason: null };
                 await this.github.setStatus(
                     project,
                     job.headSha as string,
@@ -578,11 +638,14 @@ export class Runs {
                 if ((runningIn.get(workspaceId) ?? 0) >= cfg.reviewConcurrencyPerWorkspace) continue;
                 const workspace = await tx.workspaces.get(workspaceId);
                 if (!workspace) continue;
-                const model = await this.models.forRun(workspace, tx);
-                if (!model.ready) continue;
                 for (const job of queuedIn.get(workspaceId) ?? []) {
                     const project = await tx.projects.get(job.projectId);
                     if (!project) continue;
+                    // Which models depends on the project; a job whose models aren't ready waits (the list says why).
+                    const automation = await this.settings.automation(tx, project);
+                    const chosen = await this.models.forProject(workspace, automation, tx);
+                    if (!chosen.ready) continue;
+                    const model = chosen.models[0] as RunModel;
                     let notConnected: string | null = null;
                     try {
                         const access = await this.github.githubFor(project, tx);
@@ -597,7 +660,6 @@ export class Runs {
                         this.store.afterCommit(() => this.announce(failed, project, "finished"));
                         continue;
                     }
-                    const automation = await this.settings.automation(tx, project);
                     // With the instance key, this comes out of what's left of the allowance until the run ends.
                     const maxTokensBudget = budget(automation.maxTokensBudget, model.allowance?.remaining ?? null);
                     const started: Job = {
@@ -606,17 +668,25 @@ export class Runs {
                         startedAt: now(),
                         runnerId: runner.id,
                         leaseExpiresAt: new Date(Date.now() + LEASE_SECONDS * 1000).toISOString(),
-                        model: { provider: model.provider, model: model.model, keySource: model.keySource, budget: maxTokensBudget },
+                        model: {
+                            provider: model.provider,
+                            model: model.model,
+                            keySource: model.keySource,
+                            budget: maxTokensBudget,
+                            ...(chosen.models.length > 1
+                                ? { models: chosen.models.map((m) => ({ provider: m.provider, model: m.model, label: m.label })) }
+                                : {}),
+                        },
                         progress: { phase: "starting" },
                     };
                     await tx.jobs.put(started);
-                    return { job: started, project, workspace, model, automation, maxTokensBudget };
+                    return { job: started, project, workspace, models: chosen.models, automation, maxTokensBudget };
                 }
             }
             return null;
         });
         if (!picked) return null;
-        const { job, project, workspace, model, automation, maxTokensBudget } = picked;
+        const { job, project, workspace, models, automation, maxTokensBudget } = picked;
 
         // Credentials for this job only, minted now (outside the transaction: it calls GitHub).
         let token: string;
@@ -638,14 +708,17 @@ export class Runs {
             return null;
         }
         // A URL someone typed in (a custom server, Azure) may resolve somewhere else by now: check it again.
-        const unsafe = await this.models.recheck(model).catch((err: Error) => `Couldn't check the model's URL: ${err.message}`);
+        let unsafe: string | null = null;
+        for (const m of models) {
+            unsafe ??= await this.models.recheck(m).catch((err: Error) => `Couldn't check the model's URL: ${err.message}`);
+        }
         if (unsafe) {
             await this.conclude(job.id, runner.id, { status: "failed", error: unsafe });
             if (revoke) this.revoke(job, token);
             return null;
         }
         const scope = { workspaceId: job.workspaceId, projectId: job.projectId };
-        const credentials: JobCredentials = { secrets: [token, ...modelSecrets(model)], revoke: revoke ? token : null };
+        const credentials: JobCredentials = { secrets: [token, ...models.flatMap((m) => modelSecrets(m))], revoke: revoke ? token : null };
         const sealed = this.core.secrets.seal(JSON.stringify(credentials), scope, `job:${job.id}`);
         const stillOurs = await this.store.transaction(async (tx) => {
             const current = await tx.jobs.get(job.id);
@@ -683,14 +756,8 @@ export class Runs {
             headSha: job.headSha,
             timeoutMinutes: job.kind === "full" ? automation.fullScanTimeoutMinutes : automation.reviewTimeoutMinutes,
             maxTokensBudget,
-            model: {
-                provider: model.provider,
-                protocol: model.protocol,
-                url: model.url,
-                model: model.model,
-                apiKey: model.apiKey,
-                ...(model.aws ? { aws: model.aws } : {}),
-            },
+            model: forRunner(models[0] as RunModel),
+            models: models.map((m) => ({ ...forRunner(m), label: m.label })),
         };
     }
 
@@ -819,24 +886,69 @@ export class Runs {
      * review), the review history, the job itself and an activity row. GitHub hears about it afterwards.
      */
     private async conclude(jobId: string, runnerId: string | null, input: FinishInput, opts: { lost?: boolean } = {}): Promise<Job | null> {
-        const redact = await this.store.jobs.get(jobId).then((j) => (j ? this.redactionsFor(j) : CLEAN_ONLY));
+        const known = await this.store.jobs.get(jobId);
+        const redact = known ? await this.redactionsFor(known) : CLEAN_ONLY;
         const clean = (s: string | null | undefined) => (s ? redact(String(s)).slice(0, 2000) : null);
         const sha = (s: unknown) => (typeof s === "string" && /^[0-9a-f]{40}$/i.test(s) ? s.toLowerCase() : null);
-        // Every string in the report is redacted before anything reads it: it's stored, and parts of it
+        // Every string in a report is redacted before anything reads it: it's stored, and parts of it
         // (warnings, file names) are posted on GitHub. OCR writes "comments": null when it found nothing.
+        const readReport = (given: unknown): RawReport | null => {
+            const raw = redactDeep(given, redact);
+            const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as RawReport) : null;
+            return obj && (Array.isArray(obj.comments) || obj.comments === null || obj.comments === undefined)
+                ? { ...obj, comments: obj.comments ?? [] }
+                : null;
+        };
         let report: RawReport | null = null;
         let metrics: ReturnType<typeof reportMetrics> | null = null;
         let gaps: ReturnType<typeof reviewGaps> = null;
         let unreadable: string | null = null;
+        // A run with several models: each model's own outcome (in the job's order), and one merged report.
+        const listed = known?.model?.models && known.model.models.length > 1 ? known.model.models : null;
+        let parts: Part[] | null = null;
         try {
-            const given = redactDeep(input.report, redact);
-            const raw = given && typeof given === "object" && !Array.isArray(given) ? (given as RawReport) : null;
-            report =
-                raw && (Array.isArray(raw.comments) || raw.comments === null || raw.comments === undefined)
-                    ? { ...raw, comments: raw.comments ?? [] }
-                    : null;
-            metrics = report ? reportMetrics(report) : null;
-            gaps = report ? reviewGaps(report) : null;
+            if (listed) {
+                parts = listed.map((m, i) => {
+                    const given = Array.isArray(input.parts) ? input.parts[i] : undefined;
+                    // A failed model's report (if any) still says what it used; only a finished one's findings count.
+                    let sent: RawReport | null = null;
+                    let error = clean(given?.error);
+                    try {
+                        sent = given?.report === undefined ? null : readReport(given.report);
+                    } catch (err) {
+                        error = `Its report couldn't be read: ${clean((err as Error).message)}`;
+                    }
+                    const own = given?.status === "done" ? sent : null;
+                    if (given?.status === "done" && !own) error ??= "It finished without a report.";
+                    const partMetrics = sent ? reportMetrics(sent) : null;
+                    const status: Part["status"] = own
+                        ? reviewGaps(own)
+                            ? "partial"
+                            : "done"
+                        : given?.status === "cancelled"
+                          ? "cancelled"
+                          : "failed";
+                    const time = Number(given?.seconds);
+                    return {
+                        ...m,
+                        status,
+                        report: own,
+                        metrics: partMetrics,
+                        tokens: runTokens(partMetrics?.tokens ?? null, given?.tokens),
+                        seconds: Number.isFinite(time) && time >= 0 ? Math.round(time) : null,
+                        error: own ? null : (error ?? (given ? "It failed." : "It didn't run.")),
+                    };
+                });
+                if (parts.some((p) => p.report)) {
+                    report = mergeReports(parts.map((p): ModelReport => ({ label: p.label, report: p.report, error: p.error })));
+                    metrics = reportMetrics(report);
+                    gaps = reviewGaps(report);
+                } else unreadable = `No model finished: ${parts.map((p) => `${p.label}: ${p.error}`).join(" ")}`.slice(0, 2000);
+            } else {
+                report = readReport(input.report);
+                metrics = report ? reportMetrics(report) : null;
+                gaps = report ? reviewGaps(report) : null;
+            }
         } catch (err) {
             report = null;
             unreadable = `The runner sent a report that couldn't be read: ${clean((err as Error).message)}`;
@@ -859,7 +971,8 @@ export class Runs {
                 const finishedAt = now();
                 // Every instance-key run counts against the allowance: with no figure at all (stopped, cancelled
                 // or lost without a word from OCR), the whole budget it was given, marked as an estimate.
-                let tokens = runTokens(metrics?.tokens ?? null, held.progress.tokens);
+                // Several models: what they used between them (the merged report's own figure is the first model's).
+                let tokens = parts ? sumTokens(parts.map((p) => p.tokens)) : runTokens(metrics?.tokens ?? null, held.progress.tokens);
                 const estimated = !tokens && held.model?.keySource === "instance" && Boolean(held.model.budget);
                 if (estimated) {
                     const b = held.model?.budget as number;
@@ -905,6 +1018,14 @@ export class Runs {
                             ? `Cancelled by ${held.cancelRequested.by}.`
                             : (error ?? "Cancelled.")
                         : error;
+                const common = {
+                    ...(held.pr ? { prNumber: held.pr.number } : {}),
+                    commit: headSha,
+                    requestedBy: held.source === "automation" ? "automation" : held.requestedBy.name,
+                    queuedAt: held.queuedAt,
+                    ...(held.startedAt ? { startedAt: held.startedAt } : {}),
+                    queueSeconds: seconds(held.queuedAt, held.startedAt) ?? 0,
+                };
                 const result = {
                     total: metrics?.findings.total ?? null,
                     bySeverity: metrics?.findings.bySeverity ?? null,
@@ -915,6 +1036,20 @@ export class Runs {
                     filesReviewed: metrics?.files?.reviewed ?? null,
                     ocrVersion: metrics?.ocrVersion ?? null,
                     seconds: seconds(held.startedAt, finishedAt) ?? null,
+                    ...(parts
+                        ? {
+                              models: parts.map((p) => ({
+                                  label: p.label,
+                                  provider: p.provider,
+                                  model: p.model,
+                                  status: p.status,
+                                  total: p.report ? (p.metrics?.findings.total ?? null) : null,
+                                  tokens: p.tokens?.total ?? null,
+                                  seconds: p.seconds,
+                                  error: p.error,
+                              })),
+                          }
+                        : {}),
                 };
                 const { current: _c, round: _r, ...progress } = held.progress;
                 const next: Job = {
@@ -930,7 +1065,7 @@ export class Runs {
                     progress: { ...progress, phase: final === "done" || final === "partial" ? "finished" : final },
                 };
                 await w.tx.jobs.put(next);
-                if (held.startedAt)
+                if (held.startedAt && !parts)
                     await this.history.record(w.tx, {
                         workspaceId: held.workspaceId,
                         projectId: held.projectId,
@@ -945,13 +1080,8 @@ export class Runs {
                         tokens,
                         details: {
                             ...(estimated ? { estimatedTokens: true } : {}),
-                            ...(held.pr ? { prNumber: held.pr.number } : {}),
-                            commit: headSha,
-                            requestedBy: held.source === "automation" ? "automation" : held.requestedBy.name,
+                            ...common,
                             ocrVersion: metrics?.ocrVersion ?? null,
-                            queuedAt: held.queuedAt,
-                            startedAt: held.startedAt,
-                            queueSeconds: seconds(held.queuedAt, held.startedAt) ?? 0,
                             runSeconds: seconds(held.startedAt, finishedAt) ?? 0,
                             ...(metrics ? { findings: metrics.findings } : {}),
                             ...(counts ? { counts } : {}),
@@ -962,6 +1092,42 @@ export class Runs {
                             error: errorText,
                         },
                     });
+                // Several models: a record each (for comparing them), grouped by the scan; the lead carries the branch's changes.
+                if (held.startedAt && parts) {
+                    const scan = {
+                        id: held.id,
+                        models: parts.map((p) => p.label),
+                        status: final as "done" | "partial" | "failed" | "cancelled",
+                        findings: metrics?.findings.total ?? null,
+                    };
+                    for (const [i, p] of parts.entries())
+                        await this.history.record(w.tx, {
+                            workspaceId: held.workspaceId,
+                            projectId: held.projectId,
+                            branch: held.branch,
+                            at: finishedAt,
+                            source: "run",
+                            kind: held.kind,
+                            status: final === "cancelled" && p.status === "failed" ? "cancelled" : p.status,
+                            model: p.model,
+                            provider: p.provider,
+                            keySource: "workspace",
+                            tokens: p.tokens,
+                            details: {
+                                ...common,
+                                ocrVersion: p.metrics?.ocrVersion ?? null,
+                                runSeconds: p.seconds ?? 0,
+                                ...(p.report && p.metrics ? { findings: p.metrics.findings } : {}),
+                                ...(i === 0 && counts ? { counts } : {}),
+                                files: { ...(p.metrics?.files ?? {}), failedGroups: p.metrics?.files?.failedGroups ?? 0 },
+                                ...(p.metrics?.toolCalls ? { toolCalls: p.metrics.toolCalls } : {}),
+                                ...(p.metrics?.llm ? { llm: p.metrics.llm } : {}),
+                                ...(i === 0 && addedIds ? { addedIds } : {}),
+                                error: p.error ?? (i === 0 ? errorText : null),
+                                scan: { ...scan, lead: i === 0 },
+                            },
+                        });
+                }
                 await w.activity(
                     {
                         workspaceId: held.workspaceId,
@@ -1132,6 +1298,7 @@ export class Runs {
                         bySeverity,
                         urgent,
                         gaps: (job.result?.gaps as never) ?? null,
+                        models: job.model?.models?.map((m) => m.label) ?? null,
                         failOnCritical,
                         commit: sha,
                         issuesUrl: this.issuesUrl(workspace, project, job.branch),

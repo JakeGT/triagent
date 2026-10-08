@@ -467,6 +467,38 @@ function IssueView({ id }: { id: string }) {
                 </section>
 
                 <CodeView existing={issue.existingCode} suggestion={issue.suggestionCode} startLine={issue.startLine} />
+
+                {issue.foundBy && (
+                    <section aria-labelledby="found-by-heading" className="grid gap-1.5" data-testid="found-by">
+                        <h3 id="found-by-heading" className="text-sm font-medium">
+                            Found by {issue.foundBy.length === 1 ? "one model" : `${issue.foundBy.length} models`}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                            {issue.foundBy.join(", ")}. The finding above is {issue.foundBy[0]}'s
+                            {issue.alsoFound.length ? "; what the others said is below." : "."}
+                        </p>
+                        {issue.alsoFound.map((o) => (
+                            <details key={o.model} className="group rounded-md border bg-background">
+                                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm [&::-webkit-details-marker]:hidden">
+                                    <ChevronDown
+                                        className="size-4 shrink-0 -rotate-90 transition-transform group-open:rotate-0"
+                                        aria-hidden="true"
+                                    />
+                                    <span className="font-medium">What {o.model} said</span>
+                                    <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                                        {o.severity && <SeverityMark severity={o.severity} />}
+                                        {o.category && <CategoryMark category={o.category} />}
+                                        {o.startLine ? <span className="font-mono">line {lines(o.startLine, o.endLine)}</span> : null}
+                                    </span>
+                                </summary>
+                                <div className="grid gap-3 border-t px-3 py-2">
+                                    <Markdown>{o.content}</Markdown>
+                                    {o.suggestionCode && <CodeView existing={null} suggestion={o.suggestionCode} startLine={o.startLine} />}
+                                </div>
+                            </details>
+                        ))}
+                    </section>
+                )}
             </div>
 
             {issue.duplicates.length > 0 && (

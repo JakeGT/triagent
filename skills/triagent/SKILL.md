@@ -27,6 +27,7 @@ Rules:
 - If `update_issue` says someone else changed the issue, read the current version it returns before trying again.
 - If the reviewer's rating is wrong, correct it with `severity` or `category` and a note; the original is kept.
 - Several findings fixed by one commit: `bulk_update_issues`.
+- Reviews run with several models say which found each finding ("found by"). To start with the ones they agree on, pass `foundBy: 2` to `claim_next_issue` or `list_issues`.
 
 ## Upload a report
 

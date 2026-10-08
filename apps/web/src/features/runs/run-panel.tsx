@@ -120,12 +120,37 @@ function RunDetailView({ runId }: { runId: string }) {
                 <dd>
                     {r.source === "automation" ? "Automatically" : `By ${r.requestedBy.name}`}, {formatDateTime(r.queuedAt)}
                 </dd>
-                {r.model && (
+                {r.model && !r.model.models && (
                     <>
                         <dt className="text-muted-foreground">Model</dt>
                         <dd>
                             {r.model.model} (
                             {r.model.keySource === "instance" ? "the instance's key" : `the workspace's ${r.model.provider} key`})
+                        </dd>
+                    </>
+                )}
+                {r.model?.models && (
+                    <>
+                        <dt className="text-muted-foreground">Models</dt>
+                        <dd>
+                            {r.result?.models ? (
+                                <ul className="grid gap-0.5" data-testid="run-models">
+                                    {r.result.models.map((m) => (
+                                        <li key={m.label}>
+                                            <span className="font-mono text-xs">{m.label}</span>:{" "}
+                                            {m.status === "done" || m.status === "partial"
+                                                ? `${plural(m.total ?? 0, "finding")}${m.status === "partial" ? " (partly)" : ""}`
+                                                : m.status === "cancelled"
+                                                  ? "cancelled"
+                                                  : `failed${m.error ? ` (${m.error})` : ""}`}
+                                            {m.tokens !== null && `, ${m.tokens.toLocaleString("en-GB")} tokens`}
+                                            {m.seconds !== null && `, ${duration(m.seconds)}`}
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                `${r.model.models.map((m) => m.label).join(", ")}, in turn, each with the workspace's key for its provider`
+                            )}
                         </dd>
                     </>
                 )}

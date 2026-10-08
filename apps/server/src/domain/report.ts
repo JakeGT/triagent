@@ -15,6 +15,10 @@ export interface RawComment {
     suggestion_code?: string | null;
     added_by?: string;
     added_at?: string;
+    /** A review run with several models (domain/merge.ts): the models that found it, the lead first. */
+    found_by?: unknown;
+    /** …and what the other models said about it. */
+    also?: unknown;
 }
 
 export interface RawReport {
@@ -26,6 +30,8 @@ export interface RawReport {
     summary?: unknown;
     warnings?: unknown;
     tool_calls?: unknown;
+    /** A review run with several models: those that produced a report, in order. */
+    models?: unknown;
     [key: string]: unknown;
 }
 
@@ -54,6 +60,20 @@ export interface Issue {
     readonly existingCode: string | null;
     readonly suggestionCode: string | null;
     readonly addedBy: string | null;
+    /** The models that found it, when the review ran with several; null otherwise. */
+    readonly foundBy: readonly string[] | null;
+    /** What the other models that found it said. */
+    readonly alsoFound: readonly OtherFinding[];
+}
+
+export interface OtherFinding {
+    readonly model: string;
+    readonly severity: Severity | null;
+    readonly category: Category | null;
+    readonly startLine: number | null;
+    readonly endLine: number | null;
+    readonly content: string;
+    readonly suggestionCode: string | null;
 }
 
 export interface Task {
@@ -90,6 +110,8 @@ export interface ReviewMeta {
     llm: unknown;
     summary: unknown;
     warnings: ReportWarning[];
+    /** The models a review ran with, when it ran with several (domain/merge.ts); null otherwise. */
+    models: string[] | null;
 }
 
 export interface Review {
@@ -145,6 +167,33 @@ function findingHash(c: RawComment): string {
 }
 
 const lineOf = (v: unknown): number | null => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
+
+/** A short list of model names from a report, or null: anything else is ignored, not refused. */
+function modelNames(v: unknown): string[] | null {
+    if (!Array.isArray(v)) return null;
+    const names = v.filter((x): x is string => typeof x === "string" && x.length > 0).map((x) => x.slice(0, 200));
+    return names.length ? [...new Set(names)].slice(0, 10) : null;
+}
+
+function otherFindings(v: unknown): OtherFinding[] {
+    if (!Array.isArray(v)) return [];
+    return v.slice(0, 10).flatMap((o: unknown) => {
+        if (!o || typeof o !== "object") return [];
+        const x = o as Record<string, unknown>;
+        if (typeof x.model !== "string" || typeof x.content !== "string" || !x.content) return [];
+        return [
+            Object.freeze({
+                model: x.model.slice(0, 200),
+                severity: (SEVERITIES as readonly unknown[]).includes(x.severity) ? (x.severity as Severity) : null,
+                category: (CATEGORIES as readonly unknown[]).includes(x.category) ? (x.category as Category) : null,
+                startLine: lineOf(x.start_line),
+                endLine: lineOf(x.end_line),
+                content: x.content.slice(0, 20_000),
+                suggestionCode: typeof x.suggestion_code === "string" ? x.suggestion_code.slice(0, 20_000) : null,
+            }),
+        ];
+    });
+}
 
 /** The first sentence of a finding, as its title. */
 export function titleOf(text: string, max = 150): string {
@@ -266,6 +315,9 @@ function pushTo<K, V>(map: Map<K, V[]>, key: K, value: V): void {
 /** Index a report. `upload` is null for the empty review a branch has before any report. */
 export function parseReport(raw: unknown, upload: UploadMeta | null): Review {
     validateReport(raw);
+    // Who found what only means something when there was more than one model to ask.
+    const models = modelNames(raw.models);
+    const several = models !== null && models.length > 1;
     const used = new Set<string>();
     const coerced: string[] = []; // values OCR sent that we don't recognise: reported, not hidden
     const issues: Issue[] = raw.comments.map((c, i) => {
@@ -294,6 +346,8 @@ export function parseReport(raw: unknown, upload: UploadMeta | null): Review {
             existingCode: c.existing_code ?? null,
             suggestionCode: c.suggestion_code ?? null,
             addedBy: typeof c.added_by === "string" ? c.added_by : null,
+            foundBy: several ? modelNames(c.found_by) : null,
+            alsoFound: several ? otherFindings(c.also) : [],
         });
     });
 
@@ -353,6 +407,7 @@ export function parseReport(raw: unknown, upload: UploadMeta | null): Review {
             llm: raw.llm ?? null,
             summary: raw.summary ?? null,
             warnings,
+            models: several ? models : null,
         },
         issues,
         byId: new Map(issues.map((x) => [x.id, x])),
