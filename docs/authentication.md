@@ -60,7 +60,7 @@ If people can edit their address, someone could set it to an invited address and
 
 ### Confirming it's you (step-up)
 
-Routes that need the `secrets` permission (GitHub credentials, webhook secrets, model keys) also need a sign-in from the last `REAUTH_MINUTES` (15 by default). An older session gets `401` with `code: "reauth_required"`. The web app then explains and asks:
+Routes that need the `secrets` permission (GitHub credentials, webhook secrets, model keys), and the instance's own model keys, also need a sign-in from the last `REAUTH_MINUTES` (15 by default). A new route opts in with `recentSignIn: true` when it handles a secret without that permission. An older session gets `401` with `code: "reauth_required"`. The web app then explains and asks:
 
 - **With a provider:** it sends the person to `reauthUrl` (`/auth/login?prompt=login&max_age=0&next=…`), so the provider asks them to authenticate again (including MFA, if the provider requires it). Triagent checks `auth_time` in the new ID token, so a provider that skips the check isn't believed. The person comes back to the same page; anything typed there has to be entered again.
 - **With passwords:** `POST /auth/reauth {password}` (slowed like signing in), and the original request is sent again.
