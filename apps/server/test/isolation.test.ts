@@ -165,3 +165,59 @@ test("live events only reach subscribers in the same workspace, and admin-only k
     assert.equal(got.b?.length, 0);
     assert.equal(got.viewer?.length, 1);
 });
+
+test("another workspace's runs, installations, invites and projects can't be reached through your own workspace's paths", async () => {
+    const { reviewEnv, patProject, PAT } = await import("./review-helpers.ts");
+    const { specForBranch } = await import("../src/services/runs.ts");
+    const env = await reviewEnv();
+    try {
+        // The admin belongs to both, so every refusal below is about the ids, not who's asking.
+        await patProject(env, "victim");
+        await patProject(env, "attacker", { token: PAT(9) });
+        const s = env.t.services;
+        const victim = await s.store.workspaces.bySlug("victim");
+        const project = await s.store.projects.bySlug(victim?.id as string, "app");
+        assert.ok(victim && project);
+        const job = await s.runs.enqueue({ name: "admin", userId: null, via: "web" }, project, specForBranch("full", "main", null));
+        await s.store.githubInstallations.put({
+            id: 4242,
+            workspaceId: victim.id,
+            accountLogin: "victim",
+            accountType: "Organization",
+            repositorySelection: "all",
+            suspended: false,
+            linkedBy: "admin",
+            linkedAt: new Date().toISOString(),
+        });
+        // Invites are for AUTH_MODE=oidc; one is put straight into the store here.
+        const inviteId = "inv-victim-1";
+        await s.store.invites.put({
+            id: inviteId,
+            email: "someone@example.com",
+            workspaceId: victim.id,
+            role: "editor",
+            createdBy: null,
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+            acceptedAt: null,
+            acceptedBy: null,
+        });
+        const tries: [string, string, object?][] = [
+            ["GET", `/api/v1/w/attacker/runs/${job.id}`],
+            ["POST", `/api/v1/w/attacker/runs/${job.id}/cancel`, {}],
+            ["DELETE", "/api/v1/w/attacker/github/installations/4242"],
+            ["PUT", "/api/v1/w/attacker/p/app/settings/github/repository", { installationId: 4242, repositoryId: 1 }],
+            ["DELETE", `/api/v1/w/attacker/settings/invites/${inviteId}`],
+            ["GET", `/api/v1/w/attacker/analytics?project=${project.id}`],
+        ];
+        for (const [method, path, body] of tries) {
+            const r = await env.t.request(path, { method, session: env.admin, ...(body ? { body } : {}) });
+            assert.equal(r.status, 404, `${method} ${path}: ${r.status} ${r.text.slice(0, 200)}`);
+        }
+        assert.equal((await s.store.jobs.get(job.id))?.status, "queued");
+        assert.ok(await s.store.githubInstallations.get(4242));
+        assert.ok(await s.store.invites.get(inviteId));
+    } finally {
+        await env.close();
+    }
+});
