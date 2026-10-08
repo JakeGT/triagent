@@ -3,7 +3,7 @@
 // each file the change touches, or every file for a scan) and progress on stderr, like the real one.
 //
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
-// (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/sleep-5", "fake/orphan" (leaves a process behind
+// (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5", "fake/orphan" (leaves a process behind
 // in its group). It also prints what tests check: its arguments, which environment variables it got,
 // the model key (the server must redact it), and the review rules it found.
 
@@ -66,7 +66,10 @@ if (m) {
 }
 if (model.includes("fail")) {
     say('[ocr] Subtask error for group "src": LLM completion error: POST "https://llm.test/chat/completions": 503 Service Unavailable');
-    say("[ocr] Error: every file group failed");
+    process.stdout.write(
+        JSON.stringify({ status: "failed", comments: null, summary: { total_tokens: 40, input_tokens: 40, output_tokens: 0 } }),
+    );
+    say("Error: review failed: all 1 file review(s) failed — check your LLM configuration and API key");
     process.exit(1);
 }
 for (const f of files) {
@@ -110,4 +113,5 @@ const report = {
           ]
         : [],
 };
-process.stdout.write(JSON.stringify(report));
+// Like the real one, nothing found is written as "comments": null.
+process.stdout.write(JSON.stringify(model.includes("empty") ? { ...report, comments: null } : report));

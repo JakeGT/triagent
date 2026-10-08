@@ -4,7 +4,9 @@ Triagent is licensed under the GNU AGPL v3 (see [LICENSE](LICENSE)). It runs, bu
 
 | Software | Licence | Used for |
 |---|---|---|
-| [Open Code Review](https://github.com/alibaba/open-code-review) (`@alibaba-group/open-code-review`) | Apache-2.0 | Running the code reviews. Triagent starts it as a separate program. |
+| [Open Code Review](https://github.com/alibaba/open-code-review) (`@alibaba-group/open-code-review`) | Apache-2.0 | Running the code reviews. The runner starts it as a separate program; the runner image installs version 1.12.12 from npm. |
+| [Git](https://git-scm.com) | GPL-2.0 | Fetching the code to review. The runner image installs Alpine's package and runs it as a separate program. |
+| [Node.js](https://nodejs.org) (`node:24-alpine` images) | MIT and others | Running the server and the runner. |
 
 ## Included in this repository
 

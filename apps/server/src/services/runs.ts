@@ -747,9 +747,11 @@ export class Runs {
      * review), the review history, the job itself and an activity row. GitHub hears about it afterwards.
      */
     private async conclude(jobId: string, runnerId: string | null, input: FinishInput, opts: { lost?: boolean } = {}): Promise<Job | null> {
+        // OCR writes "comments": null when it found nothing (or failed): that's an empty list.
+        const given = input.report && typeof input.report === "object" && !Array.isArray(input.report) ? (input.report as RawReport) : null;
         const report =
-            input.report && typeof input.report === "object" && Array.isArray((input.report as RawReport).comments)
-                ? (input.report as RawReport)
+            given && (Array.isArray(given.comments) || given.comments === null || given.comments === undefined)
+                ? { ...given, comments: given.comments ?? [] }
                 : null;
         const metrics = report ? reportMetrics(report) : null;
         const gaps = report ? reviewGaps(report) : null;

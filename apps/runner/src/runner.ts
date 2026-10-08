@@ -50,6 +50,24 @@ export function ocrEnv(
     };
 }
 
+/**
+ * Why OCR failed, from the end of its stderr: its closing "Error:" line, and the first error from the
+ * model's provider if there was one (often the real reason: a refused key, an overloaded provider).
+ */
+export function failureReason(stderr: string, exit: number | string | null): string {
+    const lines = stderr
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+    const error = lines
+        .filter((l) => l.startsWith("Error:"))
+        .at(-1)
+        ?.replace(/^Error:\s*/, "");
+    const provider = lines.find((l) => /LLM completion error|plan request|grouping LLM call/.test(l))?.replace(/^\[ocr\]\s*/, "");
+    const why = [error, provider ? `the first model error was: ${provider}` : null].filter(Boolean).join("; ");
+    return `Open Code Review failed (exit ${exit}): ${(why || lines.slice(-3).join(" ") || "no message").slice(0, 900)}`;
+}
+
 export function ocrArgs(job: Pick<ClaimedJob, "kind" | "maxTokensBudget">, base: string | null, head: string): string[] {
     const args = job.kind === "full" ? ["scan"] : ["review", "--from", base as string, "--to", head];
     args.push("--format", "json", "--audience", "human", "--color", "never");
@@ -319,10 +337,9 @@ export class Runner {
                     `Stopped after ${job.timeoutMinutes} minutes, the project's time limit for this kind of review. An admin can raise it in the project's Automation settings.`,
                 );
             else if (exit.code !== 0) {
-                const tail = exit.stderr.trim().split("\n").slice(-3).join(" ").slice(0, 600);
                 outcome = {
                     status: "failed",
-                    error: `Open Code Review failed (exit ${exit.code ?? exit.signal}): ${run.redactLine(tail) || "no message"}`,
+                    error: run.redactLine(failureReason(exit.stderr, exit.code ?? exit.signal)),
                     ...(report ? { report } : {}),
                 };
             } else if (!report || typeof report !== "object")

@@ -1,0 +1,96 @@
+# Triagent with Docker Compose: the server, a runner and Postgres. A starting point, not a finished
+# deployment: put a reverse proxy with TLS in front of the server, and keep the secrets somewhere safe.
+#
+#   mkdir -p secrets
+#   openssl rand -base64 32 > secrets/triagent_secrets_key        # keep a copy: stored secrets need it
+#   openssl rand -base64 32 > secrets/triagent_runner_secret
+#   openssl rand -base64 24 > secrets/postgres_password
+#   printf 'postgres://triagent:%s@db:5432/triagent' "$(cat secrets/postgres_password)" > secrets/triagent_database_url
+#   printf 'a long first password' > secrets/triagent_admin_password
+#   docker compose -f deploy/compose.example.yml up -d --build
+#
+# Networks:
+#   - private: the server, the runner and the database talk here. It has no way out.
+#   - egress: the runner's way out, to GitHub and the model provider. Nothing else is on it, and
+#     nothing on it is published, so nothing can reach the runner from outside.
+#   - proxy: where the reverse proxy reaches the server. Only the server is on it.
+# The reverse proxy must never pass /internal/ (the runner API) on to the server.
+
+name: triagent
+
+services:
+  db:
+    image: postgres:16.14-alpine3.23
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: triagent
+      POSTGRES_DB: triagent
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U triagent -d triagent"]
+      interval: 5s
+      retries: 20
+
+  server:
+    build: { context: .., target: server }
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PUBLIC_ORIGIN: https://code-review.example.com
+      PROXY_HOPS: "1"
+      DATABASE_URL_FILE: /run/secrets/triagent_database_url
+      TRIAGENT_SECRETS_KEY_FILE: /run/secrets/triagent_secrets_key
+      TRIAGENT_RUNNER_SECRET_FILE: /run/secrets/triagent_runner_secret
+      TRIAGENT_ADMIN_USER: admin
+      TRIAGENT_ADMIN_PASSWORD_FILE: /run/secrets/triagent_admin_password
+      REVIEW_CONCURRENCY: "2"
+    secrets: [triagent_database_url, triagent_secrets_key, triagent_runner_secret, triagent_admin_password]
+    networks: [private, proxy]
+    # Published here for trying it out; behind a reverse proxy, remove this and let the proxy reach it on "proxy".
+    ports: ["127.0.0.1:8080:8080"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+
+  runner:
+    build: { context: .., target: runner }
+    restart: unless-stopped
+    depends_on: [server]
+    environment:
+      TRIAGENT_SERVER_URL: http://server:8080
+      TRIAGENT_RUNNER_SECRET_FILE: /run/secrets/triagent_runner_secret
+      RUNNER_CONCURRENCY: "2"
+    secrets: [triagent_runner_secret]
+    networks: [private, egress]
+    # No data volume: the git mirrors are a cache, and each review's worktree is deleted when it ends.
+    read_only: true
+    tmpfs:
+      - /tmp:size=4g
+      - /var/cache/triagent-runner:size=8g,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 4g
+    pids_limit: 512
+
+networks:
+  private:
+    internal: true
+  egress: {}
+  proxy: {}
+
+volumes:
+  db-data: {}
+
+secrets:
+  postgres_password: { file: ../secrets/postgres_password }
+  triagent_database_url: { file: ../secrets/triagent_database_url }
+  triagent_secrets_key: { file: ../secrets/triagent_secrets_key }
+  triagent_runner_secret: { file: ../secrets/triagent_runner_secret }
+  triagent_admin_password: { file: ../secrets/triagent_admin_password }

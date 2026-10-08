@@ -63,11 +63,27 @@ pnpm test:e2e     # builds the app and runs Playwright against the real server
 
 The server fetches OpenRouter's public model catalogue (model names and prices) when someone opens the model picker, model prices or analytics, and keeps it for an hour. Set `OPENROUTER_CATALOGUE=false` to stop that request; prices can still be set by hand. The tests never reach OpenRouter.
 
+### Reviews: the server and a runner
+
+Reviews run in a separate process, the runner (`apps/runner`), which needs `git` and Open Code Review's `ocr` (`npm install -g @alibaba-group/open-code-review`). It shares a secret with the server and talks to it over HTTP; it has no database. In development, start both:
+
+```sh
+export TRIAGENT_RUNNER_SECRET="$(openssl rand -base64 32)"
+PUBLIC_ORIGIN=http://localhost:5173 TRIAGENT_ADMIN_USER=me TRIAGENT_ADMIN_PASSWORD='a long password' pnpm --filter @triagent/server dev
+TRIAGENT_SERVER_URL=http://localhost:8080 pnpm dev:runner    # in another terminal, with the same secret
+```
+
+Then connect a project to GitHub (Project settings → GitHub: the GitHub App, set up under Settings → GitHub App by an instance admin, or a fine-grained token), add a model key (Settings → Review model & keys), and start a review from Runs, Pull requests or Branches & reports. `apps/runner/.env.example` lists the runner's settings; `REVIEW_CONCURRENCY` (default 1) and `REVIEW_CONCURRENCY_PER_WORKSPACE` (default 1) cap reviews on the server. The tests use a fake GitHub and a fake `ocr` (`tests/fakes`), so they need `git` but nothing else.
+
+### Running it with Docker
+
+One `Dockerfile` builds both images: `--target server` (the API and the web app) and `--target runner` (git and a pinned Open Code Review). [deploy/compose.example.yml](deploy/compose.example.yml) runs the server, a runner and Postgres, with secrets as files and the runner on a private network with outbound access only. Whatever proxy is in front must not pass `/internal/` (the runner API) through.
+
 ### Signing in
 
 By default (`AUTH_MODE=local`) people sign in with a username and password. To sign in through an identity provider instead, set `AUTH_MODE=oidc` and the `OIDC_*` settings: see [docs/authentication.md](docs/authentication.md), which includes setting up Authentik. `pnpm test:e2e` covers both, the second against a fake provider.
 
-- [docs/architecture.md](docs/architecture.md): how the server and web app are put together, workspaces and permissions, secrets.
+- [docs/architecture.md](docs/architecture.md): how the server and web app are put together, workspaces and permissions, secrets, reviews and the runner (with the threat model of reviewing untrusted code), and GitHub.
 - [docs/authentication.md](docs/authentication.md): signing in with passwords or an identity provider (OpenID Connect, e.g. Authentik), invites, and confirming it's you before changing secrets.
 - [tests/contract](tests/contract/README.md): what any Triagent server must do.
 - [skills/triagent](skills/triagent/SKILL.md): a skill that teaches agents to work through findings with the MCP tools.

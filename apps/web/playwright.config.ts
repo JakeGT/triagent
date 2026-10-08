@@ -4,10 +4,11 @@
 // OpenID provider (apps/server/test/fake-oidc-server.ts), on a different host name so the trip there
 // and back is cross-site, as it is in production.
 
+import { randomBytes } from "node:crypto";
 import net from "node:net";
 import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
-import { ADMIN_PASSWORD, ADMIN_USER, OIDC_CLIENT_SECRET, RUNNER_SECRET } from "./e2e/constants";
+import { ADMIN_PASSWORD, ADMIN_USER, OIDC_CLIENT_SECRET } from "./e2e/constants";
 
 function freePort(): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -27,6 +28,9 @@ process.env.E2E_OIDC_PORT ??= String(await freePort());
 process.env.E2E_PROVIDER_PORT ??= String(await freePort());
 process.env.E2E_GITHUB_PORT ??= String(await freePort());
 process.env.E2E_RUNNER_PORT ??= String(await freePort());
+// Made up for each run: shared by the end-to-end server and its runner.
+process.env.E2E_RUNNER_SECRET ??= randomBytes(32).toString("base64url");
+const RUNNER_SECRET = process.env.E2E_RUNNER_SECRET;
 const port = Number(process.env.E2E_PORT);
 const origin = `http://127.0.0.1:${port}`;
 const oidcOrigin = `http://127.0.0.1:${process.env.E2E_OIDC_PORT}`;

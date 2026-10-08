@@ -163,6 +163,18 @@ describe("reviews end to end (token mode)", () => {
         }
     });
 
+    test("a review that finds nothing (OCR writes no comments list) is done, with no findings", async () => {
+        await setModel(env, ws, "fake/empty");
+        try {
+            await env.fake.commit("acme/app", "clean", { "src/clean.ts": "ok\n" }, "clean", "main");
+            const run = await finished(env, ws, (await start({ kind: "changes", branch: "clean" })).id);
+            assert.equal(run.status, "done", run.error);
+            assert.equal(run.result.total, 0);
+        } finally {
+            await setModel(env, ws, "fake/model");
+        }
+    });
+
     test("a failed review: recorded as failed, with OCR's reason, and an error status", async () => {
         await setModel(env, ws, "fake/fail");
         try {
@@ -170,11 +182,16 @@ describe("reviews end to end (token mode)", () => {
             await env.fake.openPull("acme/app", { number: 10, headRef: "broken" });
             const run = await finished(env, ws, (await start({ kind: "pr", number: 10 })).id);
             assert.equal(run.status, "failed");
-            assert.match(run.error, /Open Code Review failed \(exit 1\).*every file group failed/);
+            assert.match(
+                run.error,
+                /^Open Code Review failed \(exit 1\): review failed: all 1 file review\(s\) failed .*; the first model error was: Subtask error for group "src": LLM completion error: .*503 Service Unavailable$/,
+            );
             assert.equal(env.fake.repo("acme/app").statuses.at(-1)?.state, "error");
             const wsId = (await env.t.services.store.workspaces.bySlug(ws))?.id as string;
             const records = await env.t.services.history.list({ workspaceId: wsId });
             assert.equal(records[0]?.status, "failed");
+            // Tokens spent on a failed review still count.
+            assert.equal(records[0]?.tokens?.total, 40);
         } finally {
             await setModel(env, ws, "fake/model");
         }
