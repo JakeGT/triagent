@@ -22,19 +22,21 @@ export interface ReviewGaps {
  */
 export function reviewGaps(report: unknown): ReviewGaps | null {
     const warnings = Array.isArray(obj(report).warnings) ? (obj(report).warnings as unknown[]) : [];
-    const lost = warnings.map(obj).filter((w) => /fail|budget|skip|timeout|cancel|incomplete/i.test(String(w.type ?? "")));
+    // Only warnings OCR writes (objects with a string type); anything else in the list is skipped.
+    const text = (v: unknown) => (typeof v === "string" ? v : "");
+    const lost = warnings.map(obj).filter((w) => /fail|budget|skip|timeout|cancel|incomplete/i.test(text(w.type)));
     if (!lost.length) return null;
     const files = [
         ...new Set(
             lost.flatMap((w) =>
-                String(w.file ?? "")
+                text(w.file)
                     .split(",")
                     .map((f) => f.trim())
                     .filter(Boolean),
             ),
         ),
     ].slice(0, 200);
-    const reasons = [...new Set(lost.map((w) => String(w.message ?? "").slice(0, 300)).filter(Boolean))].slice(0, 10);
+    const reasons = [...new Set(lost.map((w) => text(w.message).slice(0, 300)).filter(Boolean))].slice(0, 10);
     const n = lost.length;
     const shown = files.slice(0, 3).join(", ");
     const more = files.length > 3 ? ` and ${files.length - 3} more file${files.length - 3 === 1 ? "" : "s"}` : "";

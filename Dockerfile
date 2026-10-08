@@ -66,12 +66,16 @@ RUN apk add --no-cache git \
     && mkdir -p /var/cache/triagent-runner /tmp/triagent-runner \
     && chown node:node /var/cache/triagent-runner /tmp/triagent-runner
 WORKDIR /app
-COPY apps/runner/package.json ./
-COPY apps/runner/src ./src
+# Laid out as in the repository: the runner shares its redaction with the server (packages/shared/src/redact.ts).
+COPY apps/runner/package.json apps/runner/
+COPY apps/runner/src apps/runner/src
+COPY packages/shared/package.json packages/shared/
+COPY packages/shared/src/redact.ts packages/shared/src/
 # Reviews need git 2.42 or later (GIT_ATTR_SOURCE). The runner refuses to start with an older one; so does the build.
-RUN node -e "import('./src/git.ts').then((g) => g.requireGit('git', process.env.PATH))"
+RUN node -e "import('./apps/runner/src/git.ts').then((g) => g.requireGit('git', process.env.PATH))" \
+    && node -e "import('./apps/runner/src/runner.ts')"
 ENV NODE_ENV=production OCR_NO_UPDATE=1 \
     RUNNER_CACHE_DIR=/var/cache/triagent-runner RUNNER_WORK_DIR=/tmp/triagent-runner RUNNER_HEALTH_PORT=8081
 USER node
 HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8081/healthz >/dev/null || exit 1
-CMD ["node", "src/main.ts"]
+CMD ["node", "apps/runner/src/main.ts"]

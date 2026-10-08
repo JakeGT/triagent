@@ -228,6 +228,107 @@ describe("leases, replacing, cancelling and redaction", () => {
     });
 });
 
+describe("what runners send: every form of a secret, every string of a report, and reports that aren't OCR's", () => {
+    let env: ReviewEnv;
+    let project: Project;
+    before(async () => {
+        env = await reviewEnv({ env: { REVIEW_CONCURRENCY: "5", REVIEW_CONCURRENCY_PER_WORKSPACE: "5" } });
+        await patProject(env, "acme");
+        project = await projectOf(env, "acme");
+        env.fake.repo("acme/app");
+    });
+    after(() => env.close());
+
+    const b64 = (s: string) => Buffer.from(s).toString("base64");
+    const hex = (s: string) => Buffer.from(s).toString("hex");
+
+    test("encoded secrets, progress and every string in a report are redacted before they're kept or posted", async () => {
+        const runs = env.t.services.runs;
+        const job = await runs.enqueue(ADMIN, project, specForBranch("full", "encoded", null));
+        const claimed = await runs.claim(runner("r1"));
+        assert.ok(claimed);
+        const key = claimed.model.apiKey;
+        const token = claimed.git.token;
+        const forms = [
+            b64(`a${key}`),
+            b64(`ab${key}`),
+            b64(`user:${key}`),
+            hex(key),
+            hex(`>${token}<`).toUpperCase(),
+            [...key].map((c) => `%${c.charCodeAt(0).toString(16)}`).join(""),
+            JSON.stringify(key).replace(/[a-z]/g, (c) => `\\u00${c.charCodeAt(0).toString(16)}`),
+            `mid${key}mid`,
+        ];
+        await runs.events(runner("r1"), job.id, {
+            lines: forms.map((f) => ({ line: `seen ${f} here` })),
+            progress: { phase: "reviewing", message: `progress ${key}`, current: `src/${b64(`q${key}`)}` },
+        });
+        const stored = (await env.t.services.store.jobs.log(job.id, 0, 100)).map((l) => l.line);
+        assert.equal(stored.length, forms.length);
+        // What surrounds the secret is kept (base64 of "user:", say), down to a character carrying bits of both.
+        for (const [i, line] of stored.entries()) {
+            assert.match(line, /^seen \S*\[redacted\]\S* here$/, `form ${i}: ${forms[i]}`);
+            for (const part of [key, token, b64(key).slice(4, -4), hex(key).slice(4, -4)]) assert.ok(!line.includes(part), line);
+        }
+        const progress = JSON.stringify((await env.t.services.store.jobs.get(job.id))?.progress);
+        assert.ok(!progress.includes(key) && !progress.includes(b64(`q${key}`).slice(4, -4)), progress);
+
+        await runs.finish(runner("r1"), job.id, {
+            status: "done",
+            report: {
+                comments: [{ path: "src/a.ts", content: `This line holds the key ${key} in plain sight.`, severity: "high" }],
+                warnings: [{ type: "review_round_failed", file: `src/${key}.ts`, message: `401 with ${b64(`u:${key}`)}` }],
+            },
+        });
+        const done = await env.t.services.store.jobs.get(job.id);
+        assert.equal(done?.status, "partial");
+        const everything = JSON.stringify([done, await env.t.services.store.reports.get(project.id, "encoded")]);
+        for (const f of [key, b64(`u:${key}`).slice(4, -4)]) assert.ok(!everything.includes(f), `${f} was kept`);
+        assert.match(String((done?.result?.gaps as { note?: string } | undefined)?.note), /src\/\[redacted\]\.ts/);
+    });
+
+    test("characters Postgres can't hold are dropped from log lines, progress and errors", async () => {
+        const runs = env.t.services.runs;
+        const job = await runs.enqueue(ADMIN, project, specForBranch("full", "nul", null));
+        assert.ok(await runs.claim(runner("r1")));
+        await runs.events(runner("r1"), job.id, { lines: [{ line: "before\u0000after" }], progress: { current: "a\u0000b" } });
+        await runs.events(runner("r1"), job.id, { lines: [{ line: "still delivered" }] });
+        assert.deepEqual(
+            (await env.t.services.store.jobs.log(job.id, 0, 10)).map((l) => l.line),
+            ["beforeafter", "still delivered"],
+        );
+        assert.equal((await env.t.services.store.jobs.get(job.id))?.progress.current, "ab");
+        await runs.finish(runner("r1"), job.id, { status: "failed", error: "it\u0000broke" });
+        assert.equal((await env.t.services.store.jobs.get(job.id))?.error, "itbroke");
+    });
+
+    test("a report that isn't shaped like OCR's ends the job, saying so, instead of leaving it running", async () => {
+        const runs = env.t.services.runs;
+        for (const report of [
+            { comments: [null] },
+            { comments: [1, 2] },
+            { comments: [{ path: 5, content: "x" }] },
+            { comments: [{ path: "a.ts", content: "x", severity: { toString: 1 } }] },
+            { comments: [], warnings: [null, 7, { type: "review_round_failed", file: { a: 1 }, message: ["x"] }] },
+            { comments: [], summary: { total_tokens: 1e308 } },
+            { comments: "not a list" },
+        ]) {
+            const job = await runs.enqueue(ADMIN, project, specForBranch("full", "odd", null));
+            assert.ok(await runs.claim(runner("r1")));
+            const res = await fetch(`${env.url}/internal/runner/jobs/${job.id}/finish`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${env.secret}`, "content-type": "application/json" },
+                body: JSON.stringify({ runner: runner("r1"), status: "done", report }),
+            });
+            assert.equal(res.status, 200, `${JSON.stringify(report)}: ${await res.text()}`);
+            const after = await env.t.services.store.jobs.get(job.id);
+            assert.notEqual(after?.status, "running", JSON.stringify(report));
+            assert.equal(after?.credentials, null);
+            assert.equal(after?.leaseExpiresAt, null);
+        }
+    });
+});
+
 describe("the runner API", () => {
     let env: ReviewEnv;
     before(async () => {

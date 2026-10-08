@@ -8,6 +8,7 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Severity } from "@triagent/shared";
+import { redactDeep, redactor } from "@triagent/shared/redact";
 import { parseFilters } from "../domain/filters.ts";
 import { isValidBranch } from "../domain/names.ts";
 import type { RawReport } from "../domain/report.ts";
@@ -148,31 +149,6 @@ export function specForBranch(kind: "changes" | "full", gitRef: string, baseRef:
     };
 }
 
-/** Strip the secrets handed to a runner (and the forms git and HTTP put them in) from a log line. */
-export function redact(line: string, secrets: readonly string[]): string {
-    let out = line;
-    for (const s of secrets) if (s) out = out.split(s).join("[redacted]");
-    // Anything that still looks like a credential.
-    return out
-        .replace(/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted]")
-        .replace(/\b(authorization:\s*)(basic|bearer|token)\s+\S+/gi, "$1$2 [redacted]")
-        .replace(/(x-access-token:)[^@\s]+@/gi, "$1[redacted]@");
-}
-
-/** The secrets and the encodings they can appear in. */
-export function secretForms(secrets: readonly string[]): string[] {
-    const out = new Set<string>();
-    for (const s of secrets) {
-        if (!s || s.length < 6) continue;
-        out.add(s);
-        out.add(encodeURIComponent(s));
-        out.add(Buffer.from(s).toString("base64"));
-        out.add(Buffer.from(`x-access-token:${s}`).toString("base64"));
-    }
-    // Longest first, so a secret inside a longer form doesn't leave the rest behind.
-    return [...out].sort((a, b) => b.length - a.length);
-}
-
 const PROGRESS_KEYS = new Set([
     "phase",
     "files",
@@ -188,17 +164,20 @@ const PROGRESS_KEYS = new Set([
     "tokens",
 ]);
 
-/** Only what the progress view shows, bounded. */
-function cleanProgress(input: unknown): Record<string, unknown> {
+/** Only what the progress view shows, bounded, its text redacted like the log. */
+function cleanProgress(input: unknown, clean: (text: string) => string): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     if (!input || typeof input !== "object") return out;
     for (const [k, v] of Object.entries(input)) {
         if (!PROGRESS_KEYS.has(k)) continue;
         if (typeof v === "number" && Number.isFinite(v)) out[k] = Math.max(0, Math.min(v, 1e9));
-        else if (typeof v === "string") out[k] = v.slice(0, 200);
+        else if (typeof v === "string") out[k] = clean(v.slice(0, 1000)).slice(0, 200);
     }
     return out;
 }
+
+/** With no secrets of its own to take out: credentials of known shapes, and characters Postgres can't hold. */
+const CLEAN_ONLY = redactor([]);
 
 /**
  * The project's token budget, or what's left of an instance allowance if that's less, so one run can't
@@ -237,8 +216,8 @@ export class Runs {
     private readonly history: History;
     private readonly models: Models;
     private readonly settings: Settings;
-    /** Redaction lists by job, so a log batch doesn't decrypt them each time. */
-    private readonly redactions = new Map<string, string[]>();
+    /** Redacting functions by job, so a log batch doesn't decrypt the job's secrets each time. */
+    private readonly redactions = new Map<string, (text: string) => string>();
     private readonly progressSent = new Map<string, { at: number; timer: ReturnType<typeof setTimeout> | null }>();
     /** Runners heard from recently, so their record isn't written on every poll. */
     private readonly runnerSeen = new Map<string, number>();
@@ -560,7 +539,13 @@ export class Runs {
         if (Date.now() - last < 15_000) return;
         this.runnerSeen.set(r.id, Date.now());
         if (this.runnerSeen.size > 1000) this.runnerSeen.delete(this.runnerSeen.keys().next().value as string);
-        await this.store.runners.seen({ id: r.id, name: r.name, version: r.version, slots: r.slots, lastSeenAt: now() });
+        await this.store.runners.seen({
+            id: r.id,
+            name: CLEAN_ONLY(r.name),
+            version: r.version === null ? null : CLEAN_ONLY(r.version),
+            slots: r.slots,
+            lastSeenAt: now(),
+        });
     }
 
     /** Hand a runner the next job it may start, or null. */
@@ -660,7 +645,7 @@ export class Runs {
             this.revoke(job, credentials.revoke);
             return null;
         }
-        this.redactions.set(job.id, secretForms([token, model.apiKey]));
+        this.redactions.set(job.id, redactor([token, model.apiKey]));
         this.announce(job, project, "started");
         if (job.kind === "pr" && job.headSha)
             this.background(`Marking ${job.title} as in review on GitHub`, () =>
@@ -731,12 +716,12 @@ export class Runs {
         if (token) this.background(`Revoking the GitHub token of ${job.title}`, () => this.github.app.revokeToken(token));
     }
 
-    private async redactionsFor(job: Job): Promise<string[]> {
+    private async redactionsFor(job: Job): Promise<(text: string) => string> {
         const hit = this.redactions.get(job.id);
         if (hit) return hit;
-        const forms = secretForms(this.credentialsOf(job)?.secrets ?? []);
-        this.redactions.set(job.id, forms);
-        return forms;
+        const clean = redactor(this.credentialsOf(job)?.secrets ?? []);
+        this.redactions.set(job.id, clean);
+        return clean;
     }
 
     /** Log lines and progress from a runner. Every secret handed out for the job is removed before they're kept. */
@@ -744,12 +729,12 @@ export class Runs {
         await this.noteRunner(runner);
         const lines = (input.lines ?? []).slice(0, MAX_LINES_PER_BATCH);
         const first = await this.store.jobs.get(jobId);
-        const forms = first && first.runnerId === runner.id ? await this.redactionsFor(first) : [];
+        const redact = first && first.runnerId === runner.id ? await this.redactionsFor(first) : CLEAN_ONLY;
         const clean = lines.map((l) => ({
             at: typeof l.at === "string" && !Number.isNaN(Date.parse(l.at)) ? new Date(l.at).toISOString() : now(),
-            line: redact(String(l.line ?? ""), forms).slice(0, MAX_LINE),
+            line: redact(String(l.line ?? "")).slice(0, MAX_LINE),
         }));
-        const progress = input.progress === undefined ? null : cleanProgress(input.progress);
+        const progress = input.progress === undefined ? null : cleanProgress(input.progress, redact);
         const job = await this.store.transaction(async (tx) => {
             const held = await this.held(tx, runner.id, jobId);
             // Tokens only go up: the most OCR has said it used.
@@ -815,17 +800,28 @@ export class Runs {
      * review), the review history, the job itself and an activity row. GitHub hears about it afterwards.
      */
     private async conclude(jobId: string, runnerId: string | null, input: FinishInput, opts: { lost?: boolean } = {}): Promise<Job | null> {
-        // OCR writes "comments": null when it found nothing (or failed): that's an empty list.
-        const given = input.report && typeof input.report === "object" && !Array.isArray(input.report) ? (input.report as RawReport) : null;
-        const report =
-            given && (Array.isArray(given.comments) || given.comments === null || given.comments === undefined)
-                ? { ...given, comments: given.comments ?? [] }
-                : null;
-        const metrics = report ? reportMetrics(report) : null;
-        const gaps = report ? reviewGaps(report) : null;
-        const forms = await this.store.jobs.get(jobId).then((j) => (j ? this.redactionsFor(j) : []));
-        const clean = (s: string | null | undefined) => (s ? redact(String(s), forms).slice(0, 2000) : null);
+        const redact = await this.store.jobs.get(jobId).then((j) => (j ? this.redactionsFor(j) : CLEAN_ONLY));
+        const clean = (s: string | null | undefined) => (s ? redact(String(s)).slice(0, 2000) : null);
         const sha = (s: unknown) => (typeof s === "string" && /^[0-9a-f]{40}$/i.test(s) ? s.toLowerCase() : null);
+        // Every string in the report is redacted before anything reads it: it's stored, and parts of it
+        // (warnings, file names) are posted on GitHub. OCR writes "comments": null when it found nothing.
+        let report: RawReport | null = null;
+        let metrics: ReturnType<typeof reportMetrics> | null = null;
+        let gaps: ReturnType<typeof reviewGaps> = null;
+        let unreadable: string | null = null;
+        try {
+            const given = redactDeep(input.report, redact);
+            const raw = given && typeof given === "object" && !Array.isArray(given) ? (given as RawReport) : null;
+            report =
+                raw && (Array.isArray(raw.comments) || raw.comments === null || raw.comments === undefined)
+                    ? { ...raw, comments: raw.comments ?? [] }
+                    : null;
+            metrics = report ? reportMetrics(report) : null;
+            gaps = report ? reviewGaps(report) : null;
+        } catch (err) {
+            report = null;
+            unreadable = `The runner sent a report that couldn't be read: ${clean((err as Error).message)}`;
+        }
 
         const record = (status: Exclude<JobStatus, "queued" | "running">, error: string | null, upload: boolean) =>
             this.core.write(REVIEWER, async (w) => {
@@ -977,15 +973,56 @@ export class Runs {
             });
 
         if (input.status === "done") {
-            if (!report) return record("failed", "The runner finished without a report.", false);
+            if (!report) return record("failed", unreadable ?? "The runner finished without a report.", false);
             try {
                 return await record(gaps ? "partial" : "done", null, true);
             } catch (err) {
                 if (err instanceof ApiError && err.code === "job_lost") throw err;
-                return record("failed", `The review finished, but its report couldn't be saved: ${clean((err as Error).message)}`, false);
+                return this.recordOrFail(
+                    () =>
+                        record("failed", `The review finished, but its report couldn't be saved: ${clean((err as Error).message)}`, false),
+                    jobId,
+                );
             }
         }
-        return record(input.status === "cancelled" ? "cancelled" : "failed", clean(input.error) ?? "The review failed.", false);
+        return this.recordOrFail(
+            () => record(input.status === "cancelled" ? "cancelled" : "failed", clean(input.error) ?? "The review failed.", false),
+            jobId,
+        );
+    }
+
+    /**
+     * Record how a run ended; if even that fails (something in what the runner sent that the rest can't
+     * cope with), end the job anyway, so it never stays running with its credentials.
+     */
+    private async recordOrFail(record: () => Promise<Job | null>, jobId: string): Promise<Job | null> {
+        try {
+            return await record();
+        } catch (err) {
+            if (err instanceof ApiError && err.code === "job_lost") throw err;
+            console.error(`Recording how run ${jobId} ended failed: ${(err as Error).message}`);
+            const ended = await this.store.transaction(async (tx) => {
+                const held = await tx.jobs.get(jobId);
+                if (held?.status !== "running") return null;
+                const next: Job = {
+                    ...held,
+                    status: "failed",
+                    finishedAt: now(),
+                    leaseExpiresAt: null,
+                    credentials: null,
+                    error: "The review ended, but how it ended couldn't be recorded. See the server log.",
+                };
+                await tx.jobs.put(next);
+                const revoke = this.credentialsOf(held)?.revoke ?? null;
+                this.store.afterCommit(() => {
+                    this.revoke(next, revoke);
+                    this.redactions.delete(next.id);
+                    this.announce(next, null, "finished");
+                });
+                return next;
+            });
+            return ended;
+        }
     }
 
     runUrl(workspace: Pick<Workspace, "slug"> | null, project: Project, job: Pick<Job, "id">): string | null {
@@ -1038,7 +1075,7 @@ export class Runs {
                 notes.push(`${what}: failed (${message})`);
                 await this.store.jobs.appendLog(
                     job.id,
-                    [{ at: now(), line: `[triagent] Couldn't update the pull request (${what}): ${message}` }],
+                    [{ at: now(), line: CLEAN_ONLY(`[triagent] Couldn't update the pull request (${what}): ${message}`) }],
                     LOG_CAP_BYTES,
                 );
             }

@@ -10,7 +10,8 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { type ClaimedJob, isLost, type RunnerIdentity, ServerClient } from "./client.ts";
+import { redactDeep, redactor } from "../../../packages/shared/src/redact.ts";
+import { type ClaimedJob, isLost, type RunnerIdentity, ServerClient, ServerError } from "./client.ts";
 import type { RunnerConfig } from "./config.ts";
 import { Git, gitEnv, mirrorPath } from "./git.ts";
 import { start } from "./process.ts";
@@ -79,25 +80,12 @@ export function ocrArgs(job: Pick<ClaimedJob, "kind" | "maxTokensBudget">, base:
     return args;
 }
 
-/** Take out the job's own secrets before a line leaves the runner (the server redacts again). */
-function redactor(secrets: string[]): (line: string) => string {
-    const forms = new Set<string>();
-    for (const s of secrets) {
-        if (!s || s.length < 6) continue;
-        forms.add(s);
-        forms.add(Buffer.from(s).toString("base64"));
-        forms.add(Buffer.from(`x-access-token:${s}`).toString("base64"));
-    }
-    const sorted = [...forms].sort((a, b) => b.length - a.length);
-    return (line) => sorted.reduce((l, s) => l.split(s).join("[redacted]"), line);
-}
-
 class Stop extends Error {}
 
 /** One job in progress: its log buffer, heartbeat and the OCR process. */
-class JobRun {
-    private readonly job: ClaimedJob;
-    private readonly server: ServerClient;
+export class JobRun {
+    private readonly job: Pick<ClaimedJob, "id" | "git" | "model">;
+    private readonly server: Pick<ServerClient, "events" | "heartbeat">;
     private readonly redact: (line: string) => string;
     private buffer: { at: string; line: string }[] = [];
     private progress: Progress = {};
@@ -109,10 +97,16 @@ class JobRun {
     private readonly timers: ReturnType<typeof setInterval>[] = [];
     private flushing: Promise<void> = Promise.resolve();
 
-    constructor(job: ClaimedJob, server: ServerClient) {
+    constructor(job: Pick<ClaimedJob, "id" | "git" | "model">, server: Pick<ServerClient, "events" | "heartbeat">) {
         this.job = job;
         this.server = server;
+        // The job's own secrets come out before anything leaves the runner (the server redacts again).
         this.redact = redactor([job.git.token, job.model.apiKey]);
+    }
+
+    /** Lines waiting to be sent. */
+    get pending(): number {
+        return this.buffer.length;
     }
 
     say(line: string): void {
@@ -121,6 +115,11 @@ class JobRun {
 
     redactLine(line: string): string {
         return this.redact(line);
+    }
+
+    /** OCR's report, every string in it redacted (the server does it again). */
+    redactReport(report: unknown): unknown {
+        return redactDeep(report, this.redact);
     }
 
     log(line: string): void {
@@ -147,13 +146,18 @@ class JobRun {
         this.flushing = this.flushing.then(async () => {
             if (this.lost || (!this.buffer.length && !this.progressDirty)) return;
             const lines = this.buffer.splice(0, MAX_BATCH);
-            const progress = this.progressDirty ? { ...this.progress } : null;
+            const progress = this.progressDirty
+                ? Object.fromEntries(Object.entries(this.progress).map(([k, v]) => [k, typeof v === "string" ? this.redact(v) : v]))
+                : null;
             this.progressDirty = false;
             try {
                 const r = await this.server.events(this.job.id, lines, progress);
                 if (r.cancel) this.cancel();
             } catch (err) {
                 if (isLost(err)) this.lose();
+                else if (err instanceof ServerError && err.status >= 400 && err.status < 500)
+                    // Refused, not unreachable: sending it again would be refused again, and hold up every line after it.
+                    console.error(`The server refused ${lines.length} log line(s) of ${this.job.id} (${err.message}); dropped them.`);
                 else {
                     // The server is briefly away: keep the lines for the next try.
                     this.buffer.unshift(...lines);
@@ -347,7 +351,7 @@ export class Runner {
             const exit = await ocr.done;
             let report: unknown = null;
             try {
-                report = exit.stdout.trim() ? JSON.parse(exit.stdout) : null;
+                report = exit.stdout.trim() ? run.redactReport(JSON.parse(exit.stdout)) : null;
             } catch {
                 report = null;
             }

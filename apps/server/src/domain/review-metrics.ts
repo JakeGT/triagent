@@ -19,7 +19,8 @@ export interface ReportMetrics {
     findings: { total: number; bySeverity: Record<Severity, number> };
 }
 
-const count = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
+/** A count from the report, or null. Bounded, so an absurd figure can't break storing it. */
+const count = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.min(Math.round(v), 1e12) : null);
 const label = (v: unknown, max: number): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
 const obj = (v: unknown): Record<string, unknown> | null =>
     v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -97,7 +98,9 @@ export function reportMetrics(report: RawReport): ReportMetrics {
         : null;
 
     const bySeverity = Object.fromEntries(SEVERITIES.map((s) => [s, 0])) as Record<Severity, number>;
-    for (const c of report.comments) {
+    // Only findings: anything else in the list (null, a number) isn't one.
+    const findings = (Array.isArray(report.comments) ? report.comments : []).filter((c) => obj(c) !== null);
+    for (const c of findings) {
         const s = (SEVERITIES as readonly unknown[]).includes(c.severity) ? (c.severity as Severity) : "low";
         bySeverity[s]++;
     }
@@ -112,6 +115,6 @@ export function reportMetrics(report: RawReport): ReportMetrics {
         files,
         llm: llmStats && Object.keys(llmStats).length ? llmStats : null,
         toolCalls,
-        findings: { total: report.comments.length, bySeverity },
+        findings: { total: findings.length, bySeverity },
     };
 }

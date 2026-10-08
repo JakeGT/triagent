@@ -4,15 +4,17 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { FakeGitHub } from "../../../tests/fakes/github.ts";
+import { ServerError } from "../src/client.ts";
 import { Git, gitVersionProblem, mirrorPath } from "../src/git.ts";
 import { start } from "../src/process.ts";
 import { readProgress } from "../src/progress.ts";
-import { ocrArgs, ocrEnv } from "../src/runner.ts";
+import { JobRun, ocrArgs, ocrEnv } from "../src/runner.ts";
 
 describe("progress from OCR's stderr", () => {
     test("files, groups, rounds, tool calls and phases", () => {
@@ -41,6 +43,71 @@ describe("progress from OCR's stderr", () => {
             toolFailures: 1,
             phase: "summarising",
         });
+    });
+});
+
+describe("what the runner sends", () => {
+    const secret = () => randomBytes(20).toString("hex");
+    const job = () => ({
+        id: "job-1",
+        git: { username: "x-access-token", token: `ghs_${secret()}` },
+        model: { url: "https://llm.test/v1", model: "m", apiKey: `sk-or-${secret()}`, protocol: "openai" as const, provider: "openrouter" },
+    });
+
+    test("log lines, progress and the report go out without the job's secrets, in any form", async () => {
+        const j = job();
+        const sent: { lines: { line: string }[]; progress: Record<string, unknown> | null }[] = [];
+        const server = {
+            events: async (_id: string, lines: { at: string; line: string }[], progress: Record<string, unknown> | null) => {
+                sent.push({ lines, progress });
+                return { cancel: false };
+            },
+            heartbeat: async () => ({ cancel: false }),
+        };
+        const run = new JobRun(j, server);
+        const basic = Buffer.from(`user:${j.model.apiKey}`).toString("base64");
+        run.log(`header ${basic}`);
+        run.log(`hex ${Buffer.from(j.git.token).toString("hex")}`);
+        run.setProgress({ phase: "reviewing", current: `src/${j.model.apiKey}` });
+        await run.flush();
+        const text = JSON.stringify(sent);
+        assert.ok(!text.includes(j.model.apiKey) && !text.includes(basic.slice(8, -4)) && !text.includes(j.git.token), text);
+        assert.equal(sent[0]?.progress?.current, "src/[redacted]");
+        const report = run.redactReport({ comments: [{ path: "a.ts", content: `key ${j.model.apiKey}` }] });
+        assert.ok(!JSON.stringify(report).includes(j.model.apiKey));
+    });
+
+    test("a batch the server refuses (4xx, not 409) is dropped rather than sent again and again", async () => {
+        let fail: ServerError | null = new ServerError(400, "The request body isn't valid.");
+        let calls = 0;
+        const server = {
+            events: async () => {
+                calls++;
+                if (fail) throw fail;
+                return { cancel: false };
+            },
+            heartbeat: async () => ({ cancel: false }),
+        };
+        const run = new JobRun(job(), server);
+        run.log("refused");
+        await run.flush();
+        assert.equal(run.pending, 0, "dropped");
+        // The server being away, or failing, isn't a refusal: the lines wait for the next try.
+        for (const status of [0, 502, 503]) {
+            fail = new ServerError(status, "away");
+            run.log(`kept ${status}`);
+            await run.flush();
+        }
+        assert.equal(run.pending, 3);
+        fail = null;
+        await run.flush();
+        assert.equal(run.pending, 0);
+        // 409: the job isn't ours any more.
+        fail = new ServerError(409, "lost");
+        run.log("after");
+        await run.flush();
+        assert.equal(run.lost, true);
+        assert.equal(calls, 6);
     });
 });
 
