@@ -190,7 +190,13 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                 <Stat
                     label="Tokens"
                     value={compactCount(r.tokens.total)}
-                    note={r.tokens.recorded ? `${compactCount(r.tokens.cacheRead)} cache reads` : NOT_RECORDED}
+                    note={
+                        !r.tokens.recorded
+                            ? NOT_RECORDED
+                            : r.tokens.estimated
+                              ? `${compactCount(r.tokens.cacheRead)} cache reads. Includes an estimate of ${compactCount(r.tokens.estimatedTotal)} for ${r.tokens.estimated === 1 ? "a review" : `${count(r.tokens.estimated)} reviews`} that stopped without saying (counted at ${r.tokens.estimated === 1 ? "its" : "their"} token budget)`
+                              : `${compactCount(r.tokens.cacheRead)} cache reads`
+                    }
                 />
                 <Stat
                     label="Cost"
@@ -270,7 +276,11 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                                 {x.model ?? NOT_RECORDED}
                             </span>,
                             seconds(x.runSeconds),
-                            x.tokens === null ? NOT_RECORDED : compactCount(x.tokens),
+                            x.tokens === null
+                                ? NOT_RECORDED
+                                : x.tokensEstimated
+                                  ? `about ${compactCount(x.tokens)} (estimate)`
+                                  : compactCount(x.tokens),
                             x.tokens === null ? "—" : usd(x.cost),
                             x.findings === null ? "—" : count(x.findings),
                         ],

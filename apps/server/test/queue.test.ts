@@ -280,5 +280,6 @@ test("a run's token budget: the project's, or what's left of an instance allowan
     assert.equal(budget(50_000, null), 50_000);
     assert.equal(budget(null, 20_000), 20_000);
     assert.equal(budget(50_000, 20_000), 20_000);
-    assert.equal(budget(50_000, 0), 1);
+    assert.equal(budget(50_000, 10_000), 10_000);
+    assert.equal(budget(null, 10_000), 10_000);
 });

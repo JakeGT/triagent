@@ -55,7 +55,16 @@ export interface Analytics {
         uploads: number;
         runSeconds: { median: number | null; p90: number | null; recorded: number };
         queueSeconds: { median: number | null; p90: number | null; recorded: number };
-        tokens: { total: number; input: number; output: number; cacheRead: number; recorded: number };
+        /** `estimated`: reviews whose tokens are the budget they were given, as they ended without a figure. */
+        tokens: {
+            total: number;
+            input: number;
+            output: number;
+            cacheRead: number;
+            recorded: number;
+            estimated: number;
+            estimatedTotal: number;
+        };
         findings: number;
         cost: {
             total: number | null;
@@ -81,6 +90,7 @@ export interface Analytics {
             requestedBy: string | null;
             runSeconds: number | null;
             tokens: number | null;
+            tokensEstimated: boolean;
             cost: number | null;
             findings: number | null;
         }[];

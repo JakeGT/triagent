@@ -26,7 +26,7 @@ export function analyticsText(a: Analytics): string {
         "## Reviews",
         `- ${n(r.total)} reviews (${n(r.runs)} run on the server, ${n(r.uploads)} uploaded): ${n(r.byStatus.done)} done, ${n(r.byStatus.partial)} partial, ${n(r.byStatus.failed)} failed, ${n(r.byStatus.cancelled)} cancelled`,
         `- Run time: median ${dur(r.runSeconds.median)}, 90th percentile ${dur(r.runSeconds.p90)}; queue time: median ${dur(r.queueSeconds.median)}`,
-        `- Tokens: ${n(r.tokens.total)} (${n(r.tokens.input)} input, ${n(r.tokens.output)} output, ${n(r.tokens.cacheRead)} cache reads)`,
+        `- Tokens: ${n(r.tokens.total)} (${n(r.tokens.input)} input, ${n(r.tokens.output)} output, ${n(r.tokens.cacheRead)} cache reads)${r.tokens.estimated ? `, including an estimate of ${n(r.tokens.estimatedTotal)} for ${n(r.tokens.estimated)} review(s) that stopped without saying (counted at their token budget)` : ""}`,
         `- Cost: ${usd(r.cost.total)}; per review ${usd(r.cost.perReview)}, per pull request ${usd(r.cost.perPr)}, per finding ${usd(r.cost.perFinding)}`,
         ...(a.unpriced.length ? [`- No price for: ${a.unpriced.map((u) => `${u.model} (${n(u.tokens)} tokens)`).join(", ")}`] : []),
         "",

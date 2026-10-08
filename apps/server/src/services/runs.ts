@@ -15,7 +15,16 @@ import { reportMetrics } from "../domain/review-metrics.ts";
 import { commentBody, finishedStatus, reviewGaps } from "../domain/review-run.ts";
 import { ApiError, badRequest, conflict, notFound } from "../errors.ts";
 import { now, randomId } from "../security.ts";
-import { ACTIVE_JOB_STATUSES, type Job, type JobKind, type JobStatus, type Project, type Repos, type Workspace } from "../store/types.ts";
+import {
+    ACTIVE_JOB_STATUSES,
+    type Job,
+    type JobKind,
+    type JobStatus,
+    type Project,
+    type Repos,
+    type ReviewRecord,
+    type Workspace,
+} from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
 import type { CommitState, Pull } from "./github/client.ts";
 import { COMMENT_MARKER, type Github, NotConnected } from "./github/service.ts";
@@ -170,6 +179,7 @@ const PROGRESS_KEYS = new Set([
     "toolCalls",
     "toolFailures",
     "message",
+    "tokens",
 ]);
 
 /** Only what the progress view shows, bounded. */
@@ -184,10 +194,27 @@ function cleanProgress(input: unknown): Record<string, unknown> {
     return out;
 }
 
-/** The project's token budget, or what's left of an instance allowance if that's less, so one run can't overspend it. */
+/**
+ * The project's token budget, or what's left of an instance allowance if that's less, so one run can't
+ * overspend it. `Models.forRun` never offers an allowance with less than MIN_TOKENS_BUDGET left.
+ */
 export function budget(project: number | null, allowance: number | null): number | null {
-    if (project === null) return allowance === null ? null : Math.max(1, allowance);
-    return allowance === null ? project : Math.max(1, Math.min(project, allowance));
+    if (allowance === null) return project;
+    return project === null ? allowance : Math.min(project, allowance);
+}
+
+type Tokens = NonNullable<ReviewRecord["tokens"]>;
+
+/**
+ * The tokens a run used: the larger of what its report says and what OCR said while it ran (a report
+ * can be missing, or written before the end). Null when neither said anything.
+ */
+export function runTokens(reported: Tokens | null, said: unknown): Tokens | null {
+    const seen = typeof said === "number" && Number.isFinite(said) && said >= 0 ? Math.round(said) : null;
+    if (seen === null || (reported && reported.total >= seen)) return reported;
+    // What OCR said while running is a total only; the difference is counted as input.
+    if (!reported) return { input: seen, output: 0, cacheRead: 0, total: seen };
+    return { ...reported, input: reported.input + (seen - reported.total), total: seen };
 }
 
 const seconds = (from: string | null, to: string | null) =>
@@ -564,24 +591,26 @@ export class Runs {
                         this.store.afterCommit(() => this.announce(failed, project, "finished"));
                         continue;
                     }
+                    const automation = await this.settings.automation(tx, project);
+                    // With the instance key, this comes out of what's left of the allowance until the run ends.
+                    const maxTokensBudget = budget(automation.maxTokensBudget, model.allowance?.remaining ?? null);
                     const started: Job = {
                         ...job,
                         status: "running",
                         startedAt: now(),
                         runnerId: runner.id,
                         leaseExpiresAt: new Date(Date.now() + LEASE_SECONDS * 1000).toISOString(),
-                        model: { provider: model.provider, model: model.model, keySource: model.keySource },
+                        model: { provider: model.provider, model: model.model, keySource: model.keySource, budget: maxTokensBudget },
                         progress: { phase: "starting" },
                     };
                     await tx.jobs.put(started);
-                    const automation = await this.settings.automation(tx, project);
-                    return { job: started, project, workspace, model, automation };
+                    return { job: started, project, workspace, model, automation, maxTokensBudget };
                 }
             }
             return null;
         });
         if (!picked) return null;
-        const { job, project, workspace, model, automation } = picked;
+        const { job, project, workspace, model, automation, maxTokensBudget } = picked;
 
         // Credentials for this job only, minted now (outside the transaction: it calls GitHub).
         let token: string;
@@ -629,7 +658,7 @@ export class Runs {
             baseRef: job.baseRef,
             headSha: job.headSha,
             timeoutMinutes: job.kind === "full" ? automation.fullScanTimeoutMinutes : automation.reviewTimeoutMinutes,
-            maxTokensBudget: budget(automation.maxTokensBudget, model.allowance?.remaining ?? null),
+            maxTokensBudget,
             model: { url: model.url, model: model.model, apiKey: model.apiKey, protocol: model.protocol, provider: model.provider },
         };
     }
@@ -687,6 +716,9 @@ export class Runs {
         const progress = input.progress === undefined ? null : cleanProgress(input.progress);
         const job = await this.store.transaction(async (tx) => {
             const held = await this.held(tx, runner.id, jobId);
+            // Tokens only go up: the most OCR has said it used.
+            if (progress && typeof progress.tokens === "number" && typeof held.progress.tokens === "number")
+                progress.tokens = Math.max(progress.tokens, held.progress.tokens);
             const next = this.renewed(progress ? { ...held, progress: { ...held.progress, ...progress } } : held);
             await tx.jobs.put(next);
             if (clean.length) await tx.jobs.appendLog(jobId, clean, LOG_CAP_BYTES);
@@ -774,6 +806,14 @@ export class Runs {
                 const headSha = sha(input.headSha) ?? held.headSha;
                 const baseSha = sha(input.baseSha) ?? held.baseSha;
                 const finishedAt = now();
+                // Every instance-key run counts against the allowance: with no figure at all (stopped, cancelled
+                // or lost without a word from OCR), the whole budget it was given, marked as an estimate.
+                let tokens = runTokens(metrics?.tokens ?? null, held.progress.tokens);
+                const estimated = !tokens && held.model?.keySource === "instance" && Boolean(held.model.budget);
+                if (estimated) {
+                    const b = held.model?.budget as number;
+                    tokens = { input: b, output: 0, cacheRead: 0, total: b };
+                }
                 let counts: { added: number; carriedOver: number; removed: number; reopened: number } | undefined;
                 let addedIds: Partial<Record<Severity, string[]>> | undefined;
                 if (upload && project && report) {
@@ -819,7 +859,8 @@ export class Runs {
                     bySeverity: metrics?.findings.bySeverity ?? null,
                     gaps: final === "partial" ? gaps : null,
                     counts: counts ?? null,
-                    tokens: metrics?.tokens ?? null,
+                    tokens,
+                    ...(estimated ? { estimatedTokens: true } : {}),
                     filesReviewed: metrics?.files?.reviewed ?? null,
                     ocrVersion: metrics?.ocrVersion ?? null,
                     seconds: seconds(held.startedAt, finishedAt) ?? null,
@@ -850,8 +891,9 @@ export class Runs {
                         model: held.model?.model ?? null,
                         provider: held.model?.provider ?? null,
                         keySource: held.model?.keySource ?? null,
-                        tokens: metrics?.tokens ?? null,
+                        tokens,
                         details: {
+                            ...(estimated ? { estimatedTokens: true } : {}),
                             ...(held.pr ? { prNumber: held.pr.number } : {}),
                             commit: headSha,
                             requestedBy: held.source === "automation" ? "automation" : held.requestedBy.name,

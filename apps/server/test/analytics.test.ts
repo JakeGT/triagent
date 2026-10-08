@@ -205,7 +205,15 @@ describe("analytics on seeded data", () => {
         assert.deepEqual(r.runSeconds, { median: 90, p90: 114, recorded: 2 });
         assert.equal(r.queueSeconds.median, 30);
         close(r.queueSeconds.p90, 46);
-        assert.deepEqual(r.tokens, { total: 1_651_000, input: 1_501_000, output: 150_000, cacheRead: 400_000, recorded: 3 });
+        assert.deepEqual(r.tokens, {
+            total: 1_651_000,
+            input: 1_501_000,
+            output: 150_000,
+            cacheRead: 400_000,
+            recorded: 3,
+            estimated: 0,
+            estimatedTotal: 0,
+        });
         assert.equal(r.findings, 9);
         const day = (d: string) => r.series.find((s) => s.date === d);
         assert.deepEqual(day("2026-10-03"), {

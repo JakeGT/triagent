@@ -304,6 +304,13 @@ describe("reviews end to end (token mode)", () => {
             assert.equal(run.status, "cancelled");
             assert.match(run.error, /Cancelled by admin/);
             assert.ok(Date.now() - t0 < 10_000);
+            // There's no report, but what OCR said it used as it stopped is recorded.
+            assert.equal(run.result.tokens?.total, 4321);
+            const [record] = await env.t.services.history.list({
+                workspaceId: (await env.t.services.store.workspaces.bySlug(ws))?.id as string,
+            });
+            assert.equal(record?.status, "cancelled");
+            assert.equal(record?.tokens?.total, 4321);
             await eventually(
                 async () => !existsSync(`/proc/${orphan}`) || readFileSync(`/proc/${orphan}/stat`, "utf8").includes(") Z "),
                 "the orphan to be stopped",

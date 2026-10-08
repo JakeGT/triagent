@@ -283,6 +283,7 @@ export class Runner {
         const mirror = mirrorPath(this.config.cacheDir, job.repository.cloneUrl);
         let fetched: { head: string; base: string | null } | null = null;
         let outcome: Parameters<ServerClient["finish"]>[1];
+        let ocrStarted = false;
         try {
             run.setProgress({ phase: "fetching" });
             run.say(
@@ -335,6 +336,7 @@ export class Runner {
                 `Running ocr ${args.join(" ")} with ${job.model.model} via ${job.model.provider}. Time limit: ${job.timeoutMinutes} minutes.`,
             );
             run.setProgress({ phase: "starting" });
+            ocrStarted = true;
             const ocr = start(this.config.ocrBin, args, {
                 cwd: tree,
                 env: ocrEnv(this.config, home, job, fetched.base),
@@ -376,6 +378,8 @@ export class Runner {
                 outcome = { status: run.cancelled ? "cancelled" : "failed", error: message };
             }
         } finally {
+            // So the server doesn't charge an estimate for a review that never reached the model.
+            if (!ocrStarted) run.setProgress({ ...run.currentProgress, tokens: 0 });
             await this.git.removeWorktree(mirror, tree).catch(() => {});
             rmSync(work, { recursive: true, force: true });
             await run.end();

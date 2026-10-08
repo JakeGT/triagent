@@ -8,6 +8,9 @@ import type { Project, Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
 import type { SecretScope } from "./secrets.ts";
 
+/** The smallest token budget a review can run with. */
+export const MIN_TOKENS_BUDGET = 10_000;
+
 export const AutomationSchema = z.object({
     /** Review new pull requests (and new pushes to them) automatically. */
     enabled: z.boolean(),
@@ -18,7 +21,7 @@ export const AutomationSchema = z.object({
     /** Fail the pull request's check when a review finds anything critical. */
     failOnCritical: z.boolean(),
     /** Stop a review that would use more model tokens than this. */
-    maxTokensBudget: z.number().int().min(10_000).nullable(),
+    maxTokensBudget: z.number().int().min(MIN_TOKENS_BUDGET).nullable(),
     /** Archive a branch here when it's deleted on GitHub. */
     archiveDeletedBranches: z.boolean(),
     reviewTimeoutMinutes: z.number().int().min(5).max(720),

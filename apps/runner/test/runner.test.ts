@@ -44,6 +44,30 @@ describe("progress from OCR's stderr", () => {
     });
 });
 
+describe("tokens from OCR's stderr", () => {
+    test("the most OCR has said it used: its usage record, its text summary, or a budget stop", () => {
+        const seen = new Set<string>();
+        let p = {};
+        const read = (line: string) => {
+            p = readProgress(p, line, seen);
+            return (p as { tokens?: number }).tokens;
+        };
+        assert.equal(read("[ocr] token budget: 20K (dispatch stops once exceeded)"), undefined);
+        assert.equal(read("[ocr] token budget reached (used 12K + group est 22K = projected 34K > budget 20K) — skipping group"), 12_000);
+        assert.equal(read('[ocr] Aggregate budget exceeded, skipping round 2 for group "src"'), 12_000);
+        assert.equal(read("[ocr] token budget reached (used 1.5M + group est 22K = projected 1.5M > budget 1.2M) — skipping"), 1_500_000);
+        p = {};
+        // In JSON mode, a failed or stopped review writes its usage record to stderr, indented.
+        for (const line of ["{", '  "status": "failed",', '  "summary": {', '    "files_reviewed": 5,', '    "total_tokens": 48213,'])
+            read(line);
+        assert.equal((p as { tokens?: number }).tokens, 48_213);
+        assert.equal(read('    "total_tokens": 100,'), 48_213, "never goes down");
+        assert.equal(read("[ocr] usage on failure: 3 file(s), 50000 input + 900 output = 50900 total tokens, 4 tool calls"), 50_900);
+        // A finding's text in the report (stdout) never reaches here, but a line merely mentioning tokens isn't a figure.
+        assert.equal(read("[ocr] estimated cost: ~5 file(s), est. 82K input + 26K output ≈ 108K total tokens (rough)"), 50_900);
+    });
+});
+
 describe("OCR's environment", () => {
     test("is built from an allowlist: no telemetry, nothing of Anthropic's, nothing else of the runner's", () => {
         const before = { ...process.env };

@@ -86,7 +86,13 @@ test("with an allowance and no key of its own, the instance key, provider and mo
     assert.equal(r.keySource, "instance");
     assert.equal(r.apiKey, "sk-or-instance-key-0001");
     assert.equal(r.model, "deepseek/deepseek-v3");
-    assert.deepEqual(r.allowance, { monthlyTokens: 2_000_000, used: 0, remaining: 2_000_000, resetsAt: "2026-11-01T00:00:00.000Z" });
+    assert.deepEqual(r.allowance, {
+        monthlyTokens: 2_000_000,
+        used: 0,
+        reserved: 0,
+        remaining: 2_000_000,
+        resetsAt: "2026-11-01T00:00:00.000Z",
+    });
 });
 
 test("a granted workspace waits while the instance has no key for its provider", async () => {
@@ -124,7 +130,13 @@ test("a used-up allowance stops instance-key reviews until the 1st of next month
     clock = new Date("2026-11-01T00:00:00.000Z");
     const fresh = (await t.services.models.forRun(w)) as RunModel;
     assert.equal(fresh.keySource, "instance");
-    assert.deepEqual(fresh.allowance, { monthlyTokens: 2_000_000, used: 0, remaining: 2_000_000, resetsAt: "2026-12-01T00:00:00.000Z" });
+    assert.deepEqual(fresh.allowance, {
+        monthlyTokens: 2_000_000,
+        used: 0,
+        reserved: 0,
+        remaining: 2_000_000,
+        resetsAt: "2026-12-01T00:00:00.000Z",
+    });
 
     // December's allowance resets in the new year, and says so.
     clock = new Date("2026-12-15T12:00:00.000Z");

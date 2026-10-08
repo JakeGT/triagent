@@ -234,7 +234,8 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
     const series = range.buckets.map((date) => ({ date, done: 0, partial: 0, failed: 0, cancelled: 0, tokens: 0, cost: 0 }));
     const byDate = new Map(series.map((d) => [d.date, d]));
     const byStatus = { done: 0, partial: 0, failed: 0, cancelled: 0 };
-    const tokens = { total: 0, input: 0, output: 0, cacheRead: 0, recorded: 0 };
+    // `estimated`: reviews whose tokens are the budget they were given, not a figure from OCR (they ended without one).
+    const tokens = { total: 0, input: 0, output: 0, cacheRead: 0, recorded: 0, estimated: 0, estimatedTotal: 0 };
     const runSeconds: number[] = [];
     const queueSeconds: number[] = [];
     const unpriced = new Map<string, { model: string; reviews: number; tokens: number }>();
@@ -283,6 +284,10 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             tokens.output += r.tokens.output;
             tokens.cacheRead += r.tokens.cacheRead;
             tokens.recorded++;
+            if (r.details.estimatedTokens) {
+                tokens.estimated++;
+                tokens.estimatedTotal += r.tokens.total;
+            }
         }
         if (c !== null) {
             cost += c;
@@ -354,6 +359,7 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             requestedBy: r.details.requestedBy ?? null,
             runSeconds: r.details.runSeconds ?? null,
             tokens: r.tokens?.total ?? null,
+            tokensEstimated: Boolean(r.details.estimatedTokens),
             cost: costs.get(r.id) ?? null,
             findings: r.details.findings?.total ?? null,
         }));

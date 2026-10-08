@@ -220,6 +220,8 @@ export interface ReviewDetails {
     toolCalls?: { total: number; failed: number; byTool?: Record<string, number>; failedByTool?: Record<string, number> };
     llm?: { requests?: number; retries?: number; failures?: number; maxGapSeconds?: number };
     error?: string | null;
+    /** The tokens are the budget the review was given, not a figure from OCR: it ended without saying (instance key only). */
+    estimatedTokens?: boolean;
     /** Findings this review reported for the first time on its branch, by the reviewer's severity: when each first appeared. */
     addedIds?: Partial<Record<Severity, string[]>>;
 }
@@ -312,8 +314,12 @@ export interface Job {
     progress: Record<string, unknown>;
     result: Record<string, unknown> | null;
     error: string | null;
-    /** The model it ran with, set when a runner claims it. */
-    model: { provider: string; model: string; keySource: "workspace" | "instance" } | null;
+    /**
+     * The model it ran with, set when a runner claims it, and the token budget it was given (with the
+     * instance key, out of the workspace's allowance: set aside until it finishes, and charged in full
+     * if it ends without saying what it used).
+     */
+    model: { provider: string; model: string; keySource: "workspace" | "instance"; budget?: number | null } | null;
     /** The credentials handed to the runner, sealed, so log lines can be redacted; cleared when it ends. */
     credentials: string | null;
     /** Kept by the store: lines written so far (the last line's seq), and how many were dropped from the front. */

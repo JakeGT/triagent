@@ -81,6 +81,13 @@ if (model.includes("orphan")) {
 }
 const m = /sleep-(\d+)/.exec(model);
 if (m) {
+    // Like the real one, stopping it (SIGTERM) ends the review gracefully, writing what it used to stderr.
+    process.on("SIGTERM", () => {
+        process.stderr.write(
+            `${JSON.stringify({ status: "failed", summary: { total_tokens: 4321, input_tokens: 4000, output_tokens: 321 } }, null, 2)}\n`,
+        );
+        process.exit(1);
+    });
     const until = Date.now() + Number(m[1]) * 1000;
     let n = 0;
     while (Date.now() < until) {
