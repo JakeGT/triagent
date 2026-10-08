@@ -85,6 +85,22 @@ test("fields side by side line up, and are wired to their labels and description
     }
 });
 
+test("the review model form lines up for every kind of provider", async ({ page, admin }) => {
+    const { ws } = await seedProject(admin);
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    for (const width of [1440, 700]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const path of ["/settings/review-model", "/settings/instance-model"]) {
+            await page.goto(`/w/${ws}${path}`);
+            for (const label of ["OpenAI", "Amazon Bedrock", "Azure OpenAI", "Custom (OpenAI-compatible)"]) {
+                await page.getByLabel("Provider").selectOption({ label });
+                await expectAligned(page, `${path} with ${label} at ${width}px`);
+                await expectWired(page, `${path} with ${label}`);
+            }
+        }
+    }
+});
+
 test("no page is wider than a phone", async ({ page, admin }) => {
     const { ws, project } = await seedProject(admin);
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
@@ -115,4 +131,8 @@ test("no page is wider than a phone", async ({ page, admin }) => {
         const wide = await page.evaluate(() => document.documentElement.scrollWidth);
         expect(wide, `width of ${path}`).toBeLessThanOrEqual(390);
     }
+    // Long model ids among Bedrock's suggestions.
+    await page.goto(`/w/${ws}/settings/review-model`);
+    await page.getByLabel("Provider").selectOption({ label: "Amazon Bedrock" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), "width of the review model page").toBeLessThanOrEqual(390);
 });

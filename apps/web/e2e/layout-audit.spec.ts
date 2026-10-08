@@ -93,6 +93,18 @@ for (const theme of ["light", "dark"] as const)
                 await shot(name);
             }
 
+            // The provider form's fields depend on the provider: an API, an AWS region and two keys, an endpoint, a URL.
+            for (const [name, label] of [
+                ["openai", "OpenAI"],
+                ["bedrock", "Amazon Bedrock"],
+                ["azure", "Azure OpenAI"],
+                ["custom", "Custom (OpenAI-compatible)"],
+            ]) {
+                await page.goto(`/w/${s.ws}/settings/review-model`);
+                await page.getByLabel("Provider").selectOption({ label });
+                await shot(`settings-review-model-${name}`);
+            }
+
             // Dialogs and popovers, over the page that opens them (the viewport, as a phone's dialog is fixed).
             const dialog = async (name: string, open: () => Promise<void>, role: "dialog" | "alertdialog" = "dialog") => {
                 await open();

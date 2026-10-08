@@ -27,6 +27,14 @@ const WIDTH: Record<ControlWidth, string> = {
 const InRow = createContext(false);
 const ROW_ITEM = "sm:row-span-3 sm:grid-rows-subgrid";
 
+/**
+ * For fields built by hand (SecretField): the classes that put one in its FieldRow's lines, and its
+ * label's, or none outside a row.
+ */
+export function useFieldRowItem(): { item: string; label: string } {
+    return use(InRow) ? { item: ROW_ITEM, label: "sm:self-end" } : { item: "", label: "" };
+}
+
 function describedBy(...ids: (string | false | null | undefined)[]): string | undefined {
     return ids.filter(Boolean).join(" ") || undefined;
 }

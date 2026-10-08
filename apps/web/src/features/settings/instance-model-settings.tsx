@@ -9,7 +9,7 @@ import { api } from "@/lib/api";
 import { catalogueQuery, insightKeys, instanceModelQuery, instancePaths, instancePricesQuery } from "@/lib/insights-queries";
 import { useMe, useWorkspace } from "@/lib/session";
 import { ModelProviderForm } from "./model-provider-form";
-import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
+import { ReadOnlyNote, SettingsPage, SettingsSection, StatusNote } from "./settings-page";
 
 export function InstanceModelSettings() {
     const me = useMe();
@@ -40,11 +40,11 @@ export function InstanceModelSettings() {
                 <LoadingRows rows={4} />
             ) : (
                 <>
-                    <p className="text-sm" data-testid="instance-model-status">
+                    <StatusNote data-testid="instance-model-status">
                         {data.ready
                             ? `Ready: workspaces with an allowance review with ${data.model} through ${data.providers.find((p) => p.id === data.provider)?.name ?? data.provider}.`
                             : `Not ready: add ${data.missing ?? "an instance key"}.`}
-                    </p>
+                    </StatusNote>
                     <ModelProviderForm
                         data={data}
                         base={instancePaths.model}

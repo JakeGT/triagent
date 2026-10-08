@@ -2,9 +2,9 @@
 // and when, and its last four characters; that's shown as text. A new value can replace it or it can be
 // cleared, but the stored value is never shown or put back in the input.
 
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
-import { ControlGroup, FieldError, FieldHint } from "@/components/field";
+import { ControlGroup, FieldError, FieldHint, useFieldRowItem } from "@/components/field";
 import { FormActions } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { SecretView } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 /** "Set by Sam on 7 Oct 2026, ends …abcd", or "Not set". */
 export function describeSecret(secret: Pick<SecretView, "set" | "hint" | "setBy" | "setAt">): string {
@@ -29,8 +30,8 @@ export function describeSecret(secret: Pick<SecretView, "set" | "hint" | "setBy"
 export interface SecretFieldProps {
     label: string;
     secret: SecretView;
-    /** What the value is and where to get it. */
-    hint?: string;
+    /** What the value is and where to get it: shown under the input, like every field's description. */
+    hint?: ReactNode;
     /** May this person replace or clear it? Otherwise only the status is shown. */
     canEdit: boolean;
     onSave(value: string): Promise<unknown>;
@@ -44,6 +45,7 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const showInput = canEdit && (editing || !secret.set);
+    const row = useFieldRowItem();
 
     const save = async () => {
         if (!value.trim()) {
@@ -64,8 +66,8 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
     };
 
     return (
-        <div className="grid gap-field" data-testid="secret-field">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <div className={cn("grid grid-cols-[minmax(0,1fr)] content-start gap-field", row.item)} data-testid="secret-field">
+            <div className={cn("flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5", row.label)}>
                 <Label htmlFor={showInput ? id : undefined} id={`${id}-label`} className="leading-snug">
                     {label}
                 </Label>
@@ -75,6 +77,7 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
             </div>
             {showInput ? (
                 <form
+                    data-field-control=""
                     onSubmit={(e) => {
                         e.preventDefault();
                         void save();
@@ -114,7 +117,7 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
                 </form>
             ) : (
                 canEdit && (
-                    <FormActions>
+                    <FormActions data-field-control="">
                         <Button type="button" variant="outline" onClick={() => setEditing(true)}>
                             Replace
                         </Button>
@@ -132,8 +135,12 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
                     </FormActions>
                 )
             )}
-            {hint && <FieldHint id={`${id}-hint`}>{hint}</FieldHint>}
-            <FieldError id={`${id}-error`} message={error} />
+            {(hint || error) && (
+                <div className="grid content-start gap-field">
+                    {hint && <FieldHint id={`${id}-hint`}>{hint}</FieldHint>}
+                    <FieldError id={`${id}-error`} message={error} />
+                </div>
+            )}
         </div>
     );
 }

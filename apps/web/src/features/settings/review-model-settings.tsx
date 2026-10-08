@@ -8,7 +8,7 @@ import type { Allowance } from "@/lib/insights-types";
 import { keys, reviewModelQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
 import { ModelProviderForm } from "./model-provider-form";
-import { SettingsPage, SettingsSection } from "./settings-page";
+import { SettingsPage, SettingsSection, StatusNote } from "./settings-page";
 
 export function ReviewModelSettings() {
     const { ws, workspace, can } = useWorkspace();
@@ -33,13 +33,13 @@ export function ReviewModelSettings() {
                 <LoadingRows rows={4} />
             ) : (
                 <>
-                    <p className="text-sm" data-testid="review-model-status">
+                    <StatusNote data-testid="review-model-status">
                         {data.ready
                             ? `Ready: reviews use ${data.model} through ${data.providers.find((p) => p.id === data.provider)?.name ?? data.provider}.`
                             : allowance.data?.now.ready
                               ? `Ready: reviews use ${allowance.data.now.model} through the instance's key.`
                               : `Not ready: ${allowance.data && !allowance.data.now.ready ? allowance.data.now.reason : `add ${data.missing ?? "an API key"}.`}`}
-                    </p>
+                    </StatusNote>
                     <ModelProviderForm
                         data={data}
                         base={`${paths.workspace(ws)}/settings/review-model`}

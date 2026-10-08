@@ -7,7 +7,8 @@ import { type QueryKey, useMutation, useQuery } from "@tanstack/react-query";
 import { useId } from "react";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
-import { Field, FieldError, NativeSelect } from "@/components/field";
+import { Field, FieldError, FieldRow, NativeSelect } from "@/components/field";
+import { FormActions } from "@/components/form";
 import { ModelPicker } from "@/components/model-picker";
 import { SecretField } from "@/components/secret-field";
 import { Button } from "@/components/ui/button";
@@ -111,66 +112,118 @@ export function ModelProviderForm({
         scope === "instance" ? `${p.name} instance ${p.keyLabel === "API key" ? "key" : p.keyLabel}` : `${p.name} ${p.keyLabel}`;
     const idName = scope === "instance" ? `${p.name} instance AWS access key ID` : `${p.name} AWS access key ID`;
 
+    const providerField = (
+        <Field label="Provider" hint={`Requests go to ${destination(p, d)}.`}>
+            {(f) => (
+                <NativeSelect
+                    {...f}
+                    value={d.provider}
+                    disabled={!canConfigure}
+                    onChange={(e) => form.setDraft(draftOf(data, e.target.value))}
+                >
+                    {groups(data.providers).map(([group, members]) => (
+                        <optgroup key={group} label={group}>
+                            {members.map((x) => (
+                                <option key={x.id} value={x.id}>
+                                    {x.name}
+                                </option>
+                            ))}
+                        </optgroup>
+                    ))}
+                </NativeSelect>
+            )}
+        </Field>
+    );
+    const apiField = p.protocols.length > 1 && (
+        <Field
+            label="API"
+            hint={
+                p.id === "custom"
+                    ? "The API your server speaks. Most speak Chat Completions."
+                    : "Pro models, and tool calls with some newer OpenAI models, need Responses."
+            }
+        >
+            {(f) => (
+                <NativeSelect
+                    {...f}
+                    value={d.protocol}
+                    disabled={!canConfigure}
+                    onChange={(e) => form.setDraft({ ...d, protocol: e.target.value as ModelProtocol })}
+                >
+                    {p.protocols.map((x) => (
+                        <option key={x} value={x}>
+                            {PROTOCOL_LABELS[x]}
+                        </option>
+                    ))}
+                </NativeSelect>
+            )}
+        </Field>
+    );
+    const regionField = p.fields.includes("region") && (
+        <Field label="AWS region" hint="Where your Bedrock models run, like eu-west-2 or us-east-1.">
+            {(f) => (
+                <Input
+                    {...f}
+                    value={d.region}
+                    onChange={(e) => form.setDraft({ ...d, region: e.target.value })}
+                    disabled={!canConfigure}
+                    maxLength={40}
+                    spellCheck={false}
+                    autoComplete="off"
+                    className="font-mono"
+                />
+            )}
+        </Field>
+    );
+    const keyField = (
+        <SecretField
+            label={keyName}
+            secret={p.key}
+            canEdit={canSetSecrets}
+            hint={
+                <>
+                    {`${p.keyFormat ? `${p.keyFormat}. ` : ""}${p.fields.includes("region") ? "Used to sign requests to" : "Sent only to"} ${destination(p, d)}.`}
+                    {keysUrl && (
+                        <>
+                            {" "}
+                            <a href={keysUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                                Get a {p.name} key<span className="sr-only"> (opens in a new tab)</span>
+                            </a>
+                        </>
+                    )}
+                </>
+            }
+            onSave={async (key) => {
+                await api.put(keyPath, { key });
+                await refresh();
+                toast.success(`${p.name} key saved.`);
+            }}
+            onClear={async () => {
+                await api.delete(keyPath);
+                await refresh();
+                toast.success(`${p.name} key cleared.`);
+            }}
+        />
+    );
+
     return (
         <>
             <SettingsSection title="Provider and model">
                 {!canConfigure && <ReadOnlyNote />}
                 <ChangedElsewhere show={form.changedElsewhere} onReload={form.reload} what="The review model" />
                 <form
-                    className="grid gap-4"
+                    className="grid gap-form"
                     onSubmit={(e) => {
                         e.preventDefault();
                         save.mutate(d);
                     }}
                 >
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Provider" hint={`Requests go to ${destination(p, d)}.`} className="content-start">
-                            {(f) => (
-                                <NativeSelect
-                                    {...f}
-                                    value={d.provider}
-                                    disabled={!canConfigure}
-                                    onChange={(e) => form.setDraft(draftOf(data, e.target.value))}
-                                >
-                                    {groups(data.providers).map(([group, members]) => (
-                                        <optgroup key={group} label={group}>
-                                            {members.map((x) => (
-                                                <option key={x.id} value={x.id}>
-                                                    {x.name}
-                                                </option>
-                                            ))}
-                                        </optgroup>
-                                    ))}
-                                </NativeSelect>
-                            )}
-                        </Field>
-                        {p.protocols.length > 1 && (
-                            <Field
-                                label="API"
-                                hint={
-                                    p.id === "custom"
-                                        ? "The API your server speaks. Most speak Chat Completions."
-                                        : "Pro models, and tool calls with some newer OpenAI models, need Responses."
-                                }
-                                className="content-start"
-                            >
-                                {(f) => (
-                                    <NativeSelect
-                                        {...f}
-                                        value={d.protocol}
-                                        disabled={!canConfigure}
-                                        onChange={(e) => form.setDraft({ ...d, protocol: e.target.value as ModelProtocol })}
-                                    >
-                                        {p.protocols.map((x) => (
-                                            <option key={x} value={x}>
-                                                {PROTOCOL_LABELS[x]}
-                                            </option>
-                                        ))}
-                                    </NativeSelect>
-                                )}
-                            </Field>
-                        )}
-                    </div>
+                    {/* The provider beside its short settings (its API or region); an address gets a line of its own. */}
+                    <FieldRow>
+                        {providerField}
+                        {apiField || regionField}
+                    </FieldRow>
+                    {apiField && regionField}
                     {p.fields.includes("url") && (
                         <Field
                             label={p.id === "azure" ? "Endpoint" : "Base URL"}
@@ -188,22 +241,6 @@ export function ModelProviderForm({
                                     onChange={(e) => form.setDraft({ ...d, url: e.target.value })}
                                     disabled={!canConfigure}
                                     maxLength={500}
-                                    spellCheck={false}
-                                    autoComplete="off"
-                                    className="font-mono"
-                                />
-                            )}
-                        </Field>
-                    )}
-                    {p.fields.includes("region") && (
-                        <Field label="AWS region" hint="Where your Bedrock models run, like eu-west-2 or us-east-1.">
-                            {(f) => (
-                                <Input
-                                    {...f}
-                                    value={d.region}
-                                    onChange={(e) => form.setDraft({ ...d, region: e.target.value })}
-                                    disabled={!canConfigure}
-                                    maxLength={40}
                                     spellCheck={false}
                                     autoComplete="off"
                                     className="font-mono"
@@ -254,7 +291,8 @@ export function ModelProviderForm({
                                     type="button"
                                     size="sm"
                                     variant={m === d.model ? "secondary" : "outline"}
-                                    className="font-mono"
+                                    // Long model ids wrap on a phone rather than widening the page.
+                                    className="h-auto min-h-8 max-w-full font-mono break-all whitespace-normal"
                                     aria-pressed={m === d.model}
                                     onClick={() => form.setDraft({ ...d, model: m })}
                                 >
@@ -263,18 +301,16 @@ export function ModelProviderForm({
                             ))}
                         </div>
                     )}
-                    {canConfigure && p.id === "openrouter" && (
-                        <div>
-                            <ModelPicker ws={ws} current={d.model} onChoose={(m) => form.setDraft({ ...d, model: m.id })} />
-                        </div>
-                    )}
                     <FieldError message={save.error ? errorMessage(save.error) : null} />
                     {canConfigure && (
-                        <div>
+                        <FormActions>
                             <Button type="submit" disabled={save.isPending || !form.dirty}>
                                 {save.isPending ? "Saving…" : "Save model"}
                             </Button>
-                        </div>
+                            {p.id === "openrouter" && (
+                                <ModelPicker ws={ws} current={d.model} onChoose={(m) => form.setDraft({ ...d, model: m.id })} />
+                            )}
+                        </FormActions>
                     )}
                 </form>
             </SettingsSection>
@@ -287,48 +323,31 @@ export function ModelProviderForm({
                 }
             >
                 {!canSetSecrets && <ReadOnlyNote>Only admins can set or clear keys.</ReadOnlyNote>}
-                <div className="grid gap-4" data-testid="provider-keys">
-                    {p.accessKeyId && (
-                        <SecretField
-                            label={idName}
-                            secret={p.accessKeyId}
-                            canEdit={canSetSecrets}
-                            hint="An IAM user's access key ID, starting AKIA. Its user needs permission to invoke the model in that region."
-                            onSave={async (key) => {
-                                await api.put(`${keyPath}/access-key-id`, { key });
-                                await refresh();
-                                toast.success(`${p.name} access key ID saved.`);
-                            }}
-                            onClear={async () => {
-                                await api.delete(`${keyPath}/access-key-id`);
-                                await refresh();
-                                toast.success(`${p.name} access key ID cleared.`);
-                            }}
-                        />
+                <div className="grid gap-form" data-testid="provider-keys">
+                    {p.accessKeyId ? (
+                        // Bedrock's two halves of one credential, side by side.
+                        <FieldRow>
+                            <SecretField
+                                label={idName}
+                                secret={p.accessKeyId}
+                                canEdit={canSetSecrets}
+                                hint="An IAM user's access key ID, starting AKIA. Its user needs permission to invoke the model in that region."
+                                onSave={async (key) => {
+                                    await api.put(`${keyPath}/access-key-id`, { key });
+                                    await refresh();
+                                    toast.success(`${p.name} access key ID saved.`);
+                                }}
+                                onClear={async () => {
+                                    await api.delete(`${keyPath}/access-key-id`);
+                                    await refresh();
+                                    toast.success(`${p.name} access key ID cleared.`);
+                                }}
+                            />
+                            {keyField}
+                        </FieldRow>
+                    ) : (
+                        keyField
                     )}
-                    <div className="grid gap-1">
-                        <SecretField
-                            label={keyName}
-                            secret={p.key}
-                            canEdit={canSetSecrets}
-                            hint={`${p.keyFormat ? `${p.keyFormat}. ` : ""}${p.fields.includes("region") ? "Used to sign requests to" : "Sent only to"} ${destination(p, d)}.`}
-                            onSave={async (key) => {
-                                await api.put(keyPath, { key });
-                                await refresh();
-                                toast.success(`${p.name} key saved.`);
-                            }}
-                            onClear={async () => {
-                                await api.delete(keyPath);
-                                await refresh();
-                                toast.success(`${p.name} key cleared.`);
-                            }}
-                        />
-                        {keysUrl && (
-                            <a href={keysUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline">
-                                Get a {p.name} key<span className="sr-only"> (opens in a new tab)</span>
-                            </a>
-                        )}
-                    </div>
                     {others.length > 0 && (
                         <p className="text-sm text-muted-foreground">
                             Keys are also stored for {others.join(", ")}. Choose a provider above to change its key.

@@ -29,7 +29,7 @@ export function FormSection({
         <section
             // Page-level sections are landmarks; a settings page's sections are just headed groups.
             aria-labelledby={level === 2 ? id : undefined}
-            className={cn("grid content-start gap-form rounded-lg border bg-card p-inset", className)}
+            className={cn("grid grid-cols-[minmax(0,1fr)] content-start gap-form rounded-lg border bg-card p-inset", className)}
             {...props}
         >
             <div className="grid gap-1">
@@ -47,6 +47,10 @@ export function FormSection({
 }
 
 /** A form's buttons, at its end: the main action first. */
-export function FormActions({ children, className }: { children: ReactNode; className?: string }) {
-    return <div className={cn("flex flex-wrap items-center gap-2", className)}>{children}</div>;
+export function FormActions({ children, className, ...props }: React.ComponentProps<"div">) {
+    return (
+        <div className={cn("flex flex-wrap items-center gap-2", className)} {...props}>
+            {children}
+        </div>
+    );
 }
