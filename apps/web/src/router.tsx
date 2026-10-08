@@ -15,6 +15,7 @@ import {
 import { RouteError } from "@/components/load-state";
 import { NotFoundPage } from "@/components/not-found";
 import { RootLayout } from "@/components/root-layout";
+import { parseAnalyticsSearch } from "@/features/analytics/search";
 import { parseIssueSearch } from "@/features/issues/search";
 import { isApiError, setCsrfToken } from "@/lib/api";
 import { PREF, prefs } from "@/lib/prefs";
@@ -123,6 +124,13 @@ const agentsRoute = createRoute({
     component: lazyRouteComponent(() => import("@/features/agents/agents-page"), "AgentsPage"),
 });
 
+const analyticsRoute = createRoute({
+    getParentRoute: () => wsRoute,
+    path: "/analytics",
+    validateSearch: parseAnalyticsSearch,
+    component: lazyRouteComponent(() => import("@/features/analytics/analytics-page"), "AnalyticsPage"),
+});
+
 // ---- settings: workspace, instance and account ---------------------------------------------------
 
 const wsSettingsRoute = createRoute({
@@ -151,6 +159,18 @@ const wsSettingsRoutes = [
     settingsPage(
         "/review-model",
         lazyRouteComponent(() => import("@/features/settings/review-model-settings"), "ReviewModelSettings"),
+    ),
+    settingsPage(
+        "/model-prices",
+        lazyRouteComponent(() => import("@/features/settings/model-prices-settings"), "ModelPricesSettings"),
+    ),
+    settingsPage(
+        "/instance-model",
+        lazyRouteComponent(() => import("@/features/settings/instance-model-settings"), "InstanceModelSettings"),
+    ),
+    settingsPage(
+        "/instance-workspaces",
+        lazyRouteComponent(() => import("@/features/settings/instance-workspaces-settings"), "InstanceWorkspacesSettings"),
     ),
     settingsPage(
         "/members",
@@ -309,6 +329,7 @@ const routeTree = rootRoute.addChildren([
         wsRoute.addChildren([
             wsIndexRoute,
             agentsRoute,
+            analyticsRoute,
             wsSettingsRoute.addChildren([wsSettingsIndexRoute, ...wsSettingsRoutes]),
             projectRoute.addChildren([
                 projectIndexRoute,

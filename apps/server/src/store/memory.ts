@@ -17,6 +17,7 @@ import type {
     Job,
     LogLine,
     Membership,
+    ModelGrant,
     Page,
     Project,
     Repos,
@@ -164,6 +165,8 @@ export class MemoryStore implements Store {
         githubState: this.table<{ state: unknown }>(),
         githubDeliveries: this.table<GithubDelivery[]>(),
         runners: this.table<RunnerRecord>(),
+        instanceSettings: this.table<{ value: unknown }>(),
+        modelGrants: this.table<ModelGrant>(),
         activity: new Log<ActivityRow>(() => this.context.getStore()?.undo ?? null),
         audit: new Log<AuditRow>(() => this.context.getStore()?.undo ?? null),
         reviewHistory: new Log<ReviewRecord>(() => this.context.getStore()?.undo ?? null),
@@ -261,6 +264,7 @@ export class MemoryStore implements Store {
                 this.t.reviewHistory.remove((r) => r.workspaceId === id);
                 for (const i of this.t.githubInstallations.values())
                     if (i.workspaceId === id) this.t.githubInstallations.delete(String(i.id));
+                this.t.modelGrants.delete(id);
                 this.t.workspaces.delete(id);
             }),
     };
@@ -392,6 +396,14 @@ export class MemoryStore implements Store {
             this.t.reviewHistory.rows
                 .filter((r) => r.workspaceId === workspaceId && r.at >= since && (keySource === undefined || r.keySource === keySource))
                 .reduce((n, r) => n + (r.tokens?.total ?? 0), 0),
+        tokensByWorkspace: async (since, keySource) => {
+            const out: Record<string, number> = {};
+            for (const r of this.t.reviewHistory.rows) {
+                if (r.at < since || (keySource !== undefined && r.keySource !== keySource) || !r.tokens?.total) continue;
+                out[r.workspaceId] = (out[r.workspaceId] ?? 0) + r.tokens.total;
+            }
+            return out;
+        },
     };
 
     audit: Repos["audit"] = {
@@ -509,5 +521,17 @@ export class MemoryStore implements Store {
     runners: Repos["runners"] = {
         seen: (r) => this.write(() => this.t.runners.set(r.id, r)),
         list: async () => this.t.runners.values().sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)),
+    };
+
+    instanceSettings: Repos["instanceSettings"] = {
+        get: async (k) => this.t.instanceSettings.get(k)?.value ?? null,
+        put: (k, value) => this.write(() => this.t.instanceSettings.set(k, { value })),
+    };
+
+    modelGrants: Repos["modelGrants"] = {
+        get: async (workspaceId) => this.t.modelGrants.get(workspaceId),
+        list: async () => this.t.modelGrants.values().sort((a, b) => a.grantedAt.localeCompare(b.grantedAt)),
+        put: (g) => this.write(() => this.t.modelGrants.set(g.workspaceId, g)),
+        delete: (workspaceId) => this.write(() => this.t.modelGrants.delete(workspaceId)),
     };
 }

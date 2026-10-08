@@ -196,9 +196,11 @@ export interface ReviewDetails {
     /** What the resulting upload did to the branch's triage. */
     counts?: { added: number; carriedOver: number; removed: number; reopened: number };
     files?: { reviewed?: number; groups?: number; failedGroups?: number };
-    toolCalls?: { total: number; failed: number; byTool?: Record<string, number> };
+    toolCalls?: { total: number; failed: number; byTool?: Record<string, number>; failedByTool?: Record<string, number> };
     llm?: { requests?: number; retries?: number; failures?: number; maxGapSeconds?: number };
     error?: string | null;
+    /** Findings this review reported for the first time on its branch, by the reviewer's severity: when each first appeared. */
+    addedIds?: Partial<Record<Severity, string[]>>;
 }
 
 /** One finished review: a run on the server, or a report someone uploaded. Kept for analytics and allowances. */
@@ -231,6 +233,14 @@ export interface SecretRecord {
     hint: string;
     setBy: string;
     setAt: string;
+}
+
+/** A workspace allowed to use the instance's model key, up to a number of tokens each calendar month (UTC). */
+export interface ModelGrant {
+    workspaceId: string;
+    monthlyTokens: number;
+    grantedBy: string;
+    grantedAt: string;
 }
 
 export interface SettingRecord {
@@ -426,6 +436,8 @@ export interface Repos {
         list(filter: { workspaceId: string; projectId?: string; branch?: string; since?: string }, limit: number): Promise<ReviewRecord[]>;
         /** Model tokens used since `since`, optionally only those paid with one kind of key. */
         tokensSince(workspaceId: string, since: string, keySource?: ReviewRecord["keySource"]): Promise<number>;
+        /** The same, for every workspace with any: workspace id → tokens. */
+        tokensByWorkspace(since: string, keySource?: ReviewRecord["keySource"]): Promise<Record<string, number>>;
     };
     settings: {
         get(workspaceId: string, projectId: string | null, key: string): Promise<SettingRecord | null>;
@@ -467,6 +479,17 @@ export interface Repos {
     runners: {
         seen(runner: RunnerRecord): Promise<void>;
         list(): Promise<RunnerRecord[]>;
+    };
+    /** Settings of the instance as a whole (not of any workspace). */
+    instanceSettings: {
+        get(key: string): Promise<unknown | null>;
+        put(key: string, value: unknown): Promise<void>;
+    };
+    modelGrants: {
+        get(workspaceId: string): Promise<ModelGrant | null>;
+        list(): Promise<ModelGrant[]>;
+        put(grant: ModelGrant): Promise<void>;
+        delete(workspaceId: string): Promise<void>;
     };
 }
 

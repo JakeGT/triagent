@@ -7,15 +7,19 @@ import { CATEGORIES, type Category, ROLE_PERMISSIONS, SCOPE_PERMISSIONS, SEVERIT
 import { BranchView, compareBranches } from "../domain/branch.ts";
 import { COMMIT, cleanText, isValidBranch } from "../domain/names.ts";
 import { EMPTY_REVIEW, parseReport, type RawComment, type RawReport, type Review, sameFinding, type UploadMeta } from "../domain/report.ts";
+import { reportMetrics } from "../domain/review-metrics.ts";
 import { ApiError, badRequest, conflict, notFound } from "../errors.ts";
 import { now, sha256 } from "../security.ts";
 import type { Project, Repos, StoredReport, UploadLink } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
+import type { History } from "./history.ts";
 import { applyChange, type BranchRef } from "./triage.ts";
 
 const KEEP_ARCHIVED = 10;
 const LINK_TTL_MS = 15 * 60_000;
 const MAX_LINKS = 1000;
+/** New finding ids kept per review, for when each first appeared; a first full scan can have thousands. */
+const MAX_ADDED_IDS = 5000;
 
 export interface UploadInput {
     branch?: unknown;
@@ -71,11 +75,13 @@ function textField(value: unknown, max: number, field: string, required = false)
 
 export class Reports {
     private readonly core: Core;
+    private readonly reviews: History | null;
     /** Parsed reports by project, branch and version: parsing a large report is the slow part. */
     private readonly parsed = new Map<string, Review>();
 
-    constructor(core: Core) {
+    constructor(core: Core, history: History | null = null) {
         this.core = core;
+        this.reviews = history;
     }
 
     private review(stored: StoredReport): Review {
@@ -109,6 +115,11 @@ export class Reports {
             throw notFound(`No report for branch "${branch.slice(0, 100)}". Branches with reports: ${known.join(", ") || "none"}.`);
         }
         return this.build(repos, project, branch, stored);
+    }
+
+    /** A branch's view from a report already read (analytics reads every branch's). */
+    viewStored(repos: Repos, project: Project, stored: StoredReport): Promise<BranchView> {
+        return this.build(repos, project, stored.branch, stored);
     }
 
     branchOf(project: Project, value: unknown): string {
@@ -388,6 +399,43 @@ export class Reports {
                 },
                 project.slug,
             );
+            // Reviews run on the server upload through GitHub automation and record themselves, with their timings.
+            if (this.reviews && actor.via !== "github") {
+                const m = reportMetrics(merged);
+                const addedIds: Partial<Record<Severity, string[]>> = {};
+                let kept = 0;
+                for (const x of next.issues) {
+                    if (current.review.byId.has(x.id) || kept++ >= MAX_ADDED_IDS) continue;
+                    const ids = addedIds[x.severity] ?? [];
+                    ids.push(x.id);
+                    addedIds[x.severity] = ids;
+                }
+                await this.reviews.record(w.tx, {
+                    workspaceId: project.workspaceId,
+                    projectId: project.id,
+                    branch,
+                    at: upload.uploadedAt,
+                    source: "upload",
+                    kind: "upload",
+                    status: m.partial ? "partial" : "done",
+                    model: m.model,
+                    provider: m.provider,
+                    keySource: null,
+                    tokens: m.tokens,
+                    details: {
+                        commit,
+                        requestedBy: actor.name,
+                        ocrVersion: m.ocrVersion,
+                        ...(m.runSeconds !== null ? { runSeconds: m.runSeconds } : {}),
+                        findings: { total: next.issues.length, bySeverity: comparison.next.bySeverity },
+                        counts: { added: comparison.added, carriedOver: comparison.carriedOver, removed: comparison.removed, reopened },
+                        ...(m.files ? { files: m.files } : {}),
+                        ...(m.toolCalls ? { toolCalls: m.toolCalls } : {}),
+                        ...(m.llm ? { llm: m.llm } : {}),
+                        addedIds,
+                    },
+                });
+            }
             return { ok: true, ...comparison, reopened, current: next.meta };
         });
     }

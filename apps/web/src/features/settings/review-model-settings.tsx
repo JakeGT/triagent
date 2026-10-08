@@ -1,13 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
+import { UsageBar } from "@/components/charts";
 import { Field, FieldError, NativeSelect } from "@/components/field";
 import { LoadError, LoadingRows } from "@/components/load-state";
+import { ModelPicker } from "@/components/model-picker";
 import { SecretField } from "@/components/secret-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
+import { count, utcDay } from "@/lib/insights-format";
+import { allowanceQuery, insightKeys } from "@/lib/insights-queries";
+import type { Allowance } from "@/lib/insights-types";
 import { keys, reviewModelQuery } from "@/lib/queries";
 import { safeHref } from "@/lib/safe-href";
 import { useWorkspace } from "@/lib/session";
@@ -21,7 +26,12 @@ export function ReviewModelSettings() {
     const query = useQuery(reviewModelQuery(ws));
     const data = query.data;
     const form = useDraft(data ? { provider: data.provider, model: data.model ?? "" } : undefined);
-    const refresh = () => queryClient.invalidateQueries({ queryKey: keys.wsSettings(ws, "review-model") });
+    const allowance = useQuery(allowanceQuery(ws));
+    const refresh = () =>
+        Promise.all([
+            queryClient.invalidateQueries({ queryKey: keys.wsSettings(ws, "review-model") }),
+            queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) }),
+        ]);
 
     const save = useMutation({
         mutationFn: (v: { provider: string; model: string }) =>
@@ -29,6 +39,7 @@ export function ReviewModelSettings() {
         onSuccess: (m) => {
             queryClient.setQueryData(keys.wsSettings(ws, "review-model"), m);
             form.saved({ provider: m.provider, model: m.model ?? "" });
+            void queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) });
             toast.success("Review model saved.");
         },
     });
@@ -45,10 +56,12 @@ export function ReviewModelSettings() {
                 <LoadingRows rows={4} />
             ) : (
                 <>
-                    <p className="text-sm">
+                    <p className="text-sm" data-testid="review-model-status">
                         {data.ready
                             ? `Ready: reviews use ${data.model} through ${data.providers.find((p) => p.id === data.provider)?.name ?? data.provider}.`
-                            : "Not ready: the chosen provider has no API key yet."}
+                            : allowance.data?.now.ready
+                              ? `Ready: reviews use ${allowance.data.now.model} through the instance's key.`
+                              : `Not ready: ${allowance.data && !allowance.data.now.ready ? allowance.data.now.reason : "the chosen provider has no API key yet."}`}
                     </p>
                     <SettingsSection title="Model">
                         {!editable && <ReadOnlyNote />}
@@ -95,6 +108,11 @@ export function ReviewModelSettings() {
                                     />
                                 )}
                             </Field>
+                            {editable && d.provider === "openrouter" && (
+                                <div>
+                                    <ModelPicker ws={ws} current={d.model} onChoose={(m) => form.setDraft({ ...d, model: m.id })} />
+                                </div>
+                            )}
                             <FieldError message={save.error ? errorMessage(save.error) : null} />
                             {editable && (
                                 <div>
@@ -105,6 +123,7 @@ export function ReviewModelSettings() {
                             )}
                         </form>
                     </SettingsSection>
+                    {allowance.data && <InstanceKeyStatus a={allowance.data} />}
                     <SettingsSection
                         title="API keys"
                         description="Stored encrypted for this workspace and never shown again. API tokens and agents can't set or read them."
@@ -146,5 +165,41 @@ export function ReviewModelSettings() {
                 </>
             )}
         </SettingsPage>
+    );
+}
+
+/** Whether this workspace may use the instance's key, and how much of this month's allowance is left. */
+function InstanceKeyStatus({ a }: { a: Allowance }) {
+    const usingIt = a.now.ready && a.now.keySource === "instance";
+    return (
+        <SettingsSection
+            title="Use the instance key"
+            description="The instance administrator can let a workspace use the instance's own model key, up to a number of tokens each month."
+        >
+            <div className="grid gap-2 text-sm" data-testid="instance-key-status">
+                {!a.granted || a.monthlyTokens === null ? (
+                    <p>This workspace can't use the instance's key. Reviews need one of the API keys below.</p>
+                ) : (
+                    <>
+                        <p>
+                            This workspace may use the instance's key ({a.instance.providerName},{" "}
+                            <span className="font-mono">{a.instance.model}</span>) for up to {count(a.monthlyTokens)} tokens a month.{" "}
+                            {!a.instance.keySet
+                                ? "The instance administrator hasn't set the key up yet."
+                                : usingIt
+                                  ? "Reviews use it now, because this workspace has no key of its own for its provider."
+                                  : a.now.ready
+                                    ? "Reviews use this workspace's own key, so the allowance isn't used."
+                                    : ""}
+                        </p>
+                        <UsageBar used={a.used} total={a.monthlyTokens} label="Instance key allowance used this month" />
+                        <p className="text-muted-foreground">
+                            {count(a.used)} of {count(a.monthlyTokens)} tokens used this month ({count(a.remaining ?? 0)} left). It resets
+                            on {utcDay(a.resetsAt)}.
+                        </p>
+                    </>
+                )}
+            </div>
+        </SettingsSection>
     );
 }

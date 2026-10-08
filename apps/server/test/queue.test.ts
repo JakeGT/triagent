@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import type { Actor } from "../src/services/core.ts";
 import { createServices } from "../src/services/index.ts";
-import { type RunnerHello, specForBranch, specForPull } from "../src/services/runs.ts";
+import { budget, type RunnerHello, specForBranch, specForPull } from "../src/services/runs.ts";
 import type { Project } from "../src/store/types.ts";
 import { ADMIN_PASSWORD } from "./helpers.ts";
 import { MODEL_KEY, PAT, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
@@ -63,7 +63,7 @@ describe("taking turns, caps and readiness", () => {
         const list = (await env.t.request("/api/v1/w/gamma/runs", { session: env.admin })).body;
         assert.equal(list.queued[0].id, c1.id);
         assert.equal(list.ready, false);
-        assert.match(list.waiting, /Add a OpenRouter API key in Settings → Review model & keys/);
+        assert.match(list.waiting, /Add an OpenRouter API key in Settings → Review model & keys/);
         assert.match(list.queued[0].waiting, /OpenRouter API key/);
         // Once it has a key, it runs.
         await env.t.request("/api/v1/w/gamma/settings/review-model/keys/openrouter", {
@@ -273,4 +273,12 @@ describe("the runner API", () => {
         });
         assert.equal(res.status, 404);
     });
+});
+
+test("a run's token budget: the project's, or what's left of an instance allowance if that's less", () => {
+    assert.equal(budget(null, null), null);
+    assert.equal(budget(50_000, null), 50_000);
+    assert.equal(budget(null, 20_000), 20_000);
+    assert.equal(budget(50_000, 20_000), 20_000);
+    assert.equal(budget(50_000, 0), 1);
 });

@@ -7,6 +7,8 @@ import type { Route } from "./http/route.ts";
 import { serveWeb, webDistDir } from "./http/static.ts";
 import { accountRoutes } from "./routes/account.ts";
 import { githubRoutes } from "./routes/github.ts";
+import { insightRoutes } from "./routes/insights.ts";
+import { instanceModelRoutes } from "./routes/instance-models.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { platformRoutes } from "./routes/platform.ts";
 import { projectRoutes } from "./routes/projects.ts";
@@ -43,6 +45,8 @@ export function allRoutes(services: Services): Route[] {
         ...runRoutes,
         ...githubRoutes,
         ...runnerRoutes,
+        ...insightRoutes,
+        ...instanceModelRoutes,
         ...platformRoutes(services, () => routes),
     );
     return routes;

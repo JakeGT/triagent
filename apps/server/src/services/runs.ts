@@ -10,7 +10,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { Severity } from "@triagent/shared";
 import { parseFilters } from "../domain/filters.ts";
 import { isValidBranch } from "../domain/names.ts";
-import { commentBody, finishedStatus, reportMetrics, reviewGaps } from "../domain/review-run.ts";
+import type { RawReport } from "../domain/report.ts";
+import { reportMetrics } from "../domain/review-metrics.ts";
+import { commentBody, finishedStatus, reviewGaps } from "../domain/review-run.ts";
 import { ApiError, badRequest, conflict, notFound } from "../errors.ts";
 import { now, randomId } from "../security.ts";
 import { ACTIVE_JOB_STATUSES, type Job, type JobKind, type JobStatus, type Project, type Repos, type Workspace } from "../store/types.ts";
@@ -26,6 +28,8 @@ export const LOG_CAP_BYTES = 2 * 1024 * 1024;
 export const LEASE_SECONDS = 60;
 const MAX_LINE = 4000;
 const MAX_LINES_PER_BATCH = 2000;
+/** As for uploads: the ids of findings a review reported first, for analytics, at most this many. */
+const MAX_ADDED_IDS = 5000;
 const PROGRESS_EVERY_MS = 1000;
 /** A runner not heard from for this long is no longer counted as connected. */
 const RUNNER_GONE_MS = 90_000;
@@ -178,6 +182,12 @@ function cleanProgress(input: unknown): Record<string, unknown> {
         else if (typeof v === "string") out[k] = v.slice(0, 200);
     }
     return out;
+}
+
+/** The project's token budget, or what's left of an instance allowance if that's less, so one run can't overspend it. */
+export function budget(project: number | null, allowance: number | null): number | null {
+    if (project === null) return allowance === null ? null : Math.max(1, allowance);
+    return allowance === null ? project : Math.max(1, Math.min(project, allowance));
 }
 
 const seconds = (from: string | null, to: string | null) =>
@@ -619,7 +629,7 @@ export class Runs {
             baseRef: job.baseRef,
             headSha: job.headSha,
             timeoutMinutes: job.kind === "full" ? automation.fullScanTimeoutMinutes : automation.reviewTimeoutMinutes,
-            maxTokensBudget: automation.maxTokensBudget,
+            maxTokensBudget: budget(automation.maxTokensBudget, model.allowance?.remaining ?? null),
             model: { url: model.url, model: model.model, apiKey: model.apiKey, protocol: model.protocol, provider: model.provider },
         };
     }
@@ -737,7 +747,10 @@ export class Runs {
      * review), the review history, the job itself and an activity row. GitHub hears about it afterwards.
      */
     private async conclude(jobId: string, runnerId: string | null, input: FinishInput, opts: { lost?: boolean } = {}): Promise<Job | null> {
-        const report = input.report && typeof input.report === "object" ? input.report : null;
+        const report =
+            input.report && typeof input.report === "object" && Array.isArray((input.report as RawReport).comments)
+                ? (input.report as RawReport)
+                : null;
         const metrics = report ? reportMetrics(report) : null;
         const gaps = report ? reviewGaps(report) : null;
         const forms = await this.store.jobs.get(jobId).then((j) => (j ? this.redactionsFor(j) : []));
@@ -760,7 +773,10 @@ export class Runs {
                 const baseSha = sha(input.baseSha) ?? held.baseSha;
                 const finishedAt = now();
                 let counts: { added: number; carriedOver: number; removed: number; reopened: number } | undefined;
+                let addedIds: Partial<Record<Severity, string[]>> | undefined;
                 if (upload && project && report) {
+                    // Findings this review reported first (for analytics' finding ages): those not on the branch before it.
+                    const before = await this.reports.view(w.tx, project, held.branch).catch(() => null);
                     const out = await this.reports.upload(REVIEWER, project, {
                         branch: held.branch,
                         commit: headSha,
@@ -781,6 +797,14 @@ export class Runs {
                         removed: out.removed,
                         reopened: (out as { reopened?: number }).reopened ?? 0,
                     };
+                    addedIds = {};
+                    let kept = 0;
+                    for (const x of (await this.reports.view(w.tx, project, held.branch)).review.issues) {
+                        if (before?.review.byId.has(x.id) || kept++ >= MAX_ADDED_IDS) continue;
+                        const list = addedIds[x.severity] ?? [];
+                        list.push(x.id);
+                        addedIds[x.severity] = list;
+                    }
                 }
                 const errorText =
                     final === "cancelled"
@@ -794,7 +818,7 @@ export class Runs {
                     gaps: final === "partial" ? gaps : null,
                     counts: counts ?? null,
                     tokens: metrics?.tokens ?? null,
-                    filesReviewed: metrics?.filesReviewed ?? null,
+                    filesReviewed: metrics?.files?.reviewed ?? null,
                     ocrVersion: metrics?.ocrVersion ?? null,
                     seconds: seconds(held.startedAt, finishedAt) ?? null,
                 };
@@ -836,15 +860,10 @@ export class Runs {
                             runSeconds: seconds(held.startedAt, finishedAt) ?? 0,
                             ...(metrics ? { findings: metrics.findings } : {}),
                             ...(counts ? { counts } : {}),
-                            files: {
-                                ...(metrics?.filesReviewed !== null && metrics?.filesReviewed !== undefined
-                                    ? { reviewed: metrics.filesReviewed }
-                                    : {}),
-                                ...(metrics?.groups !== null && metrics?.groups !== undefined ? { groups: metrics.groups } : {}),
-                                failedGroups: gaps?.groups ?? 0,
-                            },
+                            files: { ...(metrics?.files ?? {}), failedGroups: gaps?.groups ?? metrics?.files?.failedGroups ?? 0 },
                             ...(metrics?.toolCalls ? { toolCalls: metrics.toolCalls } : {}),
                             ...(metrics?.llm ? { llm: metrics.llm } : {}),
+                            ...(addedIds ? { addedIds } : {}),
                             error: errorText,
                         },
                     });

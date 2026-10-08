@@ -73,6 +73,8 @@ describe("reviews end to end (token mode)", () => {
         assert.equal(record?.details.ocrVersion, "1.12.12-fake");
         assert.equal(record?.details.findings?.total, 2);
         assert.deepEqual(record?.details.counts, { added: 2, carriedOver: 0, removed: 0, reopened: 0 });
+        assert.equal(record?.details.addedIds?.high?.length, 2);
+        assert.deepEqual(record?.details.toolCalls, { total: 2, failed: 0, byTool: { file_read: 2 }, failedByTool: {} });
 
         // GitHub: pending while queued and running, then success; one comment with the findings.
         const statuses = env.fake.repo("acme/app").statuses.filter((s) => s.sha === head);

@@ -33,10 +33,7 @@ export async function reviewEnv(options: { store?: Store; env?: Record<string, s
     const fake = await new FakeGitHub().start();
     const secret = randomBytes(32).toString("base64url");
     const t = await testApp(options.store, {
-        GITHUB_API_URL: fake.apiUrl,
-        GITHUB_URL: fake.url,
-        TRIAGENT_RUNNER_SECRET: secret,
-        ...options.env,
+        env: { GITHUB_API_URL: fake.apiUrl, GITHUB_URL: fake.url, TRIAGENT_RUNNER_SECRET: secret, ...options.env },
     });
     const server = serve({ fetch: t.app.fetch, port: 0, hostname: "127.0.0.1" });
     await new Promise<void>((resolve) => server.once("listening", () => resolve()));

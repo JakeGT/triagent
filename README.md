@@ -6,6 +6,7 @@ Triagent runs [Open Code Review](https://www.npmjs.com/package/@alibaba-group/op
 - **Triage board**: filter, assign, correct ratings, mark duplicates, add notes and track the reviewer's tasks, per branch.
 - **Built for agents**: an MCP server, a REST API with OpenAPI, and Markdown views, so Claude Code, Codex and others can claim and fix findings alongside people.
 - **Workspaces**: a personal workspace for everyone, plus organisations, each with its own projects, members, keys and API tokens.
+- **Insights**: analytics on reviews (outcomes, time, tokens and cost), the backlog, triage by people and agents, and how the model performed. Model prices come from OpenRouter's catalogue unless you set your own, and an instance admin can lend the instance's model key to chosen workspaces with a monthly token allowance.
 
 > **Status:** early rebuild. Triagent is being rebuilt from a single-organisation prototype into a self-hostable, multi-workspace app. Nothing here is ready to run yet.
 
@@ -59,6 +60,8 @@ pnpm test:e2e     # builds the app and runs Playwright against the real server
 ```
 
 `WEB_DIST_DIR` serves a build from another folder. Without a build, the server serves the API only.
+
+The server fetches OpenRouter's public model catalogue (model names and prices) when someone opens the model picker, model prices or analytics, and keeps it for an hour. Set `OPENROUTER_CATALOGUE=false` to stop that request; prices can still be set by hand. The tests never reach OpenRouter.
 
 - [docs/architecture.md](docs/architecture.md): how the server and web app are put together, workspaces and permissions, secrets.
 - [tests/contract](tests/contract/README.md): what any Triagent server must do.

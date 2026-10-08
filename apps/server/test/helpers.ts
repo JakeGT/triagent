@@ -9,7 +9,7 @@ import { createApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { migrate } from "../src/db/migrate.ts";
 import type { Route } from "../src/http/route.ts";
-import { createServices, type Services } from "../src/services/index.ts";
+import { createServices, type ServiceOptions, type Services } from "../src/services/index.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { connect, type PostgresOptions, PostgresStore } from "../src/store/postgres.ts";
 import type { Store } from "../src/store/types.ts";
@@ -73,8 +73,14 @@ export interface Session {
     csrf: string;
 }
 
-export async function testApp(store?: Store, env: Record<string, string> = {}): Promise<TestApp> {
+/**
+ * `options` replaces the clock or OpenRouter (the catalogue is off unless a fake fetch is given: tests never
+ * use the network), and `env` adds to the configuration.
+ */
+export async function testApp(store?: Store, options: ServiceOptions & { env?: Record<string, string> } = {}): Promise<TestApp> {
+    const { env = {}, ...serviceOptions } = options;
     const config = loadConfig({
+        OPENROUTER_CATALOGUE: options.fetch ? "true" : "false",
         PUBLIC_ORIGIN: ORIGIN,
         COOKIE_SECURE: "false",
         TRIAGENT_ADMIN_USER: "admin",
@@ -83,7 +89,7 @@ export async function testApp(store?: Store, env: Record<string, string> = {}): 
         REQUESTS_PER_MINUTE: "1000000",
         ...env,
     });
-    const services = createServices(config, store ?? (await testStore()));
+    const services = createServices(config, store ?? (await testStore()), serviceOptions);
     await services.accounts.bootstrap();
     const { app, routes } = createApp(services);
 

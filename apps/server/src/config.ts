@@ -26,6 +26,8 @@ export interface Config {
     sessionMaxHours: number;
     /** The built web app to serve, or null for this repository's apps/web/dist. */
     webDistDir: string | null;
+    /** Fetch OpenRouter's public model catalogue (model names and prices). */
+    openrouterCatalogue: boolean;
     production: boolean;
     /** How many reviews may run at once on the instance, and in any one workspace. */
     reviewConcurrency: number;
@@ -133,6 +135,7 @@ export function loadConfig(env: Env = process.env): Config {
         sessionIdleMinutes: whole(env, "SESSION_IDLE_MINUTES", 480, 5, 525_600),
         sessionMaxHours: whole(env, "SESSION_MAX_HOURS", 72, 1, 8760),
         webDistDir: env.WEB_DIST_DIR || null,
+        openrouterCatalogue: flag(env, "OPENROUTER_CATALOGUE", true),
         production,
         reviewConcurrency: whole(env, "REVIEW_CONCURRENCY", 1, 1, 100),
         reviewConcurrencyPerWorkspace: whole(env, "REVIEW_CONCURRENCY_PER_WORKSPACE", 1, 1, 100),

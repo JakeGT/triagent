@@ -55,6 +55,8 @@ export default defineConfig({
             TRIAGENT_ADMIN_USER: ADMIN_USER,
             TRIAGENT_ADMIN_PASSWORD: ADMIN_PASSWORD,
             REQUESTS_PER_MINUTE: "100000",
+            // Never reach OpenRouter from tests: the catalogue is served by the tests that need it.
+            OPENROUTER_CATALOGUE: "false",
             WEB_DIST_DIR: path.resolve(import.meta.dirname, "dist"),
         },
     },
