@@ -205,6 +205,13 @@ export function IssuesPage() {
     });
     const selectedIds = Object.keys(selection).filter((id) => selection[id]);
 
+    // Where j/k last went. The URL (and so `issueId`) catches up a render later, and a second press in
+    // between must move on from where the first one went, not from where the page was.
+    const cursor = useRef<string | undefined>(issueId);
+    useEffect(() => {
+        cursor.current = issueId;
+    }, [issueId]);
+
     // Single-key shortcuts for the list (the open issue handles 1–4 and Escape itself).
     useEffect(() => {
         if (!shortcuts) return;
@@ -215,10 +222,13 @@ export function IssuesPage() {
                 searchRef.current?.focus();
                 searchRef.current?.select();
             } else if ((e.key === "j" || e.key === "k") && items.length) {
-                const i = items.findIndex((x) => x.id === issueId);
+                const i = items.findIndex((x) => x.id === cursor.current);
                 const next = i === -1 ? 0 : e.key === "j" ? Math.min(i + 1, items.length - 1) : Math.max(i - 1, 0);
                 const target = items[next];
-                if (target && target.id !== issueId) open(target.id);
+                if (target && target.id !== cursor.current) {
+                    cursor.current = target.id;
+                    open(target.id);
+                }
             } else if (e.key === "x" && issueId && canTriage) {
                 setSelection((s) => ({ ...s, [issueId]: !s[issueId] }));
             }

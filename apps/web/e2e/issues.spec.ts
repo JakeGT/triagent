@@ -109,6 +109,8 @@ test("keyboard: j/k move, 1–4 set the status, x selects, / searches; and the s
     await expect(page).toHaveURL(new RegExp(`/issues/${issues[1]?.id}`));
     await page.keyboard.press("k");
     await expect(page).toHaveURL(new RegExp(`/issues/${issues[0]?.id}`));
+    // Status keys act on the open issue once it has loaded.
+    await expect(page.getByTestId("issue-panel").getByRole("heading", { level: 2 })).toHaveText((issues[0]?.title ?? "").replace(/`/g, ""));
 
     await page.keyboard.press("3");
     await expect(page.getByTestId("issue-panel").getByRole("button", { name: "Resolved" })).toHaveAttribute("aria-pressed", "true");
@@ -130,6 +132,30 @@ test("keyboard: j/k move, 1–4 set the status, x selects, / searches; and the s
     await expect(page.getByTestId("issues-summary")).toHaveText(/^10 issues/);
     await page.keyboard.press("j");
     await expect(page).not.toHaveURL(/\/issues\/ocr-/);
+});
+
+test("pressing j several times quickly moves that many issues", async ({ page, admin }) => {
+    const { ws, project } = await seedProject(admin);
+    const issues = await issuesOf(admin, ws, project);
+    await page.goto(`/w/${ws}/p/${project}/issues`);
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^10 issues/);
+    for (let i = 0; i < 3; i++) await page.keyboard.press("j");
+    await expect(page).toHaveURL(new RegExp(`/issues/${issues[2]?.id}`));
+});
+
+test("a half-typed note stays with its issue when another issue is opened", async ({ page, admin }) => {
+    const { ws, project } = await seedProject(admin);
+    const [first, second] = await issuesOf(admin, ws, project);
+    if (!first || !second) throw new Error("not enough issues");
+    await page.goto(`/w/${ws}/p/${project}/issues/${first.id}`);
+    const panel = page.getByTestId("issue-panel");
+    await panel.getByLabel("Add a note").fill("Meant for the first issue");
+    await page.locator(`[data-issue-row="${second.id}"]`).getByRole("link").first().click();
+    await expect(page).toHaveURL(new RegExp(`/issues/${second.id}`));
+    await expect(panel.getByRole("heading", { level: 2 })).toHaveText(second.title.replace(/`/g, ""));
+    await expect(panel.getByLabel("Add a note")).toHaveValue("");
+    const after = (await issuesOf(admin, ws, project)).find((x) => x.id === second.id);
+    expect(after?.noteCount ?? 0).toBe(0);
 });
 
 test("bulk changes apply to every selected issue", async ({ page, admin }) => {
