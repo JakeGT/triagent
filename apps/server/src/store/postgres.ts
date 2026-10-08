@@ -22,6 +22,7 @@ import type {
     Membership,
     Project,
     Repos,
+    ReviewRecord,
     SecretRecord,
     Session,
     SettingRecord,
@@ -188,6 +189,22 @@ const toTriage = (r: Row): TriageRecord => ({
     rev: r.rev,
     updatedAt: isoOrNull(r.updated_at),
     updatedBy: r.updated_by,
+});
+
+const toReviewRecord = (r: Row): ReviewRecord => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    projectId: r.project_id,
+    branch: r.branch,
+    at: iso(r.at),
+    source: r.source,
+    kind: r.kind,
+    status: r.status,
+    model: r.model,
+    provider: r.provider,
+    keySource: r.key_source,
+    tokens: r.tokens,
+    details: r.details,
 });
 
 const toActivity = (r: Row): ActivityRow => ({
@@ -689,6 +706,40 @@ export class PostgresStore implements Store {
             this.write(async (sql) => {
                 await sql`delete from secrets where ${same(sql, "workspace_id", workspaceId)} and ${same(sql, "project_id", projectId)} and name = ${name}`;
             }),
+    };
+
+    reviewHistory: Repos["reviewHistory"] = {
+        add: (r) =>
+            this.write(async (sql) => {
+                await sql`
+                    insert into review_history (id, workspace_id, project_id, branch, at, source, kind, status, model, provider,
+                                                key_source, tokens, tokens_total, details)
+                    values (${r.id}, ${r.workspaceId}, ${r.projectId}, ${r.branch}, ${r.at}, ${r.source}, ${r.kind}, ${r.status},
+                            ${r.model}, ${r.provider}, ${r.keySource}, ${r.tokens ? json(sql, r.tokens) : null},
+                            ${r.tokens?.total ?? 0}, ${json(sql, r.details)})`;
+            }),
+        list: async (f, limit) =>
+            (
+                await this.rows(
+                    (sql) => sql`
+                        select * from review_history
+                        where workspace_id = ${f.workspaceId}
+                        ${f.projectId ? sql`and project_id = ${f.projectId}` : sql``}
+                        ${f.branch ? sql`and branch = ${f.branch}` : sql``}
+                        ${f.since ? sql`and at >= ${f.since}` : sql``}
+                        order by at desc, seq desc
+                        limit ${limit}`,
+                )
+            ).map(toReviewRecord),
+        tokensSince: async (workspaceId, since, keySource) => {
+            const rows = await this.rows(
+                (sql) => sql`
+                    select coalesce(sum(tokens_total), 0)::bigint as total from review_history
+                    where workspace_id = ${workspaceId} and at >= ${since}
+                    ${keySource === undefined ? sql`` : sql`and ${same(sql, "key_source", keySource)}`}`,
+            );
+            return Number(rows[0]?.total ?? 0);
+        },
     };
 
     settings: Repos["settings"] = {

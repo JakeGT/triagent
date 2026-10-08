@@ -6,7 +6,7 @@ import { describe, test } from "node:test";
 import postgres from "postgres";
 import type { RawReport, UploadMeta } from "../src/domain/report.ts";
 import { MemoryStore } from "../src/store/memory.ts";
-import type { ActivityRow, ApiToken, AuditRow, Project, Store, TriageRecord, User, Workspace } from "../src/store/types.ts";
+import type { ActivityRow, ApiToken, AuditRow, Project, ReviewRecord, Store, TriageRecord, User, Workspace } from "../src/store/types.ts";
 import { postgresStore, TEST_DATABASE_URL } from "./helpers.ts";
 
 /** A distinct, increasing timestamp. */
@@ -381,6 +381,55 @@ for (const kind of kinds) {
             assert.deepEqual(ids(await store.audit.list({ workspaceId: "w1" }, { limit: 10 })), [a3, a1]);
             assert.deepEqual(ids(await store.audit.list({ workspaceId: null }, { limit: 1, before: a4 as string })), [a2]);
             assert.deepEqual(await store.audit.list({ workspaceId: "w1" }, { limit: 10 }).then((r) => r[0]), rows[3]);
+        });
+
+        test("review history: newest first, filtered, and tokens summed by key source", async () => {
+            const store = await kind.make();
+            await seed(store, "w1", "p1");
+            await seed(store, "w2", "p2");
+            const record = (
+                id: string,
+                w: string,
+                p: string,
+                when: string,
+                total: number,
+                keySource: ReviewRecord["keySource"],
+            ): ReviewRecord => ({
+                id,
+                workspaceId: w,
+                projectId: p,
+                branch: "main",
+                at: when,
+                source: "run",
+                kind: "pr",
+                status: "done",
+                model: "m",
+                provider: "openrouter",
+                keySource,
+                tokens: { input: total - 10, output: 10, cacheRead: 0, total },
+                details: { prNumber: 7, findings: { total: 1, bySeverity: { critical: 0, high: 1, medium: 0, low: 0 } } },
+            });
+            await store.reviewHistory.add(record("r1", "w1", "p1", "2026-03-01T10:00:00.000Z", 100, "workspace"));
+            await store.reviewHistory.add(record("r2", "w1", "p1", "2026-03-05T10:00:00.000Z", 1000, "instance"));
+            await store.reviewHistory.add(record("r3", "w1", "p1", "2026-02-27T10:00:00.000Z", 5000, "instance"));
+            await store.reviewHistory.add(record("r4", "w2", "p2", "2026-03-06T10:00:00.000Z", 7, "workspace"));
+            const ids = (list: ReviewRecord[]) => list.map((r) => r.id);
+            assert.deepEqual(ids(await store.reviewHistory.list({ workspaceId: "w1" }, 10)), ["r2", "r1", "r3"]);
+            assert.deepEqual(ids(await store.reviewHistory.list({ workspaceId: "w1", since: "2026-03-01T00:00:00.000Z" }, 10)), [
+                "r2",
+                "r1",
+            ]);
+            assert.deepEqual(ids(await store.reviewHistory.list({ workspaceId: "w1" }, 1)), ["r2"]);
+            assert.deepEqual(
+                (await store.reviewHistory.list({ workspaceId: "w2" }, 10))[0],
+                record("r4", "w2", "p2", "2026-03-06T10:00:00.000Z", 7, "workspace"),
+            );
+            assert.equal(await store.reviewHistory.tokensSince("w1", "2026-03-01T00:00:00.000Z"), 1100);
+            assert.equal(await store.reviewHistory.tokensSince("w1", "2026-03-01T00:00:00.000Z", "instance"), 1000);
+            assert.equal(await store.reviewHistory.tokensSince("w1", "2026-03-01T00:00:00.000Z", null), 0);
+            await store.workspaces.delete("w1");
+            assert.deepEqual(await store.reviewHistory.list({ workspaceId: "w1" }, 10), []);
+            assert.equal((await store.reviewHistory.list({ workspaceId: "w2" }, 10)).length, 1);
         });
 
         test("upload links: counted, swept when expired, and taken once", async () => {

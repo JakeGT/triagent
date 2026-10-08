@@ -3,6 +3,8 @@ import type { Store } from "../store/types.ts";
 import { Accounts } from "./accounts.ts";
 import { Core } from "./core.ts";
 import { EventBus } from "./events.ts";
+import { History } from "./history.ts";
+import { Models } from "./models.ts";
 import { Projects } from "./projects.ts";
 import { Reports } from "./reports.ts";
 import { SecretBox, Secrets } from "./secrets.ts";
@@ -21,6 +23,8 @@ export interface Services {
     triage: Triage;
     settings: Settings;
     webhooks: Webhooks;
+    history: History;
+    models: Models;
 }
 
 export function createServices(config: Config, store: Store): Services {
@@ -39,5 +43,7 @@ export function createServices(config: Config, store: Store): Services {
         triage: new Triage(core, reports),
         settings,
         webhooks: new Webhooks(core, settings),
+        history: new History(core),
+        models: new Models(core),
     };
 }

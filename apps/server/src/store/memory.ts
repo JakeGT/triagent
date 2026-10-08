@@ -16,6 +16,7 @@ import type {
     Page,
     Project,
     Repos,
+    ReviewRecord,
     SecretRecord,
     Session,
     SettingRecord,
@@ -148,6 +149,7 @@ export class MemoryStore implements Store {
         settings: this.table<SettingRecord>(),
         activity: new Log<ActivityRow>(() => this.context.getStore()?.undo ?? null),
         audit: new Log<AuditRow>(() => this.context.getStore()?.undo ?? null),
+        reviewHistory: new Log<ReviewRecord>(() => this.context.getStore()?.undo ?? null),
     };
 
     private table<V>(): Table<V> {
@@ -235,6 +237,7 @@ export class MemoryStore implements Store {
                 for (const s of this.t.secrets.values())
                     if (s.workspaceId === id) this.t.secrets.delete(key(id, s.projectId ?? "", s.name));
                 this.t.activity.remove((r) => r.workspaceId === id);
+                this.t.reviewHistory.remove((r) => r.workspaceId === id);
                 this.t.workspaces.delete(id);
             }),
     };
@@ -338,6 +341,27 @@ export class MemoryStore implements Store {
                     (!f.branch || r.branch === f.branch),
                 page,
             ),
+    };
+
+    reviewHistory: Repos["reviewHistory"] = {
+        add: (record) => this.write(() => this.t.reviewHistory.add(record)),
+        list: async (f, limit) =>
+            this.t.reviewHistory.rows
+                .filter(
+                    (r) =>
+                        r.workspaceId === f.workspaceId &&
+                        (!f.projectId || r.projectId === f.projectId) &&
+                        (!f.branch || r.branch === f.branch) &&
+                        (!f.since || r.at >= f.since),
+                )
+                .map((r, i) => [r, i] as const)
+                .sort(([a, i], [b, j]) => b.at.localeCompare(a.at) || j - i)
+                .slice(0, limit)
+                .map(([r]) => r),
+        tokensSince: async (workspaceId, since, keySource) =>
+            this.t.reviewHistory.rows
+                .filter((r) => r.workspaceId === workspaceId && r.at >= since && (keySource === undefined || r.keySource === keySource))
+                .reduce((n, r) => n + (r.tokens?.total ?? 0), 0),
     };
 
     audit: Repos["audit"] = {

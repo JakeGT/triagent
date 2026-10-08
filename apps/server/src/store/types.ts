@@ -181,6 +181,46 @@ export interface UploadLink {
     expiresAt: number;
 }
 
+/** How a finished review is described: everything analytics needs beyond the indexed columns. */
+export interface ReviewDetails {
+    prNumber?: number;
+    commit?: string | null;
+    /** Who asked for it: a person's or token's name, or "automation". */
+    requestedBy?: string | null;
+    ocrVersion?: string | null;
+    queuedAt?: string;
+    startedAt?: string;
+    queueSeconds?: number;
+    runSeconds?: number;
+    findings?: { total: number; bySeverity: Record<Severity, number> };
+    /** What the resulting upload did to the branch's triage. */
+    counts?: { added: number; carriedOver: number; removed: number; reopened: number };
+    files?: { reviewed?: number; groups?: number; failedGroups?: number };
+    toolCalls?: { total: number; failed: number; byTool?: Record<string, number> };
+    llm?: { requests?: number; retries?: number; failures?: number; maxGapSeconds?: number };
+    error?: string | null;
+}
+
+/** One finished review: a run on the server, or a report someone uploaded. Kept for analytics and allowances. */
+export interface ReviewRecord {
+    id: string;
+    workspaceId: string;
+    /** No foreign key: analytics keep a deleted project's history. */
+    projectId: string | null;
+    branch: string;
+    /** When it finished, or was uploaded. */
+    at: string;
+    source: "run" | "upload";
+    kind: "pr" | "changes" | "full" | "upload";
+    status: "done" | "partial" | "failed" | "cancelled";
+    model: string | null;
+    provider: string | null;
+    /** Whose model key paid for it: the workspace's own, or the instance's (counted against an allowance). */
+    keySource: "workspace" | "instance" | null;
+    tokens: { input: number; output: number; cacheRead: number; total: number } | null;
+    details: ReviewDetails;
+}
+
 /** An encrypted secret. See services/secrets.ts. */
 export interface SecretRecord {
     workspaceId: string | null;
@@ -294,6 +334,13 @@ export interface Repos {
         list(workspaceId: string | null, projectId: string | null): Promise<SecretRecord[]>;
         put(secret: SecretRecord): Promise<void>;
         delete(workspaceId: string | null, projectId: string | null, name: string): Promise<void>;
+    };
+    reviewHistory: {
+        add(record: ReviewRecord): Promise<void>;
+        /** Newest first, finished at or after `since` (ISO time) if given. */
+        list(filter: { workspaceId: string; projectId?: string; branch?: string; since?: string }, limit: number): Promise<ReviewRecord[]>;
+        /** Model tokens used since `since`, optionally only those paid with one kind of key. */
+        tokensSince(workspaceId: string, since: string, keySource?: ReviewRecord["keySource"]): Promise<number>;
     };
     settings: {
         get(workspaceId: string, projectId: string | null, key: string): Promise<SettingRecord | null>;
