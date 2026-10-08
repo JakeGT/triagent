@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PREF, prefs } from "@/lib/prefs";
 import { projectsQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
+import { AGENTS, type AgentSetup, skillInstall } from "./agent-setup";
 
 const TOKEN = "tri_…";
 
@@ -36,6 +37,34 @@ function Snippet({ code, label }: { code: string; label: string }) {
     );
 }
 
+/** One tab per coding agent. The MCP and skill sections share the choice. */
+function AgentTabs({
+    agent,
+    onChange,
+    children,
+}: {
+    agent: string;
+    onChange: (id: string) => void;
+    children: (a: AgentSetup) => ReactNode;
+}) {
+    return (
+        <Tabs value={agent} onValueChange={onChange}>
+            <TabsList className="h-auto max-w-full flex-wrap justify-start">
+                {AGENTS.map((a) => (
+                    <TabsTrigger key={a.id} value={a.id} className="flex-none">
+                        {a.name}
+                    </TabsTrigger>
+                ))}
+            </TabsList>
+            {AGENTS.map((a) => (
+                <TabsContent key={a.id} value={a.id} className="grid gap-2">
+                    {children(a)}
+                </TabsContent>
+            ))}
+        </Tabs>
+    );
+}
+
 function Section({ title, tour, children }: { title: string; tour?: string; children: ReactNode }) {
     return (
         <FormSection title={title} level={2} data-tour={tour}>
@@ -51,6 +80,7 @@ export function AgentsPage() {
     const list = projects.data ?? [];
     const remembered = search.project ?? prefs.get(PREF.lastProject(ws)) ?? undefined;
     const [chosen, setChosen] = useState<string | undefined>(undefined);
+    const [agent, setAgent] = useState(AGENTS[0]?.id ?? "claude");
     const project = chosen ?? list.find((p) => p.slug === remembered)?.slug ?? list[0]?.slug ?? "my-project";
     const origin = window.location.origin;
     const mcp = `${origin}/mcp`;
@@ -96,35 +126,16 @@ export function AgentsPage() {
                     Triagent is an MCP server at <code className="font-mono">{mcp}</code> (stateless Streamable HTTP). Agents see the tools
                     their token allows: claim the next issue, read it, mark it resolved with a note, and more.
                 </p>
-                <Tabs defaultValue="claude">
-                    <TabsList>
-                        <TabsTrigger value="claude">Claude Code</TabsTrigger>
-                        <TabsTrigger value="codex">Codex</TabsTrigger>
-                        <TabsTrigger value="opencode">OpenCode</TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="claude" className="grid gap-2">
-                        <Snippet
-                            label="In a terminal"
-                            code={`claude mcp add --transport http triagent ${mcp} --header "Authorization: Bearer ${TOKEN}"`}
-                        />
-                    </TabsContent>
-                    <TabsContent value="codex" className="grid gap-2">
-                        <Snippet
-                            label="Add to ~/.codex/config.toml"
-                            code={`[mcp_servers.triagent]\nurl = "${mcp}"\nhttp_headers = { Authorization = "Bearer ${TOKEN}" }`}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                            Put the token in the file rather than an environment variable: Codex's background process may not see variables
-                            set after it started.
-                        </p>
-                    </TabsContent>
-                    <TabsContent value="opencode" className="grid gap-2">
-                        <Snippet
-                            label="In a terminal (--global keeps the token out of the repository's opencode.json)"
-                            code={`opencode mcp add triagent --global --url ${mcp} --header "Authorization=Bearer ${TOKEN}"`}
-                        />
-                    </TabsContent>
-                </Tabs>
+                <AgentTabs agent={agent} onChange={setAgent}>
+                    {(a) => (
+                        <>
+                            {a.mcp(mcp, TOKEN).map((s) => (
+                                <Snippet key={s.label} label={s.label} code={s.code} />
+                            ))}
+                            {a.mcpNote && <p className="text-xs text-muted-foreground">{a.mcpNote}</p>}
+                        </>
+                    )}
+                </AgentTabs>
             </Section>
 
             <Section title="3. Teach it the workflow (skill)">
@@ -132,15 +143,29 @@ export function AgentsPage() {
                     The Triagent skill tells an agent how to find the right project from the Git remote, claim issues one at a time, record
                     what it fixed, and upload new reports without pasting them into the conversation.
                 </p>
-                <Snippet
-                    label="Install it into a repository (Claude Code)"
-                    code={`mkdir -p .claude/skills/triagent && curl -fsS ${origin}/api/v1/skill.md -o .claude/skills/triagent/SKILL.md`}
-                />
+                <AgentTabs agent={agent} onChange={setAgent}>
+                    {(a) => (
+                        <>
+                            <Snippet
+                                label="Into a repository (commit it, and everyone's agent learns the workflow)"
+                                code={skillInstall(origin, a.skills.repo)}
+                            />
+                            <Snippet label="For all your repositories" code={skillInstall(origin, a.skills.user)} />
+                            {a.skills.repo === ".agents/skills" && (
+                                <p className="text-xs text-muted-foreground">
+                                    Codex, OpenCode, Gemini CLI, Cursor and Copilot all read{" "}
+                                    <code className="font-mono">.agents/skills</code>, so one copy serves them all.
+                                </p>
+                            )}
+                        </>
+                    )}
+                </AgentTabs>
                 <p className="text-sm">
+                    Or{" "}
                     <a href="/api/v1/skill.md" className="underline" download="SKILL.md">
-                        Download SKILL.md
+                        download SKILL.md
                     </a>{" "}
-                    for other agents that read skills.
+                    and put it where your agent reads skills.
                 </p>
             </Section>
 
