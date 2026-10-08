@@ -48,6 +48,10 @@ Services talk to one interface (`store/types.ts`), implemented twice: `PostgresS
 - **More than one process.** With Postgres, live updates (and "close these streams" when someone loses access) also go out through `LISTEN/NOTIFY`, so they reach subscribers on every server process sharing the database.
 - **Not yet.** Row-level security, as a backstop to the workspace checks in the services, comes with multi-workspace hardening (Phase 7).
 
+## Signing in
+
+`AUTH_MODE=local` keeps usernames and scrypt-hashed passwords; `AUTH_MODE=oidc` signs people in through an OpenID Connect provider (`services/oidc.ts`, with `openid-client`), matching accounts by the provider's issuer and subject, never by email. With a provider, accounts are created on first sign-in only for invited (verified) addresses, the admin group, or the first account, and instance administrators follow the provider's admin group (`services/invites.ts`, `services/accounts.ts`). Sessions record when the person last authenticated: routes needing `secrets` also need that to be recent (`REAUTH_MINUTES`), checked once in `http/mount.ts`, and otherwise answer 401 `reauth_required`. Details, settings and an Authentik walkthrough are in [authentication.md](authentication.md).
+
 ## Secrets
 
 GitHub credentials, webhook secrets and model keys are encrypted with AES-256-GCM under a key that's never stored with the data (`TRIAGENT_SECRETS_KEY_FILE`). Each is bound to its workspace, project and name as authenticated data, so a ciphertext moved elsewhere fails to decrypt. The API only says whether a secret is set, its last four characters, and who set it when.
@@ -74,6 +78,7 @@ src/lib/api.ts       The one fetch layer: CSRF token on writes, a per-tab client
 src/lib/queries.ts   Query keys nested workspace → project → branch, and a query for each read
 src/lib/live.ts      One EventSource per workspace; each notice invalidates the keys it touches
 src/lib/session.ts   Who's signed in, and what their role allows, from packages/shared's permission table
+src/components/reauth-dialog.tsx   "Confirm it's you" before steps that need a recent sign-in; retries the step
 src/features/*       Pages: issues, tasks, overview, files, branches, compare, activity, agents, settings
 src/components/*     Shared pieces: SecretField, OneTimeReveal, ConfirmAction, notes, Markdown, code diffs
 ```
