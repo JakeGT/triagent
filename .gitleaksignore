@@ -1,2 +1,6 @@
 # A made-up model key in a test (commit bf7f969); tests now generate such values at runtime.
 bf7f969a2b8f4c38fcb29f525ce7f31edf984026:apps/server/test/regressions.test.ts:generic-api-key:181
+# Made-up model keys in tests (commits 8ad8330 and a8f5fae); tests now generate such values at runtime.
+8ad833005cdd245d7b17cc75b11a2e378bf423d1:apps/server/test/github.test.ts:generic-api-key:223
+8ad833005cdd245d7b17cc75b11a2e378bf423d1:apps/server/test/github.test.ts:generic-api-key:432
+a8f5fae415645519478032fea29605a772fc8b16:apps/server/test/allowances.test.ts:generic-api-key:87

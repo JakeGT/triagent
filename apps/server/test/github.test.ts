@@ -4,6 +4,7 @@
 // branch sync, the nightly scan, and the MCP tools for reviews.
 
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import { ADMIN_PASSWORD, type Session } from "./helpers.ts";
 import { eventually, finished, PAT, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
@@ -220,7 +221,7 @@ describe("the GitHub App", () => {
         await env.t.request("/api/v1/w/evil/settings/review-model/keys/openrouter", {
             method: "PUT",
             session: mallory,
-            body: { key: "sk-or-evil-key-123" },
+            body: { key: `sk-or-${randomBytes(12).toString("hex")}` },
         });
         await env.fake.gitRepo("acme/app", { "src/a.ts": "a\n" });
         await env.fake.gitRepo("evil/app", { "src/e.ts": "e\n" });
@@ -429,7 +430,7 @@ describe("the GitHub App", () => {
         await env.t.request("/api/v1/w/acme/settings/review-model/keys/openrouter", {
             method: "PUT",
             session: env.admin,
-            body: { key: "sk-or-acme-key-1234" },
+            body: { key: `sk-or-${randomBytes(12).toString("hex")}` },
         });
         await env.t.request("/api/v1/w/acme/settings/review-model", { method: "PATCH", session: env.admin, body: { model: "fake/model" } });
         // The project's old token is cleared: everything goes through the app.
