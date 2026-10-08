@@ -28,9 +28,15 @@ export const reportRoutes: Route[] = [
         scope: "project",
         permission: "read",
         tag: "Branches",
-        summary: "Branches with a report, default first",
+        summary: "Branches with a report, default first, and how each compares with GitHub (when connected)",
         async handler({ services, project: p }) {
-            return json(await services.reports.branches(project(p)));
+            const branches = await services.reports.branches(project(p));
+            const github = await services.automation.branchInfo(project(p));
+            return json({
+                ...branches,
+                items: branches.items.map((b) => ({ ...b, github: github?.status[b.name] ?? null })),
+                github: github ? { fetchedAt: github.fetchedAt, notReviewed: github.githubOnly } : null,
+            });
         },
     }),
     route({

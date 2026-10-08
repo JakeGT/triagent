@@ -12,11 +12,16 @@ import type {
     ApiToken,
     ArchivedReport,
     AuditRow,
+    GithubDelivery,
+    GithubInstallation,
+    Job,
+    LogLine,
     Membership,
     Page,
     Project,
     Repos,
     ReviewRecord,
+    RunnerRecord,
     SecretRecord,
     Session,
     SettingRecord,
@@ -66,6 +71,12 @@ class Table<V> {
     set(k: string, value: V): void {
         this.remember(k);
         this.rows.set(k, own(value));
+    }
+
+    /** Store `value` as given, without copying it: only for values nothing will change (frozen, or shared copy-on-write). */
+    setShared(k: string, value: V): void {
+        this.remember(k);
+        this.rows.set(k, value);
     }
 
     delete(k: string): void {
@@ -147,6 +158,12 @@ export class MemoryStore implements Store {
         uploadLinks: this.table<UploadLink>(),
         secrets: this.table<SecretRecord>(),
         settings: this.table<SettingRecord>(),
+        jobs: this.table<Job>(),
+        jobLogs: this.table<{ lines: readonly LogLine[]; bytes: number }>(),
+        githubInstallations: this.table<GithubInstallation>(),
+        githubState: this.table<{ state: unknown }>(),
+        githubDeliveries: this.table<GithubDelivery[]>(),
+        runners: this.table<RunnerRecord>(),
         activity: new Log<ActivityRow>(() => this.context.getStore()?.undo ?? null),
         audit: new Log<AuditRow>(() => this.context.getStore()?.undo ?? null),
         reviewHistory: new Log<ReviewRecord>(() => this.context.getStore()?.undo ?? null),
@@ -190,6 +207,10 @@ export class MemoryStore implements Store {
     /** Run one write as its own transaction, unless it's already part of one. */
     private write(fn: () => void): Promise<void> {
         return this.transaction(async () => fn());
+    }
+
+    async holdLock(_name: string): Promise<boolean> {
+        return true;
     }
 
     async ping(): Promise<void> {}
@@ -238,6 +259,8 @@ export class MemoryStore implements Store {
                     if (s.workspaceId === id) this.t.secrets.delete(key(id, s.projectId ?? "", s.name));
                 this.t.activity.remove((r) => r.workspaceId === id);
                 this.t.reviewHistory.remove((r) => r.workspaceId === id);
+                for (const i of this.t.githubInstallations.values())
+                    if (i.workspaceId === id) this.t.githubInstallations.delete(String(i.id));
                 this.t.workspaces.delete(id);
             }),
     };
@@ -275,6 +298,13 @@ export class MemoryStore implements Store {
                     if (s.projectId === id) this.t.secrets.delete(key(s.workspaceId ?? "", id, s.name));
                 for (const s of this.t.settings.values()) if (s.projectId === id) this.t.settings.delete(key(s.workspaceId, id, s.key));
                 for (const l of this.t.uploadLinks.values()) if (l.projectId === id) this.t.uploadLinks.delete(l.hash);
+                for (const j of this.t.jobs.values())
+                    if (j.projectId === id) {
+                        this.t.jobs.delete(j.id);
+                        this.t.jobLogs.delete(j.id);
+                    }
+                this.t.githubState.delete(id);
+                this.t.githubDeliveries.delete(id);
             }),
     };
 
@@ -401,5 +431,83 @@ export class MemoryStore implements Store {
     settings: Repos["settings"] = {
         get: async (workspaceId, projectId, k) => this.t.settings.get(key(workspaceId, projectId ?? "", k)),
         put: (s) => this.write(() => this.t.settings.set(key(s.workspaceId, s.projectId ?? "", s.key), s)),
+    };
+
+    jobs: Repos["jobs"] = {
+        get: async (id) => this.t.jobs.get(id),
+        put: (job) =>
+            this.write(() => {
+                const before = this.t.jobs.get(job.id);
+                this.t.jobs.set(job.id, { ...job, logLines: before?.logLines ?? 0, logDropped: before?.logDropped ?? 0 });
+            }),
+        list: async (f, limit) =>
+            this.t.jobs
+                .values()
+                .filter(
+                    (j) =>
+                        (!f.workspaceId || j.workspaceId === f.workspaceId) &&
+                        (!f.projectId || j.projectId === f.projectId) &&
+                        (!f.statuses || f.statuses.includes(j.status)),
+                )
+                .reverse()
+                .sort((a, b) => b.queuedAt.localeCompare(a.queuedAt))
+                .slice(0, limit),
+        active: async () =>
+            this.t.jobs
+                .values()
+                .filter((j) => j.status === "queued" || j.status === "running")
+                .sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)),
+        lastStarted: async () => {
+            const out = new Map<string, string>();
+            for (const j of this.t.jobs.values())
+                if (j.startedAt && (out.get(j.workspaceId) ?? "") < j.startedAt) out.set(j.workspaceId, j.startedAt);
+            return out;
+        },
+        appendLog: (jobId, lines, capBytes) =>
+            this.write(() => {
+                const job = this.t.jobs.get(jobId);
+                if (!job || !lines.length) return;
+                const log = this.t.jobLogs.get(jobId) ?? { lines: [], bytes: 0 };
+                let seq = job.logLines;
+                const added = lines.map((l) => Object.freeze({ seq: ++seq, at: l.at, line: l.line }));
+                let kept = [...log.lines, ...added];
+                let bytes = log.bytes + added.reduce((n, l) => n + Buffer.byteLength(l.line), 0);
+                let drop = 0;
+                while (bytes > capBytes && drop < kept.length) bytes -= Buffer.byteLength((kept[drop++] as LogLine).line);
+                if (drop) kept = kept.slice(drop);
+                this.t.jobLogs.setShared(jobId, Object.freeze({ lines: Object.freeze(kept), bytes }));
+                this.t.jobs.set(jobId, { ...job, logLines: seq, logDropped: job.logDropped + drop });
+            }),
+        log: async (jobId, after, limit) => (this.t.jobLogs.get(jobId)?.lines ?? []).filter((l) => l.seq > after).slice(0, limit),
+    };
+
+    githubInstallations: Repos["githubInstallations"] = {
+        get: async (id) => this.t.githubInstallations.get(String(id)),
+        forWorkspace: async (workspaceId) => this.t.githubInstallations.values().filter((i) => i.workspaceId === workspaceId),
+        put: (i) => this.write(() => this.t.githubInstallations.set(String(i.id), i)),
+        delete: (id) => this.write(() => this.t.githubInstallations.delete(String(id))),
+        deleteAll: () =>
+            this.write(() => {
+                for (const k of [...this.t.githubInstallations.rows.keys()]) this.t.githubInstallations.delete(k);
+            }),
+    };
+
+    githubState: Repos["githubState"] = {
+        get: async (projectId) => this.t.githubState.get(projectId)?.state ?? null,
+        put: (projectId, state) => this.write(() => this.t.githubState.set(projectId, { state })),
+    };
+
+    githubDeliveries: Repos["githubDeliveries"] = {
+        add: (d, keep) =>
+            this.write(() => {
+                const k = d.projectId ?? "";
+                this.t.githubDeliveries.set(k, [d, ...(this.t.githubDeliveries.get(k) ?? [])].slice(0, keep));
+            }),
+        list: async (projectId, limit) => (this.t.githubDeliveries.get(projectId ?? "") ?? []).slice(0, limit),
+    };
+
+    runners: Repos["runners"] = {
+        seen: (r) => this.write(() => this.t.runners.set(r.id, r)),
+        list: async () => this.t.runners.values().sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)),
     };
 }

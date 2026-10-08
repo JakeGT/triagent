@@ -1,0 +1,989 @@
+// Review runs. A run is a job in the store: queued, claimed by a runner (a separate process with no
+// database, over /internal/runner), kept alive by its lease, and finished by uploading the report.
+//
+// Scheduling is fair between workspaces: the workspace whose last run started longest ago goes first,
+// oldest job first within it, under an instance-wide cap and a per-workspace cap. A job only starts
+// when its workspace's review model is ready (`models.forRun`). A runner that stops renewing its lease
+// loses the job, which is marked failed, saying so.
+
+import { setTimeout as sleep } from "node:timers/promises";
+import type { Severity } from "@triagent/shared";
+import { parseFilters } from "../domain/filters.ts";
+import { isValidBranch } from "../domain/names.ts";
+import { commentBody, finishedStatus, reportMetrics, reviewGaps } from "../domain/review-run.ts";
+import { ApiError, badRequest, conflict, notFound } from "../errors.ts";
+import { now, randomId } from "../security.ts";
+import { ACTIVE_JOB_STATUSES, type Job, type JobKind, type JobStatus, type Project, type Repos, type Workspace } from "../store/types.ts";
+import type { Actor, Core } from "./core.ts";
+import type { CommitState, Pull } from "./github/client.ts";
+import { COMMENT_MARKER, type Github, NotConnected } from "./github/service.ts";
+import type { History } from "./history.ts";
+import type { Models } from "./models.ts";
+import type { Reports } from "./reports.ts";
+import type { Settings } from "./settings.ts";
+
+export const LOG_CAP_BYTES = 2 * 1024 * 1024;
+export const LEASE_SECONDS = 60;
+const MAX_LINE = 4000;
+const MAX_LINES_PER_BATCH = 2000;
+const PROGRESS_EVERY_MS = 1000;
+/** A runner not heard from for this long is no longer counted as connected. */
+const RUNNER_GONE_MS = 90_000;
+
+/** Who uploads a run's report. `via: "github"` keeps runs from being counted again as uploads. */
+const REVIEWER: Actor = { name: "Open Code Review", userId: null, via: "github" };
+
+export interface StartInput {
+    kind: JobKind;
+    number?: number;
+    branch?: string;
+    base?: string;
+}
+
+export interface JobSpec {
+    kind: JobKind;
+    title: string;
+    branch: string;
+    gitRef: string | null;
+    baseRef: string | null;
+    headSha: string | null;
+    baseSha: string | null;
+    pr: Job["pr"];
+    dedupeKey: string;
+}
+
+export interface RunnerHello {
+    id: string;
+    name: string;
+    version: string | null;
+    slots: number;
+}
+
+export interface FinishInput {
+    status: "done" | "failed" | "cancelled";
+    report?: unknown;
+    error?: string | null;
+    headSha?: string | null;
+    baseSha?: string | null;
+}
+
+/** Everything a runner needs for one job, including credentials for that job only. */
+export interface ClaimedJob {
+    id: string;
+    kind: JobKind;
+    title: string;
+    leaseSeconds: number;
+    repository: { fullName: string; cloneUrl: string };
+    git: { username: string; token: string };
+    pr: { number: number } | null;
+    gitRef: string | null;
+    baseRef: string | null;
+    headSha: string | null;
+    timeoutMinutes: number;
+    maxTokensBudget: number | null;
+    model: { url: string; model: string; apiKey: string; protocol: "openai"; provider: string };
+}
+
+type View = ReturnType<Runs["view"]>;
+
+const sourceOf = (actor: Actor): Job["source"] => (actor.via === "system" ? "automation" : actor.tokenId ? "token" : "person");
+
+/** Same-repository pull requests keep their branch name; those from forks become pr/<number>. */
+export function branchForPull(pr: Pull): string {
+    const sameRepo = pr.head.repo?.full_name && pr.head.repo.full_name === pr.base.repo?.full_name;
+    const name = sameRepo ? pr.head.ref : `pr/${pr.number}`;
+    return isValidBranch(name) ? name : `pr/${pr.number}`;
+}
+
+export function specForPull(pr: Pull): JobSpec {
+    return {
+        kind: "pr",
+        title: `PR #${pr.number}: ${pr.title}`.slice(0, 300),
+        branch: branchForPull(pr),
+        gitRef: null,
+        baseRef: pr.base.ref,
+        headSha: pr.head.sha,
+        baseSha: null,
+        pr: {
+            number: pr.number,
+            title: pr.title.slice(0, 300),
+            url: pr.html_url ?? null,
+            headRef: pr.head.ref,
+            author: pr.user?.login ?? null,
+        },
+        dedupeKey: `pr:${pr.number}`,
+    };
+}
+
+export function specForBranch(kind: "changes" | "full", gitRef: string, baseRef: string | null, reason?: string): JobSpec {
+    return {
+        kind,
+        title: kind === "full" ? `Full scan of ${gitRef}${reason ? ` (${reason})` : ""}` : `Changes on ${gitRef} since ${baseRef}`,
+        branch: gitRef,
+        gitRef,
+        baseRef: kind === "changes" ? baseRef : null,
+        headSha: null,
+        baseSha: null,
+        pr: null,
+        dedupeKey: kind === "full" ? `full:${gitRef}` : `changes:${gitRef}:${baseRef}`,
+    };
+}
+
+/** Strip the secrets handed to a runner (and the forms git and HTTP put them in) from a log line. */
+export function redact(line: string, secrets: readonly string[]): string {
+    let out = line;
+    for (const s of secrets) if (s) out = out.split(s).join("[redacted]");
+    // Anything that still looks like a credential.
+    return out
+        .replace(/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted]")
+        .replace(/\b(authorization:\s*)(basic|bearer|token)\s+\S+/gi, "$1$2 [redacted]")
+        .replace(/(x-access-token:)[^@\s]+@/gi, "$1[redacted]@");
+}
+
+/** The secrets and the encodings they can appear in. */
+export function secretForms(secrets: readonly string[]): string[] {
+    const out = new Set<string>();
+    for (const s of secrets) {
+        if (!s || s.length < 6) continue;
+        out.add(s);
+        out.add(encodeURIComponent(s));
+        out.add(Buffer.from(s).toString("base64"));
+        out.add(Buffer.from(`x-access-token:${s}`).toString("base64"));
+    }
+    // Longest first, so a secret inside a longer form doesn't leave the rest behind.
+    return [...out].sort((a, b) => b.length - a.length);
+}
+
+const PROGRESS_KEYS = new Set([
+    "phase",
+    "files",
+    "filesChanged",
+    "groups",
+    "groupsDone",
+    "current",
+    "round",
+    "roundsFailed",
+    "toolCalls",
+    "toolFailures",
+    "message",
+]);
+
+/** Only what the progress view shows, bounded. */
+function cleanProgress(input: unknown): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (!input || typeof input !== "object") return out;
+    for (const [k, v] of Object.entries(input)) {
+        if (!PROGRESS_KEYS.has(k)) continue;
+        if (typeof v === "number" && Number.isFinite(v)) out[k] = Math.max(0, Math.min(v, 1e9));
+        else if (typeof v === "string") out[k] = v.slice(0, 200);
+    }
+    return out;
+}
+
+const seconds = (from: string | null, to: string | null) =>
+    from && to ? Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 1000)) : undefined;
+
+export class Runs {
+    private readonly core: Core;
+    private readonly github: Github;
+    private readonly reports: Reports;
+    private readonly history: History;
+    private readonly models: Models;
+    private readonly settings: Settings;
+    /** Redaction lists by job, so a log batch doesn't decrypt them each time. */
+    private readonly redactions = new Map<string, string[]>();
+    private readonly progressSent = new Map<string, { at: number; timer: ReturnType<typeof setTimeout> | null }>();
+    /** Runners heard from recently, so their record isn't written on every poll. */
+    private readonly runnerSeen = new Map<string, number>();
+    /** Background work (GitHub statuses and comments) still going, so tests and shutdown can wait for it. */
+    private readonly pending = new Set<Promise<unknown>>();
+    /** Called once a run has finished and its report is saved (automation refreshes the branch's status). */
+    onFinished: (job: Job, project: Project) => void = () => {};
+
+    constructor(core: Core, github: Github, reports: Reports, history: History, models: Models, settings: Settings) {
+        this.core = core;
+        this.github = github;
+        this.reports = reports;
+        this.history = history;
+        this.models = models;
+        this.settings = settings;
+    }
+
+    private get store() {
+        return this.core.store;
+    }
+
+    /** Run `task` in the background, logging (not throwing) its failure. */
+    background(what: string, task: () => Promise<unknown>): void {
+        const p = task()
+            .catch((err: unknown) => console.error(`${what} failed: ${(err as Error).message}`))
+            .finally(() => this.pending.delete(p));
+        this.pending.add(p);
+    }
+
+    /** Wait for background work to finish (tests, shutdown). */
+    async settled(): Promise<void> {
+        while (this.pending.size) await Promise.allSettled([...this.pending]);
+    }
+
+    // ---- views -----------------------------------------------------------------------------------
+
+    view(job: Job, project: Pick<Project, "slug"> | null, waiting?: string | null) {
+        return {
+            id: job.id,
+            project: project?.slug ?? null,
+            kind: job.kind,
+            title: job.title,
+            branch: job.branch,
+            gitRef: job.gitRef,
+            baseRef: job.baseRef,
+            headSha: job.headSha,
+            baseSha: job.baseSha,
+            pr: job.pr,
+            requestedBy: { name: job.requestedBy.name, userId: job.requestedBy.userId },
+            source: job.source,
+            status: job.status,
+            queuedAt: job.queuedAt,
+            startedAt: job.startedAt,
+            finishedAt: job.finishedAt,
+            elapsedSeconds: seconds(job.startedAt, job.finishedAt ?? (job.startedAt ? now() : null)) ?? null,
+            cancelRequested: job.cancelRequested,
+            progress: job.progress,
+            result: job.result,
+            error: job.error,
+            model: job.model,
+            log: { lines: job.logLines, dropped: job.logDropped },
+            ...(waiting !== undefined ? { waiting } : {}),
+        };
+    }
+
+    private async slugs(workspaceId: string): Promise<Map<string, Project>> {
+        return new Map((await this.store.projects.forWorkspace(workspaceId)).map((p) => [p.id, p]));
+    }
+
+    private async connectedRunners() {
+        const t = Date.now();
+        return (await this.store.runners.list()).filter((r) => t - Date.parse(r.lastSeenAt) < RUNNER_GONE_MS);
+    }
+
+    /** Whether reviews in the workspace can start now, and if not, why. */
+    async readiness(workspace: Workspace): Promise<{ ready: boolean; reason: string | null }> {
+        const model = await this.models.forRun(workspace);
+        if (!model.ready) return { ready: false, reason: model.reason };
+        if (!this.core.config.runnerSecret)
+            return { ready: false, reason: "No runner can connect: the server has no TRIAGENT_RUNNER_SECRET set." };
+        if (!(await this.connectedRunners()).length) return { ready: false, reason: "No runner is connected. Start one (see the README)." };
+        return { ready: true, reason: null };
+    }
+
+    /** Queued, running and recent runs in a workspace (one project, if given). */
+    async list(workspace: Workspace, filter: { projectId?: string; limit?: number } = {}) {
+        const projects = await this.slugs(workspace.id);
+        const active = (await this.store.jobs.active()).filter((j) => j.workspaceId === workspace.id);
+        const readiness = await this.readiness(workspace);
+        const cfg = this.core.config;
+        const allRunning = (await this.store.jobs.active()).filter((j) => j.status === "running").length;
+        const wsRunning = active.filter((j) => j.status === "running").length;
+        const waiting =
+            readiness.reason ??
+            (wsRunning >= cfg.reviewConcurrencyPerWorkspace
+                ? "Waiting for this workspace's running review to finish."
+                : allRunning >= cfg.reviewConcurrency
+                  ? "Waiting for a free slot: the instance is running as many reviews as it allows."
+                  : "Waiting for a runner to pick it up.");
+        const mine = (j: Job) => !filter.projectId || j.projectId === filter.projectId;
+        const recent = (
+            await this.store.jobs.list(
+                {
+                    workspaceId: workspace.id,
+                    ...(filter.projectId ? { projectId: filter.projectId } : {}),
+                    statuses: ["done", "partial", "failed", "cancelled"],
+                },
+                Math.min(filter.limit ?? 30, 200),
+            )
+        ).map((j) => this.view(j, projects.get(j.projectId) ?? null));
+        return {
+            ready: readiness.ready,
+            waiting: readiness.reason,
+            concurrency: { instance: cfg.reviewConcurrency, workspace: cfg.reviewConcurrencyPerWorkspace },
+            runners: (await this.connectedRunners()).map((r) => ({
+                name: r.name,
+                slots: r.slots,
+                version: r.version,
+                lastSeenAt: r.lastSeenAt,
+            })),
+            running: active.filter((j) => j.status === "running" && mine(j)).map((j) => this.view(j, projects.get(j.projectId) ?? null)),
+            queued: active
+                .filter((j) => j.status === "queued" && mine(j))
+                .map((j) => this.view(j, projects.get(j.projectId) ?? null, waiting)),
+            recent,
+            counts: {
+                running: active.filter((j) => j.status === "running" && mine(j)).length,
+                queued: active.filter((j) => j.status === "queued" && mine(j)).length,
+            },
+        };
+    }
+
+    private async jobIn(workspace: Workspace, id: string, repos: Repos = this.store): Promise<Job> {
+        const job = /^[\w-]{1,40}$/.test(id) ? await repos.jobs.get(id) : null;
+        if (!job || job.workspaceId !== workspace.id) throw notFound("No such run in this workspace.");
+        return job;
+    }
+
+    /** One run, with its log after line `after`. */
+    async get(workspace: Workspace, id: string, after = 0) {
+        const job = await this.jobIn(workspace, id);
+        const project = await this.store.projects.get(job.projectId);
+        const lines = await this.store.jobs.log(job.id, Math.max(0, after), MAX_LINES_PER_BATCH);
+        return {
+            ...this.view(
+                job,
+                project,
+                job.status === "queued"
+                    ? (await this.list(workspace, { limit: 1 })).queued.find((q) => q.id === job.id)?.waiting
+                    : undefined,
+            ),
+            logLines: lines,
+            next: lines.at(-1)?.seq ?? Math.max(after, job.logDropped),
+        };
+    }
+
+    /** Resolves once the run has finished, or after `seconds` (at most ten minutes), with its latest state. */
+    async waitFor(workspace: Workspace, id: string, waitSeconds: number) {
+        const deadline = Date.now() + Math.min(Math.max(waitSeconds, 0), 600) * 1000;
+        for (;;) {
+            const job = await this.jobIn(workspace, id);
+            const done = !ACTIVE_JOB_STATUSES.includes(job.status);
+            if (done || Date.now() >= deadline)
+                return { finished: done, run: this.view(job, await this.store.projects.get(job.projectId)) };
+            await sleep(Math.min(1000, Math.max(50, deadline - Date.now())));
+        }
+    }
+
+    // ---- starting and cancelling -------------------------------------------------------------------
+
+    /** Start a review someone asked for: checked against GitHub, then queued. */
+    async start(actor: Actor, project: Project, input: StartInput) {
+        const gh = await this.github.githubFor(project);
+        const branchName = (v: string | undefined, fallback: string) => {
+            const b = (v ?? "").trim() || fallback;
+            if (!isValidBranch(b)) throw badRequest(`"${b.slice(0, 100)}" isn't a valid branch name.`);
+            return b;
+        };
+        const exists = async (name: string) => {
+            await gh.client.branch(gh.repo, name).catch((err: { status?: number }) => {
+                throw err.status === 404 ? notFound(`${gh.repo.fullName} has no branch "${name}" on GitHub. Push it first.`) : err;
+            });
+        };
+        let spec: JobSpec;
+        if (input.kind === "pr") {
+            if (!input.number || !Number.isInteger(input.number) || input.number < 1) throw badRequest("Give the pull request's number.");
+            const pr = await gh.client.pull(gh.repo, input.number).catch((err: { status?: number }) => {
+                throw err.status === 404 ? notFound(`${gh.repo.fullName} has no pull request #${input.number}.`) : err;
+            });
+            if (pr.state !== "open") throw badRequest(`Pull request #${pr.number} isn't open.`);
+            spec = specForPull(pr);
+        } else if (input.kind === "changes") {
+            if (!input.branch) throw badRequest("Name the branch whose changes to review.");
+            const gitRef = branchName(input.branch, "");
+            const base = branchName(input.base, project.defaultBranch);
+            if (gitRef === base)
+                throw badRequest(`"${gitRef}" is the base branch, so it has no changes of its own. Scan all of it instead.`);
+            await exists(gitRef);
+            await exists(base);
+            const cmp = await gh.client.compare(gh.repo, base, gitRef);
+            if (cmp.ahead_by === 0) throw badRequest(`${gitRef} has no commits that aren't on ${base}, so there's nothing to review.`);
+            spec = specForBranch("changes", gitRef, base);
+        } else {
+            const gitRef = branchName(input.branch, project.defaultBranch);
+            await exists(gitRef);
+            spec = specForBranch("full", gitRef, null);
+        }
+        const job = await this.enqueue(actor, project, spec);
+        return this.view(job, project);
+    }
+
+    /**
+     * Queue a review. A queued job for the same thing is replaced; one already queued or running for the
+     * same commit is returned instead of queueing another.
+     */
+    async enqueue(actor: Actor, project: Project, spec: JobSpec): Promise<Job> {
+        const created = await this.core.write(actor, async (w) => {
+            const same = (await w.tx.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 100)).filter(
+                (j) => j.dedupeKey === spec.dedupeKey,
+            );
+            const duplicate = same.find((j) => spec.headSha && j.headSha === spec.headSha);
+            if (duplicate) return { job: duplicate, isNew: false };
+            for (const old of same.filter((j) => j.status === "queued")) {
+                const replaced: Job = {
+                    ...old,
+                    status: "cancelled",
+                    finishedAt: now(),
+                    error: `Replaced by a newer request${spec.headSha ? ` (commit ${spec.headSha.slice(0, 7)})` : ""}.`,
+                };
+                await w.tx.jobs.put(replaced);
+                w.afterCommit(() => this.announce(replaced, project, "finished"));
+            }
+            const job: Job = {
+                id: randomId(),
+                workspaceId: project.workspaceId,
+                projectId: project.id,
+                ...spec,
+                requestedBy: { name: actor.name, userId: actor.userId, tokenId: actor.tokenId ?? null },
+                source: sourceOf(actor),
+                status: "queued",
+                queuedAt: now(),
+                startedAt: null,
+                finishedAt: null,
+                runnerId: null,
+                leaseExpiresAt: null,
+                cancelRequested: null,
+                progress: {},
+                result: null,
+                error: null,
+                model: null,
+                credentials: null,
+                logLines: 0,
+                logDropped: 0,
+            };
+            await w.tx.jobs.put(job);
+            w.afterCommit(() => this.announce(job, project, "queued"));
+            return { job, isNew: true };
+        });
+        if (created.isNew && created.job.kind === "pr" && created.job.headSha) {
+            const job = created.job;
+            this.background(`Marking ${job.title} as queued on GitHub`, async () => {
+                const workspace = await this.store.workspaces.get(project.workspaceId);
+                const ready = workspace ? await this.readiness(workspace) : { ready: false, reason: null };
+                await this.github.setStatus(
+                    project,
+                    job.headSha as string,
+                    "pending",
+                    ready.ready ? "Queued for review" : "Queued: reviews are waiting (see Triagent)",
+                    this.runUrl(workspace, project, job),
+                );
+            });
+        }
+        return created.job;
+    }
+
+    async cancel(actor: Actor, workspace: Workspace, id: string) {
+        const out = await this.core.write(actor, async (w) => {
+            const job = await this.jobIn(workspace, id, w.tx);
+            const project = await w.tx.projects.get(job.projectId);
+            if (job.status === "queued") {
+                const next: Job = {
+                    ...job,
+                    status: "cancelled",
+                    finishedAt: now(),
+                    error: `Cancelled by ${actor.name} before it started.`,
+                };
+                await w.tx.jobs.put(next);
+                w.afterCommit(() => {
+                    this.announce(next, project, "finished");
+                    if (project) this.onFinished(next, project);
+                    if (next.kind === "pr" && next.headSha && project)
+                        this.background("Marking a cancelled review on GitHub", () =>
+                            this.github.setStatus(project, next.headSha as string, "error", "Review cancelled", null),
+                        );
+                });
+                return next;
+            }
+            if (job.status === "running") {
+                if (job.cancelRequested) return job;
+                const next: Job = { ...job, cancelRequested: { by: actor.name, at: now() } };
+                await w.tx.jobs.put(next);
+                w.afterCommit(() => this.announce(next, project, "progress"));
+                return next;
+            }
+            throw conflict("That run has already finished.");
+        });
+        return this.view(out, await this.store.projects.get(out.projectId));
+    }
+
+    // ---- the runner protocol -----------------------------------------------------------------------
+
+    private async noteRunner(r: RunnerHello): Promise<void> {
+        const last = this.runnerSeen.get(r.id) ?? 0;
+        if (Date.now() - last < 15_000) return;
+        this.runnerSeen.set(r.id, Date.now());
+        if (this.runnerSeen.size > 1000) this.runnerSeen.delete(this.runnerSeen.keys().next().value as string);
+        await this.store.runners.seen({ id: r.id, name: r.name, version: r.version, slots: r.slots, lastSeenAt: now() });
+    }
+
+    /** Hand a runner the next job it may start, or null. */
+    async claim(runner: RunnerHello): Promise<ClaimedJob | null> {
+        await this.noteRunner(runner);
+        if (!runner.slots) return null;
+        await this.sweep();
+        const cfg = this.core.config;
+        const picked = await this.store.transaction(async (tx) => {
+            const active = await tx.jobs.active();
+            const running = active.filter((j) => j.status === "running");
+            if (running.length >= cfg.reviewConcurrency) return null;
+            const runningIn = new Map<string, number>();
+            for (const j of running) runningIn.set(j.workspaceId, (runningIn.get(j.workspaceId) ?? 0) + 1);
+            const queuedIn = new Map<string, Job[]>();
+            for (const j of active) if (j.status === "queued") queuedIn.set(j.workspaceId, [...(queuedIn.get(j.workspaceId) ?? []), j]);
+            const lastStarted = await tx.jobs.lastStarted();
+            // Taking turns: the workspace served longest ago goes first; then whoever has waited longest.
+            const order = [...queuedIn.keys()].sort(
+                (a, b) =>
+                    (lastStarted.get(a) ?? "").localeCompare(lastStarted.get(b) ?? "") ||
+                    (queuedIn.get(a)?.[0]?.queuedAt ?? "").localeCompare(queuedIn.get(b)?.[0]?.queuedAt ?? ""),
+            );
+            for (const workspaceId of order) {
+                if ((runningIn.get(workspaceId) ?? 0) >= cfg.reviewConcurrencyPerWorkspace) continue;
+                const workspace = await tx.workspaces.get(workspaceId);
+                if (!workspace) continue;
+                const model = await this.models.forRun(workspace, tx);
+                if (!model.ready) continue;
+                for (const job of queuedIn.get(workspaceId) ?? []) {
+                    const project = await tx.projects.get(job.projectId);
+                    if (!project) continue;
+                    let notConnected: string | null = null;
+                    try {
+                        await this.github.githubFor(project, tx);
+                    } catch (err) {
+                        if (!(err instanceof NotConnected)) throw err;
+                        notConnected = err.message;
+                    }
+                    if (notConnected) {
+                        const failed: Job = { ...job, status: "failed", finishedAt: now(), error: notConnected };
+                        await tx.jobs.put(failed);
+                        this.store.afterCommit(() => this.announce(failed, project, "finished"));
+                        continue;
+                    }
+                    const started: Job = {
+                        ...job,
+                        status: "running",
+                        startedAt: now(),
+                        runnerId: runner.id,
+                        leaseExpiresAt: new Date(Date.now() + LEASE_SECONDS * 1000).toISOString(),
+                        model: { provider: model.provider, model: model.model, keySource: model.keySource },
+                        progress: { phase: "starting" },
+                    };
+                    await tx.jobs.put(started);
+                    const automation = await this.settings.automation(tx, project);
+                    return { job: started, project, workspace, model, automation };
+                }
+            }
+            return null;
+        });
+        if (!picked) return null;
+        const { job, project, workspace, model, automation } = picked;
+
+        // Credentials for this job only, minted now (outside the transaction: it calls GitHub).
+        let token: string;
+        let gh: Awaited<ReturnType<Github["githubFor"]>>;
+        try {
+            gh = await this.github.githubFor(project);
+            token = await gh.tokenForJob();
+        } catch (err) {
+            await this.conclude(job.id, runner.id, {
+                status: "failed",
+                error: `Couldn't get access to the repository: ${(err as Error).message}`,
+            });
+            return null;
+        }
+        const scope = { workspaceId: job.workspaceId, projectId: job.projectId };
+        const sealed = this.core.secrets.seal(JSON.stringify([token, model.apiKey]), scope, `job:${job.id}`);
+        const stillOurs = await this.store.transaction(async (tx) => {
+            const current = await tx.jobs.get(job.id);
+            if (current?.status !== "running" || current.runnerId !== runner.id) return false;
+            await tx.jobs.put({ ...current, credentials: sealed });
+            return true;
+        });
+        if (!stillOurs) return null;
+        this.redactions.set(job.id, secretForms([token, model.apiKey]));
+        this.announce(job, project, "started");
+        if (job.kind === "pr" && job.headSha)
+            this.background(`Marking ${job.title} as in review on GitHub`, () =>
+                this.github.setStatus(
+                    project,
+                    job.headSha as string,
+                    "pending",
+                    "Reviewing with Open Code Review…",
+                    this.runUrl(workspace, project, job),
+                ),
+            );
+        return {
+            id: job.id,
+            kind: job.kind,
+            title: job.title,
+            leaseSeconds: LEASE_SECONDS,
+            repository: { fullName: gh.repo.fullName, cloneUrl: gh.cloneUrl },
+            git: { username: "x-access-token", token },
+            pr: job.pr ? { number: job.pr.number } : null,
+            gitRef: job.gitRef,
+            baseRef: job.baseRef,
+            headSha: job.headSha,
+            timeoutMinutes: job.kind === "full" ? automation.fullScanTimeoutMinutes : automation.reviewTimeoutMinutes,
+            maxTokensBudget: automation.maxTokensBudget,
+            model: { url: model.url, model: model.model, apiKey: model.apiKey, protocol: model.protocol, provider: model.provider },
+        };
+    }
+
+    /** The job a runner says it's running, if it still is; otherwise 409 (stop working on it). */
+    private async held(tx: Repos, runnerId: string, jobId: string): Promise<Job> {
+        const job = /^[\w-]{1,40}$/.test(jobId) ? await tx.jobs.get(jobId) : null;
+        if (job?.status !== "running" || job.runnerId !== runnerId)
+            throw new ApiError(409, "This job isn't running on this runner any more. Stop working on it.", { code: "job_lost" });
+        return job;
+    }
+
+    private renewed(job: Job): Job {
+        return { ...job, leaseExpiresAt: new Date(Date.now() + LEASE_SECONDS * 1000).toISOString() };
+    }
+
+    async heartbeat(runner: RunnerHello, jobId: string): Promise<{ cancel: boolean; leaseExpiresAt: string }> {
+        await this.noteRunner(runner);
+        const job = await this.store.transaction(async (tx) => {
+            const next = this.renewed(await this.held(tx, runner.id, jobId));
+            await tx.jobs.put(next);
+            return next;
+        });
+        return { cancel: Boolean(job.cancelRequested), leaseExpiresAt: job.leaseExpiresAt as string };
+    }
+
+    private async redactionsFor(job: Job): Promise<string[]> {
+        const hit = this.redactions.get(job.id);
+        if (hit) return hit;
+        let forms: string[] = [];
+        if (job.credentials) {
+            try {
+                const secrets = JSON.parse(
+                    this.core.secrets.unseal(job.credentials, { workspaceId: job.workspaceId, projectId: job.projectId }, `job:${job.id}`),
+                ) as string[];
+                forms = secretForms(secrets);
+            } catch (err) {
+                console.error(`Couldn't read the credentials of run ${job.id} to redact its log: ${(err as Error).message}`);
+            }
+        }
+        this.redactions.set(job.id, forms);
+        return forms;
+    }
+
+    /** Log lines and progress from a runner. Every secret handed out for the job is removed before they're kept. */
+    async events(runner: RunnerHello, jobId: string, input: { lines?: { at?: string; line: string }[]; progress?: unknown }) {
+        await this.noteRunner(runner);
+        const lines = (input.lines ?? []).slice(0, MAX_LINES_PER_BATCH);
+        const first = await this.store.jobs.get(jobId);
+        const forms = first && first.runnerId === runner.id ? await this.redactionsFor(first) : [];
+        const clean = lines.map((l) => ({
+            at: typeof l.at === "string" && !Number.isNaN(Date.parse(l.at)) ? new Date(l.at).toISOString() : now(),
+            line: redact(String(l.line ?? ""), forms).slice(0, MAX_LINE),
+        }));
+        const progress = input.progress === undefined ? null : cleanProgress(input.progress);
+        const job = await this.store.transaction(async (tx) => {
+            const held = await this.held(tx, runner.id, jobId);
+            const next = this.renewed(progress ? { ...held, progress: { ...held.progress, ...progress } } : held);
+            await tx.jobs.put(next);
+            if (clean.length) await tx.jobs.appendLog(jobId, clean, LOG_CAP_BYTES);
+            return next;
+        });
+        this.progressed(job);
+        return { cancel: Boolean(job.cancelRequested) };
+    }
+
+    /** Announce progress at most once a second per run (the last change always goes out). */
+    private progressed(job: Job): void {
+        const sent = this.progressSent.get(job.id) ?? { at: 0, timer: null };
+        this.progressSent.set(job.id, sent);
+        if (sent.timer) return;
+        const wait = Math.max(0, PROGRESS_EVERY_MS - (Date.now() - sent.at));
+        sent.timer = setTimeout(() => {
+            sent.timer = null;
+            sent.at = Date.now();
+            void this.store.projects.get(job.projectId).then((p) => this.announce(job, p, "progress"));
+        }, wait);
+        sent.timer.unref();
+    }
+
+    async finish(runner: RunnerHello, jobId: string, input: FinishInput) {
+        await this.noteRunner(runner);
+        const job = await this.conclude(jobId, runner.id, input);
+        return { ok: true, status: job?.status ?? null };
+    }
+
+    /** Fail running jobs whose runner stopped renewing the lease (a runner that crashed or was restarted). */
+    async sweep(): Promise<number> {
+        const t = Date.now();
+        const lost = (await this.store.jobs.active()).filter(
+            (j) => j.status === "running" && j.leaseExpiresAt && Date.parse(j.leaseExpiresAt) < t,
+        );
+        for (const j of lost) {
+            await this.conclude(
+                j.id,
+                null,
+                j.cancelRequested
+                    ? { status: "cancelled" }
+                    : {
+                          status: "failed",
+                          error: `The runner stopped responding (nothing heard for over ${LEASE_SECONDS} seconds), so the review was abandoned. Start it again.`,
+                      },
+                { lost: true },
+            ).catch((err: unknown) => {
+                if (!(err instanceof ApiError && err.status === 409)) throw err;
+            });
+        }
+        return lost.length;
+    }
+
+    // ---- finishing -------------------------------------------------------------------------------
+
+    /**
+     * Record how a run ended, all in one transaction: the report uploaded to its branch (for a finished
+     * review), the review history, the job itself and an activity row. GitHub hears about it afterwards.
+     */
+    private async conclude(jobId: string, runnerId: string | null, input: FinishInput, opts: { lost?: boolean } = {}): Promise<Job | null> {
+        const report = input.report && typeof input.report === "object" ? input.report : null;
+        const metrics = report ? reportMetrics(report) : null;
+        const gaps = report ? reviewGaps(report) : null;
+        const forms = await this.store.jobs.get(jobId).then((j) => (j ? this.redactionsFor(j) : []));
+        const clean = (s: string | null | undefined) => (s ? redact(String(s), forms).slice(0, 2000) : null);
+        const sha = (s: unknown) => (typeof s === "string" && /^[0-9a-f]{40}$/i.test(s) ? s.toLowerCase() : null);
+
+        const record = (status: Exclude<JobStatus, "queued" | "running">, error: string | null, upload: boolean) =>
+            this.core.write(REVIEWER, async (w) => {
+                const held = await w.tx.jobs.get(jobId);
+                if (held?.status !== "running" || (runnerId !== null && held.runnerId !== runnerId))
+                    throw new ApiError(409, "This job isn't running on this runner any more.", { code: "job_lost" });
+                // A lease renewed since the sweep looked at it isn't lost after all.
+                if (opts.lost && held.leaseExpiresAt && Date.parse(held.leaseExpiresAt) >= Date.now()) return null;
+                const cancelled = status === "cancelled" || (status === "failed" && held.cancelRequested !== null && !upload);
+                const final: JobStatus = cancelled ? "cancelled" : status;
+                const project = await w.tx.projects.get(held.projectId);
+                const workspace = await w.tx.workspaces.get(held.workspaceId);
+                const automation = project ? await this.settings.automation(w.tx, project) : null;
+                const headSha = sha(input.headSha) ?? held.headSha;
+                const baseSha = sha(input.baseSha) ?? held.baseSha;
+                const finishedAt = now();
+                let counts: { added: number; carriedOver: number; removed: number; reopened: number } | undefined;
+                if (upload && project && report) {
+                    const out = await this.reports.upload(REVIEWER, project, {
+                        branch: held.branch,
+                        commit: headSha,
+                        fileName:
+                            held.kind === "pr"
+                                ? `PR #${held.pr?.number}`
+                                : held.kind === "changes"
+                                  ? `Changes since ${held.baseRef}`
+                                  : `Full scan ${finishedAt.slice(0, 10)}`,
+                        report,
+                        confirm: true,
+                        reopen: true,
+                        scope: held.kind === "full" ? "full" : "diff",
+                    });
+                    counts = {
+                        added: out.added,
+                        carriedOver: out.carriedOver,
+                        removed: out.removed,
+                        reopened: (out as { reopened?: number }).reopened ?? 0,
+                    };
+                }
+                const errorText =
+                    final === "cancelled"
+                        ? held.cancelRequested
+                            ? `Cancelled by ${held.cancelRequested.by}.`
+                            : (error ?? "Cancelled.")
+                        : error;
+                const result = {
+                    total: metrics?.findings.total ?? null,
+                    bySeverity: metrics?.findings.bySeverity ?? null,
+                    gaps: final === "partial" ? gaps : null,
+                    counts: counts ?? null,
+                    tokens: metrics?.tokens ?? null,
+                    filesReviewed: metrics?.filesReviewed ?? null,
+                    ocrVersion: metrics?.ocrVersion ?? null,
+                    seconds: seconds(held.startedAt, finishedAt) ?? null,
+                };
+                const { current: _c, round: _r, ...progress } = held.progress;
+                const next: Job = {
+                    ...held,
+                    status: final,
+                    headSha,
+                    baseSha,
+                    finishedAt,
+                    leaseExpiresAt: null,
+                    credentials: null,
+                    error: errorText,
+                    result,
+                    progress: { ...progress, phase: final === "done" || final === "partial" ? "finished" : final },
+                };
+                await w.tx.jobs.put(next);
+                if (held.startedAt)
+                    await this.history.record(w.tx, {
+                        workspaceId: held.workspaceId,
+                        projectId: held.projectId,
+                        branch: held.branch,
+                        at: finishedAt,
+                        source: "run",
+                        kind: held.kind,
+                        status: final as "done" | "partial" | "failed" | "cancelled",
+                        model: held.model?.model ?? null,
+                        provider: held.model?.provider ?? null,
+                        keySource: held.model?.keySource ?? null,
+                        tokens: metrics?.tokens ?? null,
+                        details: {
+                            ...(held.pr ? { prNumber: held.pr.number } : {}),
+                            commit: headSha,
+                            requestedBy: held.source === "automation" ? "automation" : held.requestedBy.name,
+                            ocrVersion: metrics?.ocrVersion ?? null,
+                            queuedAt: held.queuedAt,
+                            startedAt: held.startedAt,
+                            queueSeconds: seconds(held.queuedAt, held.startedAt) ?? 0,
+                            runSeconds: seconds(held.startedAt, finishedAt) ?? 0,
+                            ...(metrics ? { findings: metrics.findings } : {}),
+                            ...(counts ? { counts } : {}),
+                            files: {
+                                ...(metrics?.filesReviewed !== null && metrics?.filesReviewed !== undefined
+                                    ? { reviewed: metrics.filesReviewed }
+                                    : {}),
+                                ...(metrics?.groups !== null && metrics?.groups !== undefined ? { groups: metrics.groups } : {}),
+                                failedGroups: gaps?.groups ?? 0,
+                            },
+                            ...(metrics?.toolCalls ? { toolCalls: metrics.toolCalls } : {}),
+                            ...(metrics?.llm ? { llm: metrics.llm } : {}),
+                            error: errorText,
+                        },
+                    });
+                await w.activity(
+                    {
+                        workspaceId: held.workspaceId,
+                        projectId: held.projectId,
+                        branch: held.branch,
+                        kind: "run",
+                        itemId: held.id,
+                        changes: {
+                            finished: {
+                                title: held.title,
+                                status: final,
+                                total: metrics?.findings.total ?? null,
+                                critical: metrics?.findings.bySeverity.critical ?? 0,
+                                requestedBy: held.requestedBy.userId,
+                                ...(errorText ? { error: errorText.slice(0, 300) } : {}),
+                            },
+                        },
+                    },
+                    project?.slug ?? null,
+                );
+                w.afterCommit(() => this.afterFinish(next, project, workspace, automation?.failOnCritical ?? true));
+                return next;
+            });
+
+        if (input.status === "done") {
+            if (!report) return record("failed", "The runner finished without a report.", false);
+            try {
+                return await record(gaps ? "partial" : "done", null, true);
+            } catch (err) {
+                if (err instanceof ApiError && err.code === "job_lost") throw err;
+                return record("failed", `The review finished, but its report couldn't be saved: ${clean((err as Error).message)}`, false);
+            }
+        }
+        return record(input.status === "cancelled" ? "cancelled" : "failed", clean(input.error) ?? "The review failed.", false);
+    }
+
+    runUrl(workspace: Pick<Workspace, "slug"> | null, project: Project, job: Pick<Job, "id">): string | null {
+        if (!workspace) return null;
+        return `${this.core.config.publicOrigin}/w/${encodeURIComponent(workspace.slug)}/p/${encodeURIComponent(project.slug)}/runs/${encodeURIComponent(job.id)}`;
+    }
+
+    private issuesUrl(workspace: Pick<Workspace, "slug">, project: Project, branch: string, id?: string): string {
+        const base = `${this.core.config.publicOrigin}/w/${encodeURIComponent(workspace.slug)}/p/${encodeURIComponent(project.slug)}/issues`;
+        return `${base}${id ? `/${encodeURIComponent(id)}` : ""}?branch=${encodeURIComponent(branch)}`;
+    }
+
+    private afterFinish(job: Job, project: Project | null, workspace: Workspace | null, failOnCritical: boolean): void {
+        this.redactions.delete(job.id);
+        const sent = this.progressSent.get(job.id);
+        if (sent?.timer) clearTimeout(sent.timer);
+        this.progressSent.delete(job.id);
+        this.announce(job, project, "finished");
+        if (!project) return;
+        if (job.kind === "pr" && job.pr && job.headSha && workspace)
+            this.background(`Reporting ${job.title} to GitHub`, () => this.tellGithub(job, project, workspace, failOnCritical));
+        try {
+            this.onFinished(job, project);
+        } catch (err) {
+            console.error(`After ${job.title} finished: ${(err as Error).message}`);
+        }
+    }
+
+    /** The pull request's commit status, and (for a finished review) its comment. */
+    private async tellGithub(job: Job, project: Project, workspace: Workspace, failOnCritical: boolean): Promise<void> {
+        const sha = job.headSha as string;
+        const notes: string[] = [];
+        const note = async (what: string, task: () => Promise<unknown>) => {
+            try {
+                await task();
+                notes.push(`${what}: done`);
+            } catch (err) {
+                const message = (err as Error).message;
+                notes.push(`${what}: failed (${message})`);
+                await this.store.jobs.appendLog(
+                    job.id,
+                    [{ at: now(), line: `[triagent] Couldn't update the pull request (${what}): ${message}` }],
+                    LOG_CAP_BYTES,
+                );
+            }
+        };
+        if (job.status === "done" || job.status === "partial") {
+            const bySeverity = (job.result?.bySeverity ?? { critical: 0, high: 0, medium: 0, low: 0 }) as Record<Severity, number>;
+            const total = Number(job.result?.total ?? 0);
+            const status = finishedStatus({ status: job.status, total, bySeverity, failOnCritical });
+            const view = await this.reports.view(this.store, project, job.branch).catch(() => null);
+            const urgent = view
+                ? view.filter(
+                      parseFilters(
+                          { severity: "critical,high", status: "open,in_progress", sort: "priority" },
+                          { maxLimit: 50, defaultLimit: 50 },
+                      ),
+                  )
+                : [];
+            await note("commit status", () =>
+                this.github.setStatus(project, sha, status.state, status.description, this.issuesUrl(workspace, project, job.branch)),
+            );
+            await note("comment", () =>
+                this.github.upsertComment(
+                    project,
+                    job.pr?.number as number,
+                    commentBody({
+                        marker: COMMENT_MARKER,
+                        total,
+                        bySeverity,
+                        urgent,
+                        gaps: (job.result?.gaps as never) ?? null,
+                        failOnCritical,
+                        commit: sha,
+                        issuesUrl: this.issuesUrl(workspace, project, job.branch),
+                        issueUrl: (id) => this.issuesUrl(workspace, project, job.branch, id),
+                    }),
+                ),
+            );
+        } else {
+            const state: CommitState = "error";
+            const description = job.status === "cancelled" ? "Review cancelled" : `Review failed: ${job.error ?? "see Triagent"}`;
+            await note("commit status", () =>
+                this.github.setStatus(project, sha, state, description, this.runUrl(workspace, project, job)),
+            );
+        }
+        await this.store.transaction(async (tx) => {
+            const current = await tx.jobs.get(job.id);
+            if (current) await tx.jobs.put({ ...current, result: { ...(current.result ?? {}), github: notes } });
+        });
+    }
+
+    private announce(job: Job, project: Pick<Project, "slug"> | null, what: "queued" | "started" | "progress" | "finished"): void {
+        this.core.events.announce({
+            workspace: job.workspaceId,
+            project: project?.slug ?? null,
+            branch: job.branch,
+            kind: "run",
+            id: job.id,
+            fields: [what],
+        });
+    }
+}
+
+export type RunView = View;

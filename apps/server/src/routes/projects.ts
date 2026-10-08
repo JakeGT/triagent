@@ -126,7 +126,7 @@ export const projectRoutes: Route[] = [
         tag: "Settings",
         summary: "The GitHub connection and webhook (whether secrets are set, never their values)",
         async handler({ services, project: p }) {
-            return json(await services.settings.github(project(p)));
+            return json(await services.github.settingsView(project(p)));
         },
     }),
     route({

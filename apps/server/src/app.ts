@@ -6,10 +6,13 @@ import { clientIp, errorResponse, mount } from "./http/mount.ts";
 import type { Route } from "./http/route.ts";
 import { serveWeb, webDistDir } from "./http/static.ts";
 import { accountRoutes } from "./routes/account.ts";
+import { githubRoutes } from "./routes/github.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { platformRoutes } from "./routes/platform.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { reportRoutes } from "./routes/reports.ts";
+import { runnerRoutes } from "./routes/runner.ts";
+import { runRoutes } from "./routes/runs.ts";
 import { skillRoutes } from "./routes/skill.ts";
 import { workspaceRoutes } from "./routes/workspace.ts";
 import { RequestLimiter } from "./security.ts";
@@ -37,6 +40,9 @@ export function allRoutes(services: Services): Route[] {
         ...reportRoutes,
         ...issueRoutes,
         ...skillRoutes,
+        ...runRoutes,
+        ...githubRoutes,
+        ...runnerRoutes,
         ...platformRoutes(services, () => routes),
     );
     return routes;

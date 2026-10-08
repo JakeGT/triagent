@@ -130,6 +130,13 @@ export class EventBus {
         this.send({ origin: this.origin, type: "change", event: notice });
     }
 
+    /** Announce something that isn't an activity row (a review's progress, say) to the workspace. */
+    announce(notice: Omit<Notice, "at" | "actor" | "via"> & Partial<Pick<Notice, "actor" | "via">>): void {
+        const full: Notice = { at: new Date().toISOString(), actor: "Triagent", via: "system", ...notice };
+        this.deliver(full);
+        this.send({ origin: this.origin, type: "change", event: full });
+    }
+
     private deliver(notice: Notice): void {
         const event: LiveEvent = { seq: ++this.seq, ...notice };
         const needs = NEEDS[event.kind];

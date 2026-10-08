@@ -92,6 +92,15 @@ export class Secrets {
         return viewOf(name, record);
     }
 
+    /** Encrypt a value kept elsewhere than the secrets table (bound to `scope` and `name` like the rest). */
+    seal(value: string, scope: SecretScope, name: string): string {
+        return this.box.seal(value, scope, name);
+    }
+
+    unseal(sealed: string, scope: SecretScope, name: string): string {
+        return this.box.open(sealed, scope, name);
+    }
+
     async clear(tx: Repos, scope: SecretScope, name: string): Promise<void> {
         await tx.secrets.delete(scope.workspaceId, scope.projectId, name);
     }

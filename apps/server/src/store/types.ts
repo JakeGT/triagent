@@ -245,6 +245,91 @@ export interface Page {
     before?: string;
 }
 
+// ---- review runs and GitHub (see services/runs.ts and services/github/) ---------------------------
+
+export type JobKind = "pr" | "changes" | "full";
+export type JobStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
+export const ACTIVE_JOB_STATUSES: readonly JobStatus[] = ["queued", "running"];
+
+/** One review: queued, then claimed by a runner (under a lease it renews), then finished. */
+export interface Job {
+    id: string;
+    workspaceId: string;
+    projectId: string;
+    kind: JobKind;
+    /** What it reviews (e.g. "pr:12"): a newer request with the same key replaces a queued one. */
+    dedupeKey: string;
+    title: string;
+    /** The Triagent branch the report goes to. */
+    branch: string;
+    /** The Git branch to fetch (changes and full scans), and the base to compare with (PRs and changes). */
+    gitRef: string | null;
+    baseRef: string | null;
+    /** The commit reviewed (known when queued for PRs, once fetched otherwise) and where its changes start. */
+    headSha: string | null;
+    baseSha: string | null;
+    pr: { number: number; title: string; url: string | null; headRef: string; author: string | null } | null;
+    requestedBy: { name: string; userId: string | null; tokenId: string | null };
+    source: "person" | "token" | "automation";
+    status: JobStatus;
+    queuedAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    runnerId: string | null;
+    leaseExpiresAt: string | null;
+    cancelRequested: { by: string; at: string } | null;
+    progress: Record<string, unknown>;
+    result: Record<string, unknown> | null;
+    error: string | null;
+    /** The model it ran with, set when a runner claims it. */
+    model: { provider: string; model: string; keySource: "workspace" | "instance" } | null;
+    /** The credentials handed to the runner, sealed, so log lines can be redacted; cleared when it ends. */
+    credentials: string | null;
+    /** Kept by the store: lines written so far (the last line's seq), and how many were dropped from the front. */
+    logLines: number;
+    logDropped: number;
+}
+
+export interface LogLine {
+    /** Counts from 1 over the whole run, so it stays a stable cursor when old lines are dropped. */
+    seq: number;
+    at: string;
+    line: string;
+}
+
+/** A GitHub App installation linked to a workspace (by someone who proved they can see it). */
+export interface GithubInstallation {
+    id: number;
+    workspaceId: string;
+    accountLogin: string;
+    accountType: string;
+    repositorySelection: string;
+    suspended: boolean;
+    linkedBy: string;
+    linkedAt: string;
+}
+
+/** A webhook delivery and what was done with it, for the settings pages. */
+export interface GithubDelivery {
+    workspaceId: string | null;
+    projectId: string | null;
+    at: string;
+    event: string | null;
+    deliveryId: string | null;
+    what: string | null;
+    outcome: "received" | "ignored" | "refused";
+    detail: string;
+}
+
+/** A runner process, as last seen by the server. */
+export interface RunnerRecord {
+    id: string;
+    name: string;
+    version: string | null;
+    slots: number;
+    lastSeenAt: string;
+}
+
 /** Everything a request can read or change. Writes inside `Store.transaction` happen all together or not at all. */
 export interface Repos {
     users: {
@@ -346,6 +431,43 @@ export interface Repos {
         get(workspaceId: string, projectId: string | null, key: string): Promise<SettingRecord | null>;
         put(setting: SettingRecord): Promise<void>;
     };
+    jobs: {
+        get(id: string): Promise<Job | null>;
+        /** Insert or update; the log counters are the store's own and aren't changed by this. */
+        put(job: Job): Promise<void>;
+        /** Newest first. */
+        list(filter: { workspaceId?: string; projectId?: string; statuses?: readonly JobStatus[] }, limit: number): Promise<Job[]>;
+        /** Every queued and running job on the instance, oldest first. */
+        active(): Promise<Job[]>;
+        /** When each workspace's latest job started, for taking turns. */
+        lastStarted(): Promise<Map<string, string>>;
+        /** Add lines to a job's log, dropping the oldest once it holds more than `capBytes`. */
+        appendLog(jobId: string, lines: { at: string; line: string }[], capBytes: number): Promise<void>;
+        /** Up to `limit` lines after `after` (a seq), oldest first. */
+        log(jobId: string, after: number, limit: number): Promise<LogLine[]>;
+    };
+    githubInstallations: {
+        get(id: number): Promise<GithubInstallation | null>;
+        forWorkspace(workspaceId: string): Promise<GithubInstallation[]>;
+        put(installation: GithubInstallation): Promise<void>;
+        delete(id: number): Promise<void>;
+        deleteAll(): Promise<void>;
+    };
+    /** Each project's view of GitHub (pull requests, branches, the last check), owned by services/github. */
+    githubState: {
+        get(projectId: string): Promise<unknown | null>;
+        put(projectId: string, state: unknown): Promise<void>;
+    };
+    githubDeliveries: {
+        /** Record one, keeping only the newest `keep` for its project (or for the instance, without one). */
+        add(delivery: GithubDelivery, keep: number): Promise<void>;
+        /** Newest first: a project's, or with `projectId: null` the instance's own (app deliveries no project took). */
+        list(projectId: string | null, limit: number): Promise<GithubDelivery[]>;
+    };
+    runners: {
+        seen(runner: RunnerRecord): Promise<void>;
+        list(): Promise<RunnerRecord[]>;
+    };
 }
 
 export interface Store extends Repos {
@@ -366,6 +488,12 @@ export interface Store extends Repos {
      * fails or is retried. Outside a transaction, run it now.
      */
     afterCommit(fn: () => void): void;
+    /**
+     * Whether this process holds the named instance-wide lock, taking it if it's free. Held until the
+     * process stops (with Postgres, an advisory lock on a connection of its own), so that one process
+     * among several does jobs like polling GitHub. The memory store serves one process, so always.
+     */
+    holdLock(name: string): Promise<boolean>;
     /** Quick liveness check for /healthz. */
     ping(): Promise<void>;
     close(): Promise<void>;

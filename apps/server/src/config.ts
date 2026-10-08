@@ -27,6 +27,14 @@ export interface Config {
     /** The built web app to serve, or null for this repository's apps/web/dist. */
     webDistDir: string | null;
     production: boolean;
+    /** How many reviews may run at once on the instance, and in any one workspace. */
+    reviewConcurrency: number;
+    reviewConcurrencyPerWorkspace: number;
+    /** Shared with runners, which use it to claim reviews (/internal/runner). Null: no runner can connect. */
+    runnerSecret: string | null;
+    /** GitHub's API and web addresses (GitHub Enterprise Server, or a stand-in for tests). */
+    githubApiUrl: string;
+    githubUrl: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -100,6 +108,15 @@ export function loadConfig(env: Env = process.env): Config {
     if (databaseSchema && !/^[a-z_][a-z0-9_]{0,62}$/.test(databaseSchema))
         throw new ConfigError(`DATABASE_SCHEMA must be lower-case letters, digits and underscores, got "${databaseSchema}".`);
 
+    const runnerSecret = secretFromEnv(env, "TRIAGENT_RUNNER_SECRET") ?? null;
+    if (runnerSecret !== null && runnerSecret.length < 32)
+        throw new ConfigError("TRIAGENT_RUNNER_SECRET must be at least 32 characters (e.g. `openssl rand -base64 32`).");
+    const url = (name: string, fallback: string) => {
+        const v = (env[name] || fallback).replace(/\/+$/, "");
+        if (!/^https?:\/\/[^\s]+$/.test(v)) throw new ConfigError(`${name} must be an http(s) address, got "${v}".`);
+        return v;
+    };
+
     return {
         host: env.HOST ?? "127.0.0.1",
         port,
@@ -117,5 +134,10 @@ export function loadConfig(env: Env = process.env): Config {
         sessionMaxHours: whole(env, "SESSION_MAX_HOURS", 72, 1, 8760),
         webDistDir: env.WEB_DIST_DIR || null,
         production,
+        reviewConcurrency: whole(env, "REVIEW_CONCURRENCY", 1, 1, 100),
+        reviewConcurrencyPerWorkspace: whole(env, "REVIEW_CONCURRENCY_PER_WORKSPACE", 1, 1, 100),
+        runnerSecret,
+        githubApiUrl: url("GITHUB_API_URL", "https://api.github.com"),
+        githubUrl: url("GITHUB_URL", "https://github.com"),
     };
 }

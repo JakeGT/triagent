@@ -1,0 +1,367 @@
+// The runner: asks the server for work, runs Open Code Review on it, and reports back. It has no
+// database and keeps nothing between jobs but bare git mirrors; each job's credentials live only in
+// memory, for that job.
+//
+// OCR gets an explicit environment and nothing else: a throwaway HOME, OCR_CONFIG_PATH pointing at a file
+// that doesn't exist (so no MCP servers or setup commands from a user config can run), the model's
+// settings, and git settings that keep hooks off. Never telemetry settings, nor anything of Anthropic's.
+
+import { randomBytes } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { type ClaimedJob, isLost, type RunnerIdentity, ServerClient } from "./client.ts";
+import type { RunnerConfig } from "./config.ts";
+import { Git, gitEnv, mirrorPath } from "./git.ts";
+import { start } from "./process.ts";
+import { type Progress, readProgress } from "./progress.ts";
+
+const FLUSH_MS = 1000;
+const HEARTBEAT_MS = 10_000;
+const MAX_BATCH = 500;
+const VERSION = "0.1.0";
+
+/** The environment OCR runs with: built from scratch, never copied from the runner's own. */
+export function ocrEnv(
+    config: Pick<RunnerConfig, "path" | "llmTimeout">,
+    home: string,
+    job: Pick<ClaimedJob, "model">,
+): Record<string, string> {
+    const git = gitEnv({ gitBin: "git", path: config.path, home }, [["protocol.allow", "never"]]);
+    return {
+        PATH: config.path,
+        HOME: home,
+        TMPDIR: path.join(home, "tmp"),
+        XDG_CONFIG_HOME: path.join(home, ".config"),
+        XDG_CACHE_HOME: path.join(home, ".cache"),
+        XDG_DATA_HOME: path.join(home, ".local", "share"),
+        LANG: "C.UTF-8",
+        TZ: "UTC",
+        // A config file that doesn't exist: OCR's MCP servers and setup commands only come from there.
+        OCR_CONFIG_PATH: path.join(home, ".opencodereview", "none.json"),
+        OCR_NO_UPDATE: "1",
+        OCR_LLM_URL: job.model.url,
+        OCR_LLM_TOKEN: job.model.apiKey,
+        OCR_LLM_MODEL: job.model.model,
+        OCR_LLM_PROTOCOL: job.model.protocol,
+        OCR_USE_ANTHROPIC: "false",
+        ...(config.llmTimeout ? { OCR_LLM_TIMEOUT: config.llmTimeout } : {}),
+        ...Object.fromEntries(Object.entries(git).filter(([k]) => k.startsWith("GIT_"))),
+    };
+}
+
+export function ocrArgs(job: Pick<ClaimedJob, "kind" | "maxTokensBudget">, base: string | null, head: string): string[] {
+    const args = job.kind === "full" ? ["scan"] : ["review", "--from", base as string, "--to", head];
+    args.push("--format", "json", "--audience", "human", "--color", "never");
+    if (job.maxTokensBudget) args.push("--max-tokens-budget", String(job.maxTokensBudget));
+    return args;
+}
+
+/** Take out the job's own secrets before a line leaves the runner (the server redacts again). */
+function redactor(secrets: string[]): (line: string) => string {
+    const forms = new Set<string>();
+    for (const s of secrets) {
+        if (!s || s.length < 6) continue;
+        forms.add(s);
+        forms.add(Buffer.from(s).toString("base64"));
+        forms.add(Buffer.from(`x-access-token:${s}`).toString("base64"));
+    }
+    const sorted = [...forms].sort((a, b) => b.length - a.length);
+    return (line) => sorted.reduce((l, s) => l.split(s).join("[redacted]"), line);
+}
+
+class Stop extends Error {}
+
+/** One job in progress: its log buffer, heartbeat and the OCR process. */
+class JobRun {
+    private readonly job: ClaimedJob;
+    private readonly server: ServerClient;
+    private readonly redact: (line: string) => string;
+    private buffer: { at: string; line: string }[] = [];
+    private progress: Progress = {};
+    private progressDirty = false;
+    private readonly groups = new Set<string>();
+    private stopOcr: (() => void) | null = null;
+    cancelled = false;
+    lost = false;
+    private readonly timers: ReturnType<typeof setInterval>[] = [];
+    private flushing: Promise<void> = Promise.resolve();
+
+    constructor(job: ClaimedJob, server: ServerClient) {
+        this.job = job;
+        this.server = server;
+        this.redact = redactor([job.git.token, job.model.apiKey]);
+    }
+
+    say(line: string): void {
+        this.log(`[triagent] ${line}`);
+    }
+
+    redactLine(line: string): string {
+        return this.redact(line);
+    }
+
+    log(line: string): void {
+        this.buffer.push({ at: new Date().toISOString(), line: this.redact(line).slice(0, 4000) });
+        if (this.buffer.length >= MAX_BATCH) void this.flush();
+    }
+
+    get currentProgress(): Progress {
+        return this.progress;
+    }
+
+    setProgress(p: Progress): void {
+        this.progress = p;
+        this.progressDirty = true;
+    }
+
+    ocrLine(line: string): void {
+        this.log(line);
+        this.setProgress(readProgress(this.progress, line, this.groups));
+    }
+
+    /** Send buffered lines and progress; a cancellation or a lost job stops OCR. */
+    flush(): Promise<void> {
+        this.flushing = this.flushing.then(async () => {
+            if (this.lost || (!this.buffer.length && !this.progressDirty)) return;
+            const lines = this.buffer.splice(0, MAX_BATCH);
+            const progress = this.progressDirty ? { ...this.progress } : null;
+            this.progressDirty = false;
+            try {
+                const r = await this.server.events(this.job.id, lines, progress);
+                if (r.cancel) this.cancel();
+            } catch (err) {
+                if (isLost(err)) this.lose();
+                else {
+                    // The server is briefly away: keep the lines for the next try.
+                    this.buffer.unshift(...lines);
+                    this.buffer.splice(0, Math.max(0, this.buffer.length - 20_000));
+                    if (progress) this.progressDirty = true;
+                }
+            }
+        });
+        return this.flushing;
+    }
+
+    private async heartbeat(): Promise<void> {
+        if (this.lost) return;
+        try {
+            const r = await this.server.heartbeat(this.job.id);
+            if (r.cancel) this.cancel();
+        } catch (err) {
+            if (isLost(err)) this.lose();
+        }
+    }
+
+    cancel(): void {
+        if (this.cancelled) return;
+        this.cancelled = true;
+        this.stopOcr?.();
+    }
+
+    private lose(): void {
+        this.lost = true;
+        this.stopOcr?.();
+    }
+
+    check(): void {
+        if (this.lost) throw new Stop("This job is no longer ours.");
+        if (this.cancelled) throw new Stop("Cancelled.");
+    }
+
+    begin(): void {
+        this.timers.push(
+            setInterval(() => void this.flush(), FLUSH_MS),
+            setInterval(() => void this.heartbeat(), HEARTBEAT_MS),
+        );
+        for (const t of this.timers) t.unref();
+    }
+
+    async end(): Promise<void> {
+        for (const t of this.timers) clearInterval(t);
+        await this.flush();
+    }
+
+    attach(stop: () => void): void {
+        this.stopOcr = stop;
+        if (this.cancelled || this.lost) stop();
+    }
+}
+
+export class Runner {
+    private readonly config: RunnerConfig;
+    private readonly server: ServerClient;
+    private readonly git: Git;
+    readonly id = `runner-${randomBytes(9).toString("base64url")}`;
+    private readonly active = new Map<string, JobRun>();
+    private stopping = false;
+    private loop: Promise<void> | null = null;
+    /** Called when a job ends (tests wait on it). */
+    onJobEnd: (jobId: string) => void = () => {};
+
+    constructor(config: RunnerConfig) {
+        this.config = config;
+        this.server = new ServerClient(config.serverUrl, config.secret, () => this.identity());
+        this.git = new Git({ gitBin: config.gitBin, path: config.path, home: path.join(config.workDir, "git-home") });
+        mkdirSync(path.join(config.workDir, "git-home"), { recursive: true, mode: 0o700 });
+        mkdirSync(config.cacheDir, { recursive: true, mode: 0o700 });
+    }
+
+    identity(): RunnerIdentity {
+        return { id: this.id, name: this.config.name, version: VERSION, slots: Math.max(0, this.config.concurrency - this.active.size) };
+    }
+
+    get running(): number {
+        return this.active.size;
+    }
+
+    start(): void {
+        this.loop ??= this.poll();
+    }
+
+    /** Stop asking for work; stop running reviews and tell the server why. */
+    async stop(): Promise<void> {
+        this.stopping = true;
+        for (const run of this.active.values()) run.cancel();
+        while (this.active.size) await sleep(50);
+        await this.loop;
+    }
+
+    private async poll(): Promise<void> {
+        let failures = 0;
+        while (!this.stopping) {
+            let claimed = false;
+            if (this.active.size < this.config.concurrency) {
+                try {
+                    const job = await this.server.claim();
+                    failures = 0;
+                    if (job) {
+                        claimed = true;
+                        void this.execute(job);
+                    }
+                } catch (err) {
+                    failures++;
+                    if (failures === 1 || failures % 20 === 0)
+                        console.error(`Asking the server for work failed: ${(err as Error).message}`);
+                }
+            }
+            if (!claimed) await sleep(Math.min(this.config.pollMs * 2 ** Math.min(failures, 4), 60_000));
+        }
+    }
+
+    /** Run one job from start to finish, and report how it went. */
+    async execute(job: ClaimedJob): Promise<void> {
+        const run = new JobRun(job, this.server);
+        this.active.set(job.id, run);
+        run.begin();
+        const work = mkdtempSync(path.join(this.config.workDir, "job-"));
+        const tree = path.join(work, "tree");
+        const home = path.join(work, "home");
+        mkdirSync(path.join(home, "tmp"), { recursive: true, mode: 0o700 });
+        const mirror = mirrorPath(this.config.cacheDir, job.repository.cloneUrl);
+        let fetched: { head: string; base: string | null } | null = null;
+        let outcome: Parameters<ServerClient["finish"]>[1];
+        try {
+            run.setProgress({ phase: "fetching" });
+            run.say(
+                `Fetching ${job.kind === "pr" ? `pull request #${job.pr?.number}` : job.gitRef}${job.baseRef ? ` and ${job.baseRef}` : ""} from ${job.repository.fullName}…`,
+            );
+            fetched = await this.git.fetch(mirror, {
+                kind: job.kind,
+                cloneUrl: job.repository.cloneUrl,
+                username: job.git.username,
+                token: job.git.token,
+                pr: job.pr?.number ?? null,
+                gitRef: job.gitRef,
+                baseRef: job.baseRef,
+            });
+            run.check();
+            if (job.kind === "pr" && job.headSha && fetched.head !== job.headSha)
+                run.say(`The pull request moved on to ${fetched.head.slice(0, 7)} since it was queued; reviewing that.`);
+            if (fetched.base && fetched.base === fetched.head)
+                throw new Error(
+                    `There are no changes to review: ${job.gitRef ?? "the pull request"} has nothing that isn't on ${job.baseRef}.`,
+                );
+            await this.git.addWorktree(mirror, tree, fetched.head);
+            if (fetched.base) {
+                const rules = await this.git.useBaseReviewRules(mirror, tree, fetched.base);
+                if (rules !== "unchanged")
+                    run.say(
+                        rules === "replaced"
+                            ? `Using ${job.baseRef}'s review rules (.opencodereview/), not the ones in the change under review.`
+                            : "Ignoring the .opencodereview/ the change adds: changes under review can't set their own review rules.",
+                    );
+            }
+            run.check();
+            const args = ocrArgs(job, fetched.base, fetched.head);
+            run.say(
+                `Running ocr ${args.join(" ")} with ${job.model.model} via ${job.model.provider}. Time limit: ${job.timeoutMinutes} minutes.`,
+            );
+            run.setProgress({ phase: "starting" });
+            const ocr = start(this.config.ocrBin, args, {
+                cwd: tree,
+                env: ocrEnv(this.config, home, job),
+                timeoutMs: job.timeoutMinutes * 60_000,
+                onLine: (line) => run.ocrLine(line),
+            });
+            run.attach(ocr.stop);
+            const exit = await ocr.done;
+            let report: unknown = null;
+            try {
+                report = exit.stdout.trim() ? JSON.parse(exit.stdout) : null;
+            } catch {
+                report = null;
+            }
+            if (run.lost) throw new Stop("This job is no longer ours.");
+            if (run.cancelled) outcome = { status: "cancelled", ...(report ? { report } : {}) };
+            else if (exit.timedOut)
+                throw new Error(
+                    `Stopped after ${job.timeoutMinutes} minutes, the project's time limit for this kind of review. An admin can raise it in the project's Automation settings.`,
+                );
+            else if (exit.code !== 0) {
+                const tail = exit.stderr.trim().split("\n").slice(-3).join(" ").slice(0, 600);
+                outcome = {
+                    status: "failed",
+                    error: `Open Code Review failed (exit ${exit.code ?? exit.signal}): ${run.redactLine(tail) || "no message"}`,
+                    ...(report ? { report } : {}),
+                };
+            } else if (!report || typeof report !== "object")
+                outcome = { status: "failed", error: "Open Code Review didn't return a JSON report." };
+            else {
+                run.setProgress({ ...run.currentProgress, phase: "uploading" });
+                run.say("Review finished; sending the findings to Triagent…");
+                outcome = { status: "done", report };
+            }
+        } catch (err) {
+            if (err instanceof Stop) outcome = { status: run.cancelled ? "cancelled" : "failed", error: err.message };
+            else {
+                const message = run.redactLine((err as Error).message);
+                run.say(message);
+                outcome = { status: run.cancelled ? "cancelled" : "failed", error: message };
+            }
+        } finally {
+            await this.git.removeWorktree(mirror, tree).catch(() => {});
+            rmSync(work, { recursive: true, force: true });
+            await run.end();
+        }
+        if (!run.lost) await this.report(job.id, { ...outcome, headSha: fetched?.head ?? null, baseSha: fetched?.base ?? null });
+        this.active.delete(job.id);
+        this.onJobEnd(job.id);
+    }
+
+    /** Tell the server how the job ended, trying again for a while if it can't be reached. */
+    private async report(jobId: string, outcome: Parameters<ServerClient["finish"]>[1]): Promise<void> {
+        for (let attempt = 1; attempt <= 8; attempt++) {
+            try {
+                await this.server.finish(jobId, outcome);
+                return;
+            } catch (err) {
+                if (isLost(err) || attempt === 8) {
+                    console.error(`Couldn't report how ${jobId} ended: ${(err as Error).message}`);
+                    return;
+                }
+                await sleep(Math.min(1000 * 2 ** attempt, 30_000));
+            }
+        }
+    }
+}

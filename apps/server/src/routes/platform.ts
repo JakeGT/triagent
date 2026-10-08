@@ -101,6 +101,7 @@ export function platformRoutes(services: Services, all: () => Route[]): Route[] 
                     readRaw,
                     c.req.header("x-hub-signature-256"),
                     c.req.header("x-github-event"),
+                    c.req.header("x-github-delivery")?.slice(0, 80),
                 );
                 return json(out);
             },

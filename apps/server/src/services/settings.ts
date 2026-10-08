@@ -171,6 +171,11 @@ export class Settings {
         });
     }
 
+    /** The project's GitHub token, for the code that uses it. Never put it in a response or a log. */
+    githubToken(repos: Repos, project: Project): Promise<string | null> {
+        return this.core.secrets.reveal(repos, this.projectScope(project), GITHUB_TOKEN);
+    }
+
     webhookSecret(project: Project): Promise<string | null> {
         return this.core.secrets.reveal(this.core.store, this.projectScope(project), WEBHOOK_SECRET);
     }

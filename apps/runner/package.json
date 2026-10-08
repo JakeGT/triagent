@@ -1,0 +1,12 @@
+{
+  "name": "@triagent/runner",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Runs Open Code Review for a Triagent server: no database, no data volume, one job's credentials at a time",
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.ts",
+    "dev": "node --watch src/main.ts"
+  }
+}

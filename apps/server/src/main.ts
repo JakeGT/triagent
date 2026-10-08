@@ -56,6 +56,15 @@ if ((await store.users.count()) === 0)
     console.warn("No accounts yet. Set TRIAGENT_ADMIN_USER and TRIAGENT_ADMIN_PASSWORD (or _FILE) and restart.");
 
 const { app } = createApp(services);
+// Automatic reviews (one process polls GitHub at a time), and reviews whose runner stopped responding.
+services.automation.start();
+const sweeper = setInterval(
+    () => void services.runs.sweep().catch((err: Error) => console.error(`Checking review leases: ${err.message}`)),
+    15_000,
+);
+sweeper.unref();
+void services.runs.sweep().catch(() => {});
+if (!config.runnerSecret) console.warn("No TRIAGENT_RUNNER_SECRET: no runner can connect, so reviews stay queued.");
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
     const host = info.address.includes(":") ? `[${info.address}]` : info.address;
     console.log(`Triagent listening on http://${host}:${info.port} (public address ${config.publicOrigin})`);
@@ -63,6 +72,7 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
+        services.automation.stop();
         server.close(() => {
             store.close().finally(() => process.exit(0));
         });

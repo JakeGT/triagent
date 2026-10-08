@@ -19,10 +19,14 @@ import type {
     ApiToken,
     ArchivedReport,
     AuditRow,
+    GithubDelivery,
+    GithubInstallation,
+    Job,
     Membership,
     Project,
     Repos,
     ReviewRecord,
+    RunnerRecord,
     SecretRecord,
     Session,
     SettingRecord,
@@ -246,6 +250,67 @@ const toSecret = (r: Row): SecretRecord => ({
     setAt: iso(r.set_at),
 });
 
+const toJob = (r: Row): Job => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    projectId: r.project_id,
+    kind: r.kind,
+    dedupeKey: r.dedupe_key,
+    title: r.title,
+    branch: r.branch,
+    gitRef: r.git_ref,
+    baseRef: r.base_ref,
+    headSha: r.head_sha,
+    baseSha: r.base_sha,
+    pr: r.pr,
+    requestedBy: r.requested_by,
+    source: r.source,
+    status: r.status,
+    queuedAt: iso(r.queued_at),
+    startedAt: isoOrNull(r.started_at),
+    finishedAt: isoOrNull(r.finished_at),
+    runnerId: r.runner_id,
+    leaseExpiresAt: isoOrNull(r.lease_expires_at),
+    cancelRequested: r.cancel_requested,
+    progress: r.progress,
+    result: r.result,
+    error: r.error,
+    model: r.model,
+    credentials: r.credentials,
+    logLines: r.log_lines,
+    logDropped: r.log_dropped,
+});
+
+const toInstallation = (r: Row): GithubInstallation => ({
+    id: Number(r.id),
+    workspaceId: r.workspace_id,
+    accountLogin: r.account_login,
+    accountType: r.account_type,
+    repositorySelection: r.repository_selection,
+    suspended: r.suspended,
+    linkedBy: r.linked_by,
+    linkedAt: iso(r.linked_at),
+});
+
+const toDelivery = (r: Row): GithubDelivery => ({
+    workspaceId: r.workspace_id,
+    projectId: r.project_id,
+    at: iso(r.at),
+    event: r.event,
+    deliveryId: r.delivery_id,
+    what: r.what,
+    outcome: r.outcome,
+    detail: r.detail,
+});
+
+const toRunner = (r: Row): RunnerRecord => ({
+    id: r.id,
+    name: r.name,
+    version: r.version,
+    slots: r.slots,
+    lastSeenAt: iso(r.last_seen_at),
+});
+
 const toSetting = (r: Row): SettingRecord => ({ workspaceId: r.workspace_id, projectId: r.project_id, key: r.key, value: r.value });
 
 const first = <T>(rows: readonly Row[], map: (r: Row) => T): T | null => (rows[0] ? map(rows[0]) : null);
@@ -255,6 +320,8 @@ export class PostgresStore implements Store {
     readonly schema: string | undefined;
     private readonly maxAttempts: number;
     private readonly context = new AsyncLocalStorage<Tx>();
+    /** Connections holding instance-wide advisory locks (see holdLock), by lock name. */
+    private readonly locks = new Map<string, postgres.ReservedSql>();
 
     constructor(url: string, options: PostgresOptions = {}) {
         this.sql = connect(url, options);
@@ -346,11 +413,39 @@ export class PostgresStore implements Store {
         };
     }
 
+    async holdLock(name: string): Promise<boolean> {
+        const key = `triagent:${this.schema ?? "public"}:${name}`;
+        const held = this.locks.get(name);
+        if (held) {
+            // Still ours while its connection is alive.
+            try {
+                await held`select 1`;
+                return true;
+            } catch {
+                this.locks.delete(name);
+            }
+        }
+        const conn = await this.sql.reserve();
+        try {
+            const [row] = await conn`select pg_try_advisory_lock(hashtextextended(${key}, 0)) as ok`;
+            if (row?.ok) {
+                this.locks.set(name, conn);
+                return true;
+            }
+        } catch {
+            // the database is unreachable: someone else may have it
+        }
+        conn.release();
+        return false;
+    }
+
     async ping(): Promise<void> {
         await this.sql`select 1`;
     }
 
     async close(): Promise<void> {
+        for (const conn of this.locks.values()) conn.release();
+        this.locks.clear();
         await this.sql.end({ timeout: 5 });
     }
 
@@ -757,5 +852,163 @@ export class PostgresStore implements Store {
                 "project_id",
                 "key",
             ]),
+    };
+
+    jobs: Repos["jobs"] = {
+        get: async (id) => first(await this.rows((sql) => sql`select * from jobs where id = ${id}`), toJob),
+        put: (j) =>
+            this.upsert(
+                "jobs",
+                {
+                    id: j.id,
+                    workspace_id: j.workspaceId,
+                    project_id: j.projectId,
+                    kind: j.kind,
+                    dedupe_key: j.dedupeKey,
+                    title: j.title,
+                    branch: j.branch,
+                    git_ref: j.gitRef,
+                    base_ref: j.baseRef,
+                    head_sha: j.headSha,
+                    base_sha: j.baseSha,
+                    pr: j.pr ? json(this.sql, j.pr) : null,
+                    requested_by: json(this.sql, j.requestedBy),
+                    source: j.source,
+                    status: j.status,
+                    queued_at: j.queuedAt,
+                    started_at: j.startedAt,
+                    finished_at: j.finishedAt,
+                    runner_id: j.runnerId,
+                    lease_expires_at: j.leaseExpiresAt,
+                    cancel_requested: j.cancelRequested ? json(this.sql, j.cancelRequested) : null,
+                    progress: json(this.sql, j.progress),
+                    result: j.result ? json(this.sql, j.result) : null,
+                    error: j.error,
+                    model: j.model ? json(this.sql, j.model) : null,
+                    credentials: j.credentials,
+                },
+                ["id"],
+            ),
+        list: async (f, limit) =>
+            (
+                await this.rows(
+                    (sql) => sql`
+                        select * from jobs
+                        where true
+                        ${f.workspaceId ? sql`and workspace_id = ${f.workspaceId}` : sql``}
+                        ${f.projectId ? sql`and project_id = ${f.projectId}` : sql``}
+                        ${f.statuses ? sql`and status in ${sql(f.statuses as string[])}` : sql``}
+                        order by queued_at desc, seq desc
+                        limit ${limit}`,
+                )
+            ).map(toJob),
+        active: async () =>
+            (await this.rows((sql) => sql`select * from jobs where status in ('queued', 'running') order by queued_at, seq`)).map(toJob),
+        lastStarted: async () =>
+            new Map(
+                (
+                    await this.rows(
+                        (sql) =>
+                            sql`select workspace_id, max(started_at) as at from jobs where started_at is not null group by workspace_id`,
+                    )
+                ).map((r) => [r.workspace_id as string, iso(r.at)]),
+            ),
+        appendLog: (jobId, lines, capBytes) =>
+            this.write(async (sql) => {
+                if (!lines.length) return;
+                const [job] = await sql`select log_lines, log_bytes from jobs where id = ${jobId}`;
+                if (!job) return;
+                const start = Number(job.log_lines);
+                const rows = lines.map((l, i) => ({ job_id: jobId, seq: start + i + 1, at: l.at, line: l.line }));
+                await sql`insert into job_logs ${sql(rows)}`;
+                const bytes = Number(job.log_bytes) + lines.reduce((n, l) => n + Buffer.byteLength(l.line), 0);
+                let dropped = 0;
+                let kept = bytes;
+                if (bytes > capBytes) {
+                    // Keep the newest lines that fit; drop the rest from the front.
+                    const gone = await sql`
+                        delete from job_logs l using (
+                            select seq, octet_length(line) as size from (
+                                select seq, line, sum(octet_length(line)) over (order by seq desc) as tail
+                                from job_logs where job_id = ${jobId}
+                            ) t where tail > ${capBytes}
+                        ) d
+                        where l.job_id = ${jobId} and l.seq = d.seq
+                        returning d.size`;
+                    dropped = gone.length;
+                    kept -= gone.reduce((n, r) => n + Number(r.size), 0);
+                }
+                await sql`
+                    update jobs set log_lines = ${start + lines.length}, log_bytes = ${kept}, log_dropped = log_dropped + ${dropped}
+                    where id = ${jobId}`;
+            }),
+        log: async (jobId, after, limit) =>
+            (
+                await this.rows(
+                    (sql) => sql`select seq, at, line from job_logs where job_id = ${jobId} and seq > ${after} order by seq limit ${limit}`,
+                )
+            ).map((r) => ({ seq: r.seq, at: iso(r.at), line: r.line })),
+    };
+
+    githubInstallations: Repos["githubInstallations"] = {
+        get: async (id) => first(await this.rows((sql) => sql`select * from github_installations where id = ${id}`), toInstallation),
+        forWorkspace: async (workspaceId) =>
+            (
+                await this.rows((sql) => sql`select * from github_installations where workspace_id = ${workspaceId} order by linked_at, id`)
+            ).map(toInstallation),
+        put: (i) =>
+            this.upsert(
+                "github_installations",
+                {
+                    id: i.id,
+                    workspace_id: i.workspaceId,
+                    account_login: i.accountLogin,
+                    account_type: i.accountType,
+                    repository_selection: i.repositorySelection,
+                    suspended: i.suspended,
+                    linked_by: i.linkedBy,
+                    linked_at: i.linkedAt,
+                },
+                ["id"],
+            ),
+        delete: (id) =>
+            this.write(async (sql) => {
+                await sql`delete from github_installations where id = ${id}`;
+            }),
+        deleteAll: () =>
+            this.write(async (sql) => {
+                await sql`delete from github_installations`;
+            }),
+    };
+
+    githubState: Repos["githubState"] = {
+        get: async (projectId) =>
+            (await this.rows((sql) => sql`select state from github_state where project_id = ${projectId}`))[0]?.state ?? null,
+        put: (projectId, state) => this.upsert("github_state", { project_id: projectId, state: json(this.sql, state) }, ["project_id"]),
+    };
+
+    githubDeliveries: Repos["githubDeliveries"] = {
+        add: (d, keep) =>
+            this.write(async (sql) => {
+                await sql`
+                    insert into github_deliveries (workspace_id, project_id, at, event, delivery_id, what, outcome, detail)
+                    values (${d.workspaceId}, ${d.projectId}, ${d.at}, ${d.event}, ${d.deliveryId}, ${d.what}, ${d.outcome}, ${d.detail})`;
+                await sql`
+                    delete from github_deliveries where ${same(sql, "project_id", d.projectId)} and seq not in (
+                        select seq from github_deliveries where ${same(sql, "project_id", d.projectId)} order by seq desc limit ${keep})`;
+            }),
+        list: async (projectId, limit) =>
+            (
+                await this.rows(
+                    (sql) =>
+                        sql`select * from github_deliveries where ${same(sql, "project_id", projectId)} order by seq desc limit ${limit}`,
+                )
+            ).map(toDelivery),
+    };
+
+    runners: Repos["runners"] = {
+        seen: (r) =>
+            this.upsert("runners", { id: r.id, name: r.name, version: r.version, slots: r.slots, last_seen_at: r.lastSeenAt }, ["id"]),
+        list: async () => (await this.rows((sql) => sql`select * from runners order by last_seen_at desc`)).map(toRunner),
     };
 }

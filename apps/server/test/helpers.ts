@@ -73,7 +73,7 @@ export interface Session {
     csrf: string;
 }
 
-export async function testApp(store?: Store): Promise<TestApp> {
+export async function testApp(store?: Store, env: Record<string, string> = {}): Promise<TestApp> {
     const config = loadConfig({
         PUBLIC_ORIGIN: ORIGIN,
         COOKIE_SECURE: "false",
@@ -81,6 +81,7 @@ export async function testApp(store?: Store): Promise<TestApp> {
         TRIAGENT_ADMIN_PASSWORD: ADMIN_PASSWORD,
         TRIAGENT_SECRETS_KEY: randomBytes(32).toString("base64"),
         REQUESTS_PER_MINUTE: "1000000",
+        ...env,
     });
     const services = createServices(config, store ?? (await testStore()));
     await services.accounts.bootstrap();

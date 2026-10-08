@@ -88,6 +88,11 @@ export class Projects {
         return url;
     }
 
+    /** A repository address in the stored form, or null if it isn't one. */
+    repoUrlOrNull(input: string): string | null {
+        return normaliseRepoUrl(input);
+    }
+
     async update(actor: Actor, project: Project, input: { name?: string; repoUrl?: string | null; defaultBranch?: string }) {
         const patch: Partial<Pick<Project, "name" | "repoUrl" | "defaultBranch">> = {};
         if (input.name !== undefined) {

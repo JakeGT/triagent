@@ -601,6 +601,141 @@ export const TOOLS: Tool[] = [
             return { text: `Deleted ${r.branch} (${r.issues} findings, ${r.unresolved} unresolved).`, data: r };
         },
     }),
+
+    // ---- reviews ---------------------------------------------------------------------------------
+    tool({
+        name: "start_review",
+        title: "Start review",
+        description:
+            'Start an Open Code Review run: a pull request (kind "pr" with its number), a branch\'s changes since its base (kind "changes" with branch, and base if not the default branch), or a full scan (kind "full", default branch unless given). Returns the run at once; wait_for_run waits for it to finish.',
+        permission: "operate",
+        input: z.object({
+            project,
+            kind: z.enum(["pr", "changes", "full"]),
+            number: z.number().int().positive().optional().describe("The pull request (kind pr)"),
+            branch: z.string().max(200).optional(),
+            base: z.string().max(200).optional(),
+        }),
+        async run(ctx, args) {
+            const p = await projectOf(ctx, args.project);
+            const { project: _p, ...input } = args;
+            const r = await ctx.services.runs.start(ctx.actor, p, input as never);
+            return { text: `Queued run ${r.id}: ${r.title} (branch ${r.branch}). Use wait_for_run with this id to wait for it.`, data: r };
+        },
+    }),
+    tool({
+        name: "list_runs",
+        title: "List runs",
+        description:
+            "Queued, running and recent reviews (one project, or the whole workspace), and why reviews are waiting if they can't start.",
+        permission: "read",
+        readOnly: true,
+        input: z.object({ project: project.describe("Only this project's runs (default: all)") }),
+        async run(ctx, args) {
+            const p = typeof args.project === "string" && args.project ? await projectOf(ctx, args.project) : null;
+            const r = await ctx.services.runs.list(ctx.access.workspace, p ? { projectId: p.id } : {});
+            const row = (x: (typeof r.recent)[number]) =>
+                `- ${x.id} [${x.status}] ${x.project}: ${x.title}${x.result?.total !== undefined && x.result?.total !== null ? `, ${x.result.total} finding(s)` : ""}${x.error ? ` (${x.error})` : ""}`;
+            const text = [
+                r.waiting ? `Reviews are waiting: ${r.waiting}` : "",
+                `Running (${r.running.length}):`,
+                ...r.running.map(row),
+                `Queued (${r.queued.length}):`,
+                ...r.queued.map(row),
+                "Recent:",
+                ...r.recent.slice(0, 15).map(row),
+            ]
+                .filter(Boolean)
+                .join("\n");
+            return { text, data: r };
+        },
+    }),
+    tool({
+        name: "get_run",
+        title: "Get run",
+        description: "One review: status, progress, result, and its log (lines after `after`, a line number).",
+        permission: "read",
+        readOnly: true,
+        input: z.object({ id: z.string().max(40), after: z.number().int().min(0).optional() }),
+        async run(ctx, args) {
+            const r = await ctx.services.runs.get(ctx.access.workspace, String(args.id), Number(args.after ?? 0));
+            const tail = r.logLines.slice(-40).map((l) => l.line);
+            return {
+                text: `${r.title}: ${r.status}${r.error ? ` (${r.error})` : ""}${r.result?.total !== null && r.result?.total !== undefined ? `, ${r.result.total} finding(s) on ${r.branch}` : ""}.\n\n${tail.join("\n")}`,
+                data: r,
+            };
+        },
+    }),
+    tool({
+        name: "wait_for_run",
+        title: "Wait for run",
+        description: "Wait until a review finishes (up to 10 minutes), then say how it ended. Call it again if it's still going.",
+        permission: "read",
+        readOnly: true,
+        input: z.object({
+            id: z.string().max(40),
+            seconds: z.number().int().min(1).max(600).optional().describe("How long to wait (default 600)"),
+        }),
+        async run(ctx, args) {
+            const r = await ctx.services.runs.waitFor(ctx.access.workspace, String(args.id), Number(args.seconds ?? 600));
+            const run = r.run;
+            return {
+                text: r.finished
+                    ? `${run.title} ${run.status}${run.error ? `: ${run.error}` : ""}${run.result?.total !== null && run.result?.total !== undefined ? `. ${run.result.total} finding(s) on branch ${run.branch}; use list_issues with that branch.` : "."}`
+                    : `${run.title} is still ${run.status}${run.progress?.phase ? ` (${run.progress.phase})` : ""}. Call wait_for_run again.`,
+                data: r,
+            };
+        },
+    }),
+    tool({
+        name: "cancel_run",
+        title: "Cancel run",
+        description: "Cancel a queued or running review.",
+        permission: "operate",
+        destructive: true,
+        input: z.object({ id: z.string().max(40) }),
+        async run(ctx, args) {
+            const r = await ctx.services.runs.cancel(ctx.actor, ctx.access.workspace, String(args.id));
+            return { text: r.status === "cancelled" ? `Cancelled ${r.title}.` : `Asked ${r.title} to stop; it ends shortly.`, data: r };
+        },
+    }),
+    tool({
+        name: "list_pull_requests",
+        title: "List pull requests",
+        description:
+            "A project's open pull requests: whether each head commit has been reviewed, and why the last check did or didn't queue it.",
+        permission: "read",
+        readOnly: true,
+        input: z.object({ project }),
+        async run(ctx, args) {
+            const r = await ctx.services.automation.pullRequests(await projectOf(ctx, args.project));
+            const text = r.connected
+                ? r.items
+                      .map(
+                          (p) =>
+                              `- #${p.number} ${p.title} (${p.branch}, ${p.headSha.slice(0, 7)}): ${p.status}${p.lastDecision ? `; last check: ${p.lastDecision.action}, ${p.lastDecision.why}` : ""}`,
+                      )
+                      .join("\n") || "No open pull requests (as of the last check)."
+                : "This project isn't connected to GitHub.";
+            return { text, data: r };
+        },
+    }),
+    tool({
+        name: "check_pull_requests",
+        title: "Check pull requests",
+        description: "Ask GitHub about the project's pull requests now, queueing reviews of new commits if automatic reviews are on.",
+        permission: "operate",
+        input: z.object({ project }),
+        async run(ctx, args) {
+            const p = await projectOf(ctx, args.project);
+            await ctx.services.github.githubFor(p);
+            const check = await ctx.services.automation.checkPulls(p);
+            const text = check?.error
+                ? `Checking failed: ${check.error}`
+                : `${check?.openPulls ?? 0} open pull request(s).\n${(check?.decisions ?? []).map((d) => `- #${d.number}: ${d.action} (${d.why})`).join("\n")}`;
+            return { text, data: check, ...(check?.error ? { isError: true } : {}) };
+        },
+    }),
 ];
 
 export function toolSchema(t: Tool): Record<string, unknown> {

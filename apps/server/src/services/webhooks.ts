@@ -1,9 +1,9 @@
 // GitHub webhook deliveries. Each project has an opaque webhook address and its own secret; a delivery is
 // only read once its signature (HMAC-SHA256 of the exact bytes GitHub sent) checks out.
 
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { ApiError, notFound } from "../errors.ts";
 import type { Core } from "./core.ts";
+import { type Automation, verifySignature } from "./github/automation.ts";
 import type { Settings } from "./settings.ts";
 
 export interface DeliveryResult {
@@ -15,6 +15,8 @@ export interface DeliveryResult {
 export class Webhooks {
     private readonly core: Core;
     private readonly settings: Settings;
+    /** Acts on verified deliveries (set once the services are wired up). */
+    automation: Automation | null = null;
 
     constructor(core: Core, settings: Settings) {
         this.core = core;
@@ -27,33 +29,32 @@ export class Webhooks {
         readBody: () => Promise<Buffer>,
         signature: string | undefined,
         event: string | undefined,
+        deliveryId?: string,
     ): Promise<DeliveryResult> {
         const project = await this.core.store.projects.byWebhookId(webhookId);
         if (!project) throw notFound("No project has that webhook address. Check the payload URL on GitHub.");
         const secret = await this.settings.webhookSecret(project);
         if (!secret) throw notFound("Webhooks aren't set up for this project: create a secret in its GitHub settings.");
         const body = await readBody();
-        const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(body).digest("hex")}`);
-        const given = Buffer.from(String(signature ?? ""));
-        if (given.length !== expected.length || !timingSafeEqual(given, expected)) throw new ApiError(401, "Bad webhook signature.");
-
-        let payload: { repository?: { full_name?: string } } | null = null;
-        try {
-            payload = JSON.parse(body.toString("utf8"));
-        } catch {
-            // not JSON: nothing to act on
+        if (!verifySignature(secret, body, signature)) {
+            await this.core.store.githubDeliveries.add(
+                {
+                    workspaceId: project.workspaceId,
+                    projectId: project.id,
+                    at: new Date().toISOString(),
+                    event: event ?? null,
+                    deliveryId: deliveryId ?? null,
+                    what: null,
+                    outcome: "refused",
+                    detail: signature
+                        ? "Bad signature: the secret on GitHub doesn't match this project's, or something changed the body on the way."
+                        : "No signature: set the secret in the webhook's settings on GitHub.",
+                },
+                50,
+            );
+            throw new ApiError(401, "Bad webhook signature.");
         }
-        const repo = payload?.repository?.full_name;
-        const connected = project.repoUrl?.replace(/^https:\/\/[^/]+\//, "");
-        if (repo && connected && repo.toLowerCase() !== connected.toLowerCase()) {
-            return { ok: true, ignored: true, note: `It's for ${repo}, but this project is connected to ${connected}.` };
-        }
-        if (event === "ping") return { ok: true, note: "Webhook works." };
-        // Reviewing pull requests from webhook events arrives with the GitHub App.
-        return {
-            ok: true,
-            ignored: true,
-            note: `Received ${event ?? "an event"}; automatic reviews aren't available in this version yet.`,
-        };
+        if (!this.automation) return { ok: true, ignored: true, note: "Automatic reviews aren't available on this server." };
+        return this.automation.projectDelivery(project, body, event, deliveryId ?? null);
     }
 }
