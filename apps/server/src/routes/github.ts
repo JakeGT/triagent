@@ -177,6 +177,7 @@ export const githubRoutes: Route[] = [
         method: "GET",
         path: "/api/v1/instance/github-app/created",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Where GitHub sends you after creating the app: keeps its credentials (encrypted)",
         query: z.object({ code: z.string().max(200).optional(), state: z.string().max(2000).optional() }),

@@ -7,7 +7,7 @@
 import net from "node:net";
 import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
-import { ADMIN_PASSWORD, ADMIN_USER, OIDC_CLIENT_SECRET } from "./e2e/constants";
+import { ADMIN_PASSWORD, ADMIN_USER, OIDC_CLIENT_SECRET, RUNNER_SECRET } from "./e2e/constants";
 
 function freePort(): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -25,12 +25,17 @@ function freePort(): Promise<number> {
 process.env.E2E_PORT ??= String(await freePort());
 process.env.E2E_OIDC_PORT ??= String(await freePort());
 process.env.E2E_PROVIDER_PORT ??= String(await freePort());
+process.env.E2E_GITHUB_PORT ??= String(await freePort());
+process.env.E2E_RUNNER_PORT ??= String(await freePort());
 const port = Number(process.env.E2E_PORT);
 const origin = `http://127.0.0.1:${port}`;
 const oidcOrigin = `http://127.0.0.1:${process.env.E2E_OIDC_PORT}`;
 // The provider is on "localhost": another site from the app's 127.0.0.1, as a real provider would be.
 const issuer = `http://localhost:${process.env.E2E_PROVIDER_PORT}/application/o/triagent/`;
 process.env.E2E_PROVIDER_ISSUER = issuer;
+// Reviews: a fake GitHub (API, app pages and git), and a runner using a fake `ocr`.
+const github = `http://127.0.0.1:${process.env.E2E_GITHUB_PORT}`;
+process.env.E2E_GITHUB_URL = github;
 
 export default defineConfig({
     testDir: "e2e",
@@ -79,6 +84,38 @@ export default defineConfig({
                 // Never reach OpenRouter from tests: the catalogue is served by the tests that need it.
                 OPENROUTER_CATALOGUE: "false",
                 WEB_DIST_DIR: path.resolve(import.meta.dirname, "dist"),
+                GITHUB_API_URL: `${github}/api`,
+                GITHUB_URL: github,
+                TRIAGENT_RUNNER_SECRET: RUNNER_SECRET,
+                REVIEW_CONCURRENCY: "4",
+            },
+        },
+        {
+            command: "node ../../tests/fakes/github-server.ts",
+            cwd: import.meta.dirname,
+            url: `${github}/_fake/health`,
+            reuseExistingServer: false,
+            timeout: 30_000,
+            stdout: "ignore",
+            stderr: "pipe",
+            env: { FAKE_GITHUB_PORT: String(process.env.E2E_GITHUB_PORT) },
+        },
+        {
+            command: "node ../runner/src/main.ts",
+            cwd: import.meta.dirname,
+            url: `http://127.0.0.1:${process.env.E2E_RUNNER_PORT}/healthz`,
+            reuseExistingServer: false,
+            timeout: 30_000,
+            stdout: "ignore",
+            stderr: "pipe",
+            env: {
+                TRIAGENT_SERVER_URL: origin,
+                TRIAGENT_RUNNER_SECRET: RUNNER_SECRET,
+                RUNNER_NAME: "e2e-runner",
+                RUNNER_CONCURRENCY: "4",
+                RUNNER_POLL_SECONDS: "1",
+                RUNNER_HEALTH_PORT: String(process.env.E2E_RUNNER_PORT),
+                OCR_BIN: path.resolve(import.meta.dirname, "../../tests/fakes/ocr.ts"),
             },
         },
         {

@@ -8,6 +8,7 @@ import { SIDEBAR_PREF, SidebarInset, SidebarProvider, SidebarTrigger } from "@/c
 import { type LiveStatus, useLiveUpdates } from "@/lib/live";
 import { prefs } from "@/lib/prefs";
 import { keys } from "@/lib/queries";
+import { useRunNotifications } from "@/lib/run-notify";
 import { useWorkspace } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +46,8 @@ export function AppShell() {
         void navigate({ to: "/sign-in", search: { redirect: router.state.location.href } });
     }, [queryClient, navigate, router]);
     const onLostAccess = useCallback(() => void navigate({ to: "/" }), [navigate]);
-    const status = useLiveUpdates(ws, onSessionEnded, onLostAccess);
+    const onEvent = useRunNotifications(ws);
+    const status = useLiveUpdates(ws, onSessionEnded, onLostAccess, onEvent);
 
     return (
         <SidebarProvider defaultOpen={prefs.get(SIDEBAR_PREF) !== "false"}>

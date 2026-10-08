@@ -15,6 +15,7 @@ import { api, errorMessage, paths } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { githubQuery, keys } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
+import { GithubAppConnection, TestConnection } from "./github-app-connection";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
 export function ProjectGithub() {
@@ -65,8 +66,10 @@ export function ProjectGithub() {
             ) : (
                 <>
                     {!canSecrets && <ReadOnlyNote>Only admins can set or clear secrets.</ReadOnlyNote>}
+                    <GithubAppConnection data={data} />
+                    <TestConnection data={data} />
                     <SettingsSection
-                        title="Access token"
+                        title={data.app.available ? "Access token (instead of the app)" : "Access token"}
                         description={
                             <>
                                 A fine-grained personal access token limited to{" "}
@@ -94,8 +97,12 @@ export function ProjectGithub() {
                     </SettingsSection>
 
                     <SettingsSection
-                        title="Webhook"
-                        description="Lets GitHub tell Triagent about new pull requests and pushes straight away, instead of Triagent checking every few minutes."
+                        title={data.app.available ? "Webhook for the token" : "Webhook"}
+                        description={
+                            data.app.available
+                                ? "Only needed with an access token: the GitHub App has its own webhook. Lets GitHub tell Triagent about new pull requests and pushes straight away."
+                                : "Lets GitHub tell Triagent about new pull requests and pushes straight away, instead of Triagent checking every few minutes."
+                        }
                     >
                         <div className="grid gap-1.5">
                             <Label htmlFor={urlId}>Payload URL</Label>
@@ -108,7 +115,10 @@ export function ProjectGithub() {
                             <li>In the repository on GitHub, open Settings → Webhooks → Add webhook.</li>
                             <li>Paste the payload URL above, and set the content type to application/json.</li>
                             <li>Generate a secret here and paste it into the Secret box.</li>
-                            <li>Choose “Let me select individual events” and tick Pull requests and Pushes.</li>
+                            <li>
+                                Choose “Let me select individual events” and tick Pull requests, Pushes, and Branch or tag creation and
+                                deletion.
+                            </li>
                         </ol>
                         <p className="text-sm">
                             Secret:{" "}

@@ -13,7 +13,21 @@ import type { LiveEvent } from "./types";
 export type LiveStatus = "connecting" | "live" | "reconnecting" | "paused";
 
 /** Mark stale (and refetch, if on screen) everything a change could affect. */
-export function invalidateFor(queryClient: QueryClient, ws: string, event: Pick<LiveEvent, "kind" | "project">): void {
+export function invalidateFor(queryClient: QueryClient, ws: string, event: Pick<LiveEvent, "kind" | "project" | "fields">): void {
+    // A review's progress arrives up to once a second: refresh what shows runs, and nothing else until it ends.
+    if (event.kind === "run") {
+        void queryClient.invalidateQueries({ queryKey: keys.runs(ws) });
+        if (event.project && !event.fields.includes("progress"))
+            void queryClient.invalidateQueries({ queryKey: keys.pullRequests(ws, event.project) });
+        if (event.project && event.fields.includes("finished")) {
+            void queryClient.invalidateQueries({
+                queryKey: keys.project(ws, event.project),
+                predicate: (q) => q.queryKey[4] !== "settings",
+            });
+            void queryClient.invalidateQueries({ queryKey: keys.projects(ws) });
+        }
+        return;
+    }
     if (!event.project) {
         void queryClient.invalidateQueries({ queryKey: keys.ws(ws) });
         return;
@@ -27,7 +41,13 @@ export function invalidateFor(queryClient: QueryClient, ws: string, event: Pick<
         void queryClient.invalidateQueries({ queryKey: keys.projects(ws) });
 }
 
-export function useLiveUpdates(ws: string, onSessionEnded: () => void, onLostAccess: () => void): LiveStatus {
+export function useLiveUpdates(
+    ws: string,
+    onSessionEnded: () => void,
+    onLostAccess: () => void,
+    /** Every live notice, after the cache has been told (finished-review notifications listen here). */
+    onEvent?: (event: LiveEvent) => void,
+): LiveStatus {
     const queryClient = useQueryClient();
     const [status, setStatus] = useState<LiveStatus>("connecting");
 
@@ -57,6 +77,7 @@ export function useLiveUpdates(ws: string, onSessionEnded: () => void, onLostAcc
                 }
                 if (event.clientId === CLIENT_ID) return;
                 invalidateFor(queryClient, ws, event);
+                onEvent?.(event);
             });
             source.addEventListener("bye", () => drop());
             source.addEventListener("error", (e) => {
@@ -101,7 +122,7 @@ export function useLiveUpdates(ws: string, onSessionEnded: () => void, onLostAcc
             clearTimeout(retry);
             source?.close();
         };
-    }, [ws, queryClient, onSessionEnded, onLostAccess]);
+    }, [ws, queryClient, onSessionEnded, onLostAccess, onEvent]);
 
     return status;
 }

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useId } from "react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
 import { FieldError } from "@/components/field";
@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
+import { PREF, prefs, usePref } from "@/lib/prefs";
 import { keys } from "@/lib/queries";
 import { useMe } from "@/lib/session";
 import type { NotifyPrefs } from "@/lib/types";
@@ -81,6 +82,48 @@ export function NotificationsSettings() {
                     </Button>
                 </div>
             </form>
+            <DesktopNotifications />
         </SettingsPage>
+    );
+}
+
+/** Desktop notifications are a choice for this browser, so they're kept here rather than on the account. */
+function DesktopNotifications() {
+    const id = useId();
+    const on = usePref(PREF.desktopNotify) === "on";
+    const supported = typeof window !== "undefined" && "Notification" in window;
+    const [denied, setDenied] = useState(supported && Notification.permission === "denied");
+    return (
+        <SettingsSection
+            title="In this browser"
+            description="Finished reviews always appear as a message on the page. They can also appear as desktop notifications while this tab isn't in view."
+        >
+            {!supported ? (
+                <p className="text-sm text-muted-foreground">This browser doesn't support desktop notifications.</p>
+            ) : (
+                <div className="grid gap-1">
+                    <div className="flex items-center gap-2">
+                        <Checkbox
+                            id={id}
+                            checked={on && Notification.permission === "granted"}
+                            disabled={denied}
+                            onCheckedChange={async (v) => {
+                                if (v !== true) return prefs.set(PREF.desktopNotify, null);
+                                const permission =
+                                    Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+                                setDenied(permission === "denied");
+                                prefs.set(PREF.desktopNotify, permission === "granted" ? "on" : null);
+                            }}
+                        />
+                        <Label htmlFor={id}>Show desktop notifications</Label>
+                    </div>
+                    {denied && (
+                        <p className="text-xs text-muted-foreground">
+                            This browser blocks notifications from Triagent. Allow them in its site settings first.
+                        </p>
+                    )}
+                </div>
+            )}
+        </SettingsSection>
     );
 }

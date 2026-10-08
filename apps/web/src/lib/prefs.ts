@@ -44,6 +44,8 @@ export const PREF = {
     theme: "triagent-theme",
     shortcuts: "triagent-shortcuts",
     lastWorkspace: "triagent-last-workspace",
+    /** "on": also show finished reviews as desktop notifications in this browser. */
+    desktopNotify: "triagent-desktop-notify",
     lastProject: (ws: string) => `triagent-last-project:${ws}`,
 } as const;
 

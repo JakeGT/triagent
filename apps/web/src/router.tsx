@@ -164,6 +164,10 @@ const wsSettingsIndexRoute = createRoute({
 
 const wsSettingsRoutes = [
     settingsPage(
+        "/github-app",
+        lazyRouteComponent(() => import("@/features/settings/github-app-settings"), "GithubAppSettings"),
+    ),
+    settingsPage(
         "/projects",
         lazyRouteComponent(() => import("@/features/settings/projects-settings"), "ProjectsSettings"),
     ),
@@ -294,6 +298,25 @@ const compareRoute = createRoute({
     component: lazyRouteComponent(() => import("@/features/compare/compare-page"), "ComparePage"),
 });
 
+const runsRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "/runs",
+    validateSearch: (s: Record<string, unknown>): { all?: "1" } => (s.all === "1" || s.all === 1 ? { all: "1" } : {}),
+    component: lazyRouteComponent(() => import("@/features/runs/runs-page"), "RunsPage"),
+});
+
+const runRoute = createRoute({
+    getParentRoute: () => runsRoute,
+    path: "/$runId",
+    component: lazyRouteComponent(() => import("@/features/runs/run-panel"), "RunPanel"),
+});
+
+const pullRequestsRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "/pull-requests",
+    component: lazyRouteComponent(() => import("@/features/runs/pull-requests-page"), "PullRequestsPage"),
+});
+
 const activityRoute = createRoute({
     getParentRoute: () => projectRoute,
     path: "/activity",
@@ -355,6 +378,8 @@ const routeTree = rootRoute.addChildren([
                 branchesRoute,
                 compareRoute,
                 activityRoute,
+                runsRoute.addChildren([runRoute]),
+                pullRequestsRoute,
                 projectSettingsRoute.addChildren([projectSettingsIndexRoute, ...projectSettingsRoutes]),
             ]),
         ]),

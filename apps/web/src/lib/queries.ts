@@ -11,8 +11,10 @@ import type {
     Branches,
     Comparison,
     FileList,
+    GithubAppStatus,
     GithubSettings,
     History,
+    InstallationWithRepos,
     InstanceUser,
     IssueDetail,
     IssueList,
@@ -21,7 +23,9 @@ import type {
     Overview,
     Project,
     ProjectListItem,
+    PullRequests,
     ReviewModel,
+    RunList,
     Summary,
     TaskDetail,
     TaskList,
@@ -50,6 +54,13 @@ export const keys = {
     task: (ws: string, p: string, branch: string, id: string) => ["ws", ws, "p", p, "b", branch, "task", id] as const,
     files: (ws: string, p: string, branch: string) => ["ws", ws, "p", p, "b", branch, "files"] as const,
     summary: (ws: string, p: string, branch: string) => ["ws", ws, "p", p, "b", branch, "summary"] as const,
+    /** Every run query in a workspace: live run notices invalidate only these (and pull requests). */
+    runs: (ws: string) => ["ws", ws, "runs"] as const,
+    runList: (ws: string, project: string | null) => ["ws", ws, "runs", "list", project ?? ""] as const,
+    run: (ws: string, id: string) => ["ws", ws, "runs", "one", id] as const,
+    pullRequests: (ws: string, p: string) => ["ws", ws, "p", p, "pull-requests"] as const,
+    installations: (ws: string) => ["ws", ws, "settings", "github-installations"] as const,
+    githubApp: ["instance", "github-app"] as const,
 };
 
 export const meQuery = queryOptions({
@@ -189,4 +200,29 @@ export const instanceUsersQuery = queryOptions({
     queryKey: keys.instanceUsers,
     queryFn: ({ signal }) => api.get<{ items: InstanceUser[] }>(paths.instanceUsers, undefined, { signal }),
     select: (d) => d.items,
+});
+
+export const runListQuery = (ws: string, project: string | null) =>
+    queryOptions({
+        queryKey: keys.runList(ws, project),
+        queryFn: ({ signal }) => api.get<RunList>(`${paths.workspace(ws)}/runs`, { project: project ?? undefined }, { signal }),
+    });
+
+export const pullRequestsQuery = (ws: string, p: string) =>
+    queryOptions({
+        queryKey: keys.pullRequests(ws, p),
+        queryFn: ({ signal }) => api.get<PullRequests>(`${paths.project(ws, p)}/pull-requests`, undefined, { signal }),
+    });
+
+export const installationsQuery = (ws: string) =>
+    queryOptions({
+        queryKey: keys.installations(ws),
+        queryFn: ({ signal }) =>
+            api.get<{ items: InstallationWithRepos[] }>(`${paths.workspace(ws)}/github/installations`, undefined, { signal }),
+        select: (d) => d.items,
+    });
+
+export const githubAppQuery = queryOptions({
+    queryKey: keys.githubApp,
+    queryFn: ({ signal }) => api.get<GithubAppStatus>("/api/v1/instance/github-app", undefined, { signal }),
 });

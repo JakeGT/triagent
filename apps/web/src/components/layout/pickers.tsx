@@ -228,12 +228,29 @@ export function BranchPicker({ project }: { project: string }) {
                                         <span className="text-xs text-muted-foreground">
                                             {b.isDefault ? "default · " : ""}
                                             {b.unresolved} unresolved · {formatDate(b.uploadedAt)}
+                                            {b.github?.onGitHub && !b.github.current
+                                                ? ` · out of date${b.github.behind !== null ? `: ${b.github.behind} behind` : ""}`
+                                                : ""}
                                         </span>
                                     </span>
                                     {b.name === current && <Check aria-label="current" />}
                                 </Link>
                             </DropdownMenuItem>
                         ))}
+                        {(data?.github?.notReviewed.length ?? 0) > 0 && (
+                            <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuLabel className="text-xs text-muted-foreground">On GitHub, not reviewed yet</DropdownMenuLabel>
+                                {data?.github?.notReviewed.slice(0, 20).map((name) => (
+                                    <DropdownMenuItem key={name} asChild>
+                                        <Link to="/w/$ws/p/$project/branches" params={{ ws, project }}>
+                                            <span className="truncate font-mono text-xs">{name}</span>
+                                            <span className="ms-auto text-xs text-muted-foreground">review on Branches</span>
+                                        </Link>
+                                    </DropdownMenuItem>
+                                ))}
+                            </>
+                        )}
                     </DropdownMenuContent>
                 </DropdownMenu>
             </SidebarMenuItem>

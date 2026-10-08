@@ -84,9 +84,22 @@ export interface Branch {
     unresolved: number;
     inProgress: number;
     done: number;
+    /** How the branch's report compares with GitHub (when the project is connected). */
+    github?: BranchGithub | null;
+}
+
+export interface BranchGithub {
+    onGitHub: boolean;
+    current: boolean;
+    githubSha: string | null;
+    /** Commits on GitHub since the reviewed one, when known. */
+    behind: number | null;
+    diverged: boolean;
 }
 
 export interface Branches {
+    /** Branches on GitHub that have no report yet (when the project is connected). */
+    github?: { fetchedAt: string | null; notReviewed: string[] } | null;
     defaultBranch: string;
     items: Branch[];
 }
@@ -317,6 +330,153 @@ export interface GithubSettings {
     defaultBranch: string;
     connection: { method: "token" | "none"; token: SecretView };
     webhook: { secretSet: boolean; setBy: string | null; setAt: string | null; url: string };
+    /** How the project reaches GitHub now: the GitHub App, its own token, or not at all. */
+    mode: "app" | "token" | "none";
+    app: { available: true; name: string; slug: string; htmlUrl: string } | { available: false };
+    installations: Installation[];
+    repository: { installationId: number; repositoryId: number; fullName: string } | null;
+}
+
+export interface Installation {
+    id: number;
+    account: string;
+    accountType: string;
+    repositorySelection: string;
+    suspended: boolean;
+    linkedBy: string;
+    linkedAt: string;
+}
+
+export interface InstallationWithRepos extends Installation {
+    repositories: { id: number; fullName: string; private: boolean; defaultBranch: string }[];
+    error: string | null;
+}
+
+export interface GithubDelivery {
+    at: string;
+    event: string | null;
+    deliveryId: string | null;
+    what: string | null;
+    outcome: "received" | "ignored" | "refused";
+    detail: string;
+}
+
+export interface GithubAppStatus {
+    configured: boolean;
+    app: {
+        appId: number;
+        slug: string;
+        name: string;
+        clientId: string;
+        htmlUrl: string;
+        owner: string | null;
+        createdAt: string;
+        createdBy: string;
+    } | null;
+    githubUrl: string;
+    webhookUrl: string;
+    deliveries: GithubDelivery[];
+}
+
+// ---- runs ----------------------------------------------------------------------------------------
+
+export type RunStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
+export type RunKind = "pr" | "changes" | "full";
+
+export interface RunProgress {
+    phase?: string;
+    files?: number;
+    filesChanged?: number;
+    groups?: number;
+    current?: string;
+    round?: string;
+    roundsFailed?: number;
+    toolCalls?: number;
+    toolFailures?: number;
+}
+
+export interface Run {
+    id: string;
+    project: string | null;
+    kind: RunKind;
+    title: string;
+    branch: string;
+    gitRef: string | null;
+    baseRef: string | null;
+    headSha: string | null;
+    baseSha: string | null;
+    pr: { number: number; title: string; url: string | null; headRef: string; author: string | null } | null;
+    requestedBy: { name: string; userId: string | null };
+    source: "person" | "token" | "automation";
+    status: RunStatus;
+    queuedAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    elapsedSeconds: number | null;
+    cancelRequested: { by: string; at: string } | null;
+    progress: RunProgress;
+    result: {
+        total: number | null;
+        bySeverity: Record<Severity, number> | null;
+        gaps: { groups: number; files: string[]; reasons: string[]; note: string } | null;
+        counts: { added: number; carriedOver: number; removed: number; reopened: number } | null;
+        tokens: { input: number; output: number; cacheRead: number; total: number } | null;
+        github?: string[];
+    } | null;
+    error: string | null;
+    model: { provider: string; model: string; keySource: "workspace" | "instance" } | null;
+    log: { lines: number; dropped: number };
+    /** For a queued run: why it hasn't started. */
+    waiting?: string | null;
+}
+
+export interface RunList {
+    ready: boolean;
+    waiting: string | null;
+    concurrency: { instance: number; workspace: number };
+    runners: { name: string; slots: number; version: string | null; lastSeenAt: string }[];
+    running: Run[];
+    queued: Run[];
+    recent: Run[];
+    counts: { running: number; queued: number };
+}
+
+export interface LogLine {
+    seq: number;
+    at: string;
+    line: string;
+}
+
+export interface RunDetail extends Run {
+    logLines: LogLine[];
+    next: number;
+}
+
+export interface PullRequest {
+    number: number;
+    title: string;
+    branch: string;
+    headSha: string;
+    draft: boolean;
+    url: string | null;
+    author: string | null;
+    reviewedSha: string | null;
+    status: string;
+    baseline?: boolean;
+    reviewed: boolean;
+    run: { id: string; status: RunStatus } | null;
+    lastDecision: { number: number; title: string; sha: string | null; action: "queued" | "skipped"; why: string } | null;
+}
+
+export interface PullRequests {
+    connected: boolean;
+    mode: "app" | "token" | null;
+    repository: string | null;
+    automation: { enabled: boolean; pollMinutes: number };
+    lastCheck: { at: string; openPulls?: number; error?: string; decisions: unknown[] } | null;
+    lastError: { at: string; message: string } | null;
+    items: PullRequest[];
+    deliveries: GithubDelivery[];
 }
 
 export interface Provider {

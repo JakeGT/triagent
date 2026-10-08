@@ -3,7 +3,21 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useMatches, useParams } from "@tanstack/react-router";
-import { Activity, BarChart3, Bot, Bug, FileCode, FolderGit2, GitCompare, LayoutDashboard, ListChecks, Plus, Settings } from "lucide-react";
+import {
+    Activity,
+    BarChart3,
+    Bot,
+    Bug,
+    FileCode,
+    FolderGit2,
+    GitCompare,
+    GitPullRequest,
+    LayoutDashboard,
+    ListChecks,
+    Plus,
+    ScanSearch,
+    Settings,
+} from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 import { BranchPicker, ProjectPicker, WorkspaceSwitcher } from "@/components/layout/pickers";
 import { UserMenu } from "@/components/layout/user-menu";
@@ -21,19 +35,22 @@ import {
     useSidebar,
 } from "@/components/ui/sidebar";
 import { PREF, prefs } from "@/lib/prefs";
-import { overviewQuery, projectQuery, projectsQuery } from "@/lib/queries";
+import { overviewQuery, projectQuery, projectsQuery, runListQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
 
 function NavItem({
     label,
     icon,
     count,
+    countLabel,
     active,
     children,
 }: {
     label: string;
     icon: ReactNode;
     count?: number;
+    /** Read out instead of the bare count. */
+    countLabel?: string;
     active: boolean;
     /** A Link: its contents are filled in here. */
     children: (content: ReactNode) => ReactElement;
@@ -47,7 +64,16 @@ function NavItem({
                         {icon}
                         <span>{label}</span>
                         {count !== undefined && (
-                            <span className="ms-auto text-xs text-muted-foreground tabular-nums">{count.toLocaleString("en-GB")}</span>
+                            <span className="ms-auto text-xs text-muted-foreground tabular-nums">
+                                {countLabel ? (
+                                    <>
+                                        <span aria-hidden="true">{count.toLocaleString("en-GB")}</span>
+                                        <span className="sr-only">{countLabel}</span>
+                                    </>
+                                ) : (
+                                    count.toLocaleString("en-GB")
+                                )}
+                            </span>
                         )}
                     </>,
                 )}
@@ -89,9 +115,11 @@ export function AppSidebar() {
         enabled: Boolean(project && effectiveBranch),
     });
     const totals = overview.data?.totals;
+    const runs = useQuery({ ...runListQuery(ws, project ?? null), enabled: Boolean(project) });
+    const active = runs.data ? runs.data.counts.running + runs.data.counts.queued : undefined;
 
     const base = project ? `/w/${ws}/p/${project}` : "";
-    const active = (path: string) => Boolean(base) && (pathname === `${base}${path}` || pathname.startsWith(`${base}${path}/`));
+    const active_ = (path: string) => Boolean(base) && (pathname === `${base}${path}` || pathname.startsWith(`${base}${path}/`));
     const params = { ws, project: project ?? "" };
     const search = branch ? { branch } : {};
 
@@ -107,28 +135,28 @@ export function AppSidebar() {
                     {project ? (
                         <>
                             <Group title="Work">
-                                <NavItem label="Overview" icon={<LayoutDashboard />} active={active("/overview")}>
+                                <NavItem label="Overview" icon={<LayoutDashboard />} active={active_("/overview")}>
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/overview" params={params} search={search}>
                                             {c}
                                         </Link>
                                     )}
                                 </NavItem>
-                                <NavItem label="Issues" icon={<Bug />} count={totals?.issues} active={active("/issues")}>
+                                <NavItem label="Issues" icon={<Bug />} count={totals?.issues} active={active_("/issues")}>
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/issues" params={params} search={search}>
                                             {c}
                                         </Link>
                                     )}
                                 </NavItem>
-                                <NavItem label="Tasks" icon={<ListChecks />} count={totals?.tasks} active={active("/tasks")}>
+                                <NavItem label="Tasks" icon={<ListChecks />} count={totals?.tasks} active={active_("/tasks")}>
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/tasks" params={params} search={search}>
                                             {c}
                                         </Link>
                                     )}
                                 </NavItem>
-                                <NavItem label="Files" icon={<FileCode />} count={totals?.files} active={active("/files")}>
+                                <NavItem label="Files" icon={<FileCode />} count={totals?.files} active={active_("/files")}>
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/files" params={params} search={search}>
                                             {c}
@@ -137,14 +165,38 @@ export function AppSidebar() {
                                 </NavItem>
                             </Group>
                             <Group title="Reviews">
-                                <NavItem label="Branches & reports" icon={<FolderGit2 />} active={active("/branches")}>
+                                <NavItem
+                                    label="Runs"
+                                    icon={<ScanSearch />}
+                                    count={active || undefined}
+                                    countLabel={
+                                        runs.data && active
+                                            ? `${runs.data.counts.running} running, ${runs.data.counts.queued} queued`
+                                            : undefined
+                                    }
+                                    active={active_("/runs")}
+                                >
+                                    {(c) => (
+                                        <Link to="/w/$ws/p/$project/runs" params={params}>
+                                            {c}
+                                        </Link>
+                                    )}
+                                </NavItem>
+                                <NavItem label="Pull requests" icon={<GitPullRequest />} active={active_("/pull-requests")}>
+                                    {(c) => (
+                                        <Link to="/w/$ws/p/$project/pull-requests" params={params}>
+                                            {c}
+                                        </Link>
+                                    )}
+                                </NavItem>
+                                <NavItem label="Branches & reports" icon={<FolderGit2 />} active={active_("/branches")}>
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/branches" params={params}>
                                             {c}
                                         </Link>
                                     )}
                                 </NavItem>
-                                <NavItem label="Compare" icon={<GitCompare />} active={active("/compare")}>
+                                <NavItem label="Compare" icon={<GitCompare />} active={active_("/compare")}>
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/compare" params={params}>
                                             {c}
@@ -160,7 +212,7 @@ export function AppSidebar() {
                                         </Link>
                                     )}
                                 </NavItem>
-                                <NavItem label="Activity" icon={<Activity />} active={active("/activity")}>
+                                <NavItem label="Activity" icon={<Activity />} active={active_("/activity")}>
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/activity" params={params}>
                                             {c}

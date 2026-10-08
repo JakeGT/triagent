@@ -3,7 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { History, MoveRight, Trash2 } from "lucide-react";
+import { History, MoveRight, RotateCw, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { StartReview } from "@/features/runs/start-review";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDateTime, plural, timeAgo } from "@/lib/format";
 import { branchesQuery, historyQuery, keys } from "@/lib/queries";
@@ -44,7 +45,11 @@ export function BranchesPage() {
     return (
         <Page>
             <PageMeta title={`Branches & reports · ${project.name}`} />
-            <PageHeader title="Branches & reports" description="Each branch has its own report and its own triage." />
+            <PageHeader
+                title="Branches & reports"
+                description="Each branch has its own report and its own triage."
+                actions={<StartReview />}
+            />
             {can("upload") && <UploadReport />}
 
             <section aria-labelledby="branches-heading" className="grid gap-2">
@@ -121,9 +126,24 @@ export function BranchesPage() {
                                                     </>
                                                 )}
                                             </span>
+                                            <GithubState branch={b} />
                                         </TableCell>
                                         <TableCell>
                                             <span className="flex justify-end gap-1">
+                                                {b.github?.onGitHub && !b.github.current && (
+                                                    <StartReview
+                                                        defaults={
+                                                            b.isDefault
+                                                                ? { kind: "full", branch: b.name }
+                                                                : { kind: "changes", branch: b.name, base: branches.data.defaultBranch }
+                                                        }
+                                                        trigger={
+                                                            <Button variant="ghost" size="sm">
+                                                                <RotateCw /> Review again<span className="sr-only"> {b.name}</span>
+                                                            </Button>
+                                                        }
+                                                    />
+                                                )}
                                                 <Button variant="ghost" size="sm" onClick={() => setHistory(b.name)}>
                                                     <History /> History<span className="sr-only"> of {b.name}</span>
                                                 </Button>
@@ -167,6 +187,29 @@ export function BranchesPage() {
                     </div>
                 )}
             </section>
+
+            {branches.data?.github && branches.data.github.notReviewed.length > 0 && (
+                <section aria-labelledby="not-reviewed-heading" className="grid gap-2">
+                    <h2 id="not-reviewed-heading" className="font-semibold">
+                        On GitHub, not reviewed yet
+                    </h2>
+                    <ul className="grid gap-1" data-testid="not-reviewed">
+                        {branches.data.github.notReviewed.map((name) => (
+                            <li key={name} className="flex flex-wrap items-center gap-2 text-sm">
+                                <span className="font-mono text-xs">{name}</span>
+                                <StartReview
+                                    defaults={{ kind: "changes", branch: name, base: branches.data.defaultBranch }}
+                                    trigger={
+                                        <Button variant="ghost" size="sm">
+                                            Review<span className="sr-only"> {name}</span>
+                                        </Button>
+                                    }
+                                />
+                            </li>
+                        ))}
+                    </ul>
+                </section>
+            )}
 
             <HistoryDialog branch={history} onClose={() => setHistory(null)} />
             <MoveDialog branch={moving} onClose={() => setMoving(null)} />
@@ -292,5 +335,20 @@ function MoveDialog({ branch, onClose }: { branch: Branch | null; onClose(): voi
                 </form>
             </DialogContent>
         </Dialog>
+    );
+}
+
+/** How the branch's report compares with the branch on GitHub. */
+function GithubState({ branch }: { branch: Branch }) {
+    const g = branch.github;
+    if (!g) return null;
+    if (!g.onGitHub) return <span className="block text-muted-foreground">Not on GitHub</span>;
+    if (g.current) return <span className="block text-st-resolved">Up to date with GitHub</span>;
+    return (
+        <span className="block font-medium text-sev-medium">
+            Out of date
+            {g.behind !== null ? `: ${plural(g.behind, "commit")} behind` : ": GitHub has newer commits"}
+            {g.diverged ? " (the branch was rewritten)" : ""}
+        </span>
     );
 }

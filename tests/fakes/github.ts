@@ -118,8 +118,14 @@ export class FakeGitHub {
     private readonly root: string;
     url = "";
 
-    constructor() {
+    /** Answer /_fake/* (seeding over HTTP), for the end-to-end tests' separate process. */
+    private readonly admin: boolean;
+    /** Who installs the app next through GitHub's installation page (the browser flow), and on what. */
+    nextInstall: { account: string; repos: string[]; login: string } | null = null;
+
+    constructor(options: { admin?: boolean } = {}) {
         this.root = mkdtempSync(path.join(tmpdir(), "fake-github-"));
+        this.admin = Boolean(options.admin);
     }
 
     get apiUrl(): string {
@@ -432,6 +438,34 @@ export class FakeGitHub {
         } catch {
             body = Object.fromEntries(new URLSearchParams(raw.toString("utf8")));
         }
+        if (this.admin && url.pathname.startsWith("/_fake/")) return this.adminApi(req, res, url, body);
+        // GitHub's pages in the browser: creating an app from a manifest, and installing it.
+        const appsNew = /^\/(?:organizations\/[\w-]+\/)?settings\/apps\/new$/.exec(url.pathname);
+        if (appsNew && req.method === "POST") {
+            const manifest = JSON.parse(String(body.manifest ?? "{}")) as Record<string, unknown>;
+            const code = this.manifestCode(manifest);
+            const back = new URL(String(manifest.redirect_url));
+            back.searchParams.set("code", code);
+            back.searchParams.set("state", url.searchParams.get("state") ?? "");
+            // GitHub asks the person to confirm on a page of its own, then sends them back.
+            const href = back.toString().replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+            res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+            return res.end(
+                `<!doctype html><html lang="en"><title>Create GitHub App</title><h1>Create GitHub App</h1><a href="${href}">Create GitHub App</a></html>`,
+            );
+        }
+        const installNew = /^\/apps\/([\w-]+)\/installations\/new$/.exec(url.pathname);
+        if (installNew && req.method === "GET" && this.app && this.nextInstall) {
+            const n = this.nextInstall;
+            const inst = this.install(n.account, n.repos, [n.login]);
+            const callback = new URL(String((this.app.manifest?.callback_urls as string[] | undefined)?.[0] ?? ""));
+            callback.searchParams.set("code", this.oauthCode(n.login));
+            callback.searchParams.set("installation_id", String(inst.id));
+            callback.searchParams.set("setup_action", "install");
+            callback.searchParams.set("state", url.searchParams.get("state") ?? "");
+            res.writeHead(302, { location: callback.toString() });
+            return res.end();
+        }
         if (url.pathname === "/login/oauth/access_token" && req.method === "POST") {
             const app = this.app;
             const login = this.oauthCodes.get(String(body.code));
@@ -613,6 +647,42 @@ export class FakeGitHub {
             return json(res, 201, status);
         }
         return json(res, 404, { message: "Not Found" });
+    }
+
+    private async adminApi(req: IncomingMessage, res: ServerResponse, url: URL, b: Record<string, unknown>): Promise<unknown> {
+        const str = (k: string) => String(b[k] ?? "");
+        const files = (b.files ?? {}) as Record<string, string | null>;
+        switch (url.pathname) {
+            case "/_fake/health":
+                return json(res, 200, { ok: true });
+            case "/_fake/git-repo":
+                return json(res, 200, { id: (await this.gitRepo(str("fullName"), files as Record<string, string>)).id });
+            case "/_fake/commit":
+                return json(res, 200, {
+                    sha: await this.commit(
+                        str("fullName"),
+                        str("branch"),
+                        files,
+                        str("message") || "Change",
+                        b.from ? str("from") : undefined,
+                    ),
+                });
+            case "/_fake/pull":
+                return json(res, 200, await this.openPull(str("fullName"), b as never));
+            case "/_fake/pat":
+                this.pat(str("token"), str("login"), b.repos as string[]);
+                return json(res, 200, { ok: true });
+            case "/_fake/next-install":
+                this.nextInstall = b as never;
+                return json(res, 200, { ok: true });
+            case "/_fake/repo": {
+                const repo = this.repos.get(url.searchParams.get("fullName") ?? "");
+                if (!repo) return json(res, 404, { message: "Not Found" });
+                return json(res, 200, { statuses: repo.statuses, comments: Object.fromEntries(repo.comments), id: repo.id });
+            }
+            default:
+                return json(res, 404, { message: `No fake endpoint ${req.method} ${url.pathname}` });
+        }
     }
 
     private async compare(repo: FakeRepo, base: string, head: string) {
