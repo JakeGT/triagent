@@ -5,7 +5,8 @@
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
 // (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5", "fake/orphan" (leaves a process behind
 // in its group). It also prints what tests check: its arguments, which environment variables it got,
-// the model key (the server must redact it), and the review rules it found.
+// the model key (the server must redact it), and the review rules it found. Like the real one, it leaves
+// out files the root .gitignore matches and files git calls binary, and reads rule files rule.json names.
 
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -26,15 +27,41 @@ const rulesFile = ".opencodereview/rule.json";
 const rules = existsSync(rulesFile) ? readFileSync(rulesFile, "utf8").trim() : "none";
 say(`[fake-ocr] rules: ${rules.replace(/\s+/g, " ")}`);
 
+// Rule entries can name a file of instructions, which OCR reads from the repository.
+try {
+    for (const r of (JSON.parse(rules) as { rules?: { rule?: string }[] }).rules ?? [])
+        if (r.rule && /^\S+\.(md|txt|markdown)$/.test(r.rule))
+            say(`[fake-ocr] rule file ${r.rule}: ${existsSync(r.rule) ? readFileSync(r.rule, "utf8").trim() : "missing"}`);
+} catch {
+    // no rules
+}
+
+// git with the environment OCR was given (GIT_ATTR_SOURCE included), as OCR runs it.
 const gitOut = (a: string[]) => execFileSync("git", a, { encoding: "utf8" }).trim();
 let files: string[];
 if (args[0] === "review") {
     const from = args[args.indexOf("--from") + 1] as string;
     const to = args[args.indexOf("--to") + 1] as string;
-    files = gitOut(["diff", "--name-only", `${from}..${to}`])
-        .split("\n")
-        .filter(Boolean);
+    files = [];
+    // Like OCR, files git calls binary aren't reviewed.
+    for (const line of gitOut(["diff", "--numstat", "--no-renames", from, to]).split("\n").filter(Boolean)) {
+        const [added, , file] = line.split("\t") as [string, string, string];
+        if (added === "-") say(`[ocr] Skipping ${file} — binary file`);
+        else files.push(file);
+    }
 } else files = gitOut(["ls-files"]).split("\n").filter(Boolean);
+// Like OCR, files the root .gitignore (read from the worktree) matches are left out.
+const ignores = existsSync(".gitignore")
+    ? readFileSync(".gitignore", "utf8")
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith("#"))
+    : [];
+const ignored = (f: string) =>
+    ignores.some((pattern) =>
+        new RegExp(`^(?:.*/)?${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}(?:/.*)?$`).test(f),
+    );
+files = files.filter((f) => !ignored(f));
 // Honour the rules' simple exclusions, so tests can tell whose rules were used.
 let excluded: string[] = [];
 try {

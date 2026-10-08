@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, before, describe, test } from "node:test";
+import { COMMENT_MARKER } from "../src/services/github/service.ts";
 import { ADMIN_PASSWORD, type Session } from "./helpers.ts";
 import { eventually, finished, PAT, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
 
@@ -437,6 +438,9 @@ describe("the GitHub App", () => {
         await env.t.request("/api/v1/w/acme/p/app/settings/github/token", { method: "DELETE", session: env.admin });
         for (const j of await env.t.services.store.jobs.list({ statuses: ["queued"] }, 10))
             await env.t.request(`/api/v1/w/acme/runs/${j.id}/cancel`, { method: "POST", session: env.admin, body: {} });
+        // A comment someone else wrote, carrying Triagent's marker, isn't Triagent's to edit.
+        const planted = { id: 1, body: `Looks fine to me ${COMMENT_MARKER}`, user: "mallory" };
+        env.fake.repo("acme/app").comments.set(1, [planted]);
         env.runner();
         const logged = env.fake.log.length;
         const started = await env.t.request("/api/v1/w/acme/p/app/reviews", {
@@ -459,7 +463,11 @@ describe("the GitHub App", () => {
             ),
         );
         assert.ok(env.fake.repo("acme/app").statuses.every((s) => s.by === "installation"));
-        assert.equal(env.fake.repo("acme/app").comments.get(1)?.[0]?.user, "installation");
+        const comments = env.fake.repo("acme/app").comments.get(1) ?? [];
+        assert.equal(comments.length, 2);
+        assert.deepEqual(comments[0], { id: 1, body: `Looks fine to me ${COMMENT_MARKER}`, user: "mallory" });
+        assert.equal(comments[1]?.user, `${env.fake.app?.slug}[bot]`);
+        assert.match(comments[1]?.body ?? "", /Open Code Review/);
         assert.ok(env.fake.gitLog.some((g) => g.token.startsWith("ghs_")));
     });
 

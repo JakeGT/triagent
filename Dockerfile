@@ -68,6 +68,8 @@ RUN apk add --no-cache git \
 WORKDIR /app
 COPY apps/runner/package.json ./
 COPY apps/runner/src ./src
+# Reviews need git 2.42 or later (GIT_ATTR_SOURCE). The runner refuses to start with an older one; so does the build.
+RUN node -e "import('./src/git.ts').then((g) => g.requireGit('git', process.env.PATH))"
 ENV NODE_ENV=production OCR_NO_UPDATE=1 \
     RUNNER_CACHE_DIR=/var/cache/triagent-runner RUNNER_WORK_DIR=/tmp/triagent-runner RUNNER_HEALTH_PORT=8081
 USER node

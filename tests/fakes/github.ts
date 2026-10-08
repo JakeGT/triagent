@@ -27,6 +27,7 @@ export interface FakeRepo {
     private: boolean;
     branches: Map<string, string>;
     pulls: Map<number, FakePull>;
+    /** Each pull request's comments; `user` is the author's login (an app's is "<slug>[bot]"). */
     comments: Map<number, { id: number; body: string; user: string }[]>;
     statuses: { sha: string; state: string; description: string; context: string; target_url?: string; by: string }[];
     /** A bare repository served over smart HTTP. */
@@ -278,7 +279,8 @@ export class FakeGitHub {
                     writeFileSync(full, content);
                 }
             }
-            await git(["add", "-A"], work);
+            // Every file given is committed, even one a .gitignore in the same commit names.
+            await git(["add", "-A", "--force"], work);
             await git(["-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", message], work);
             const sha = await git(["rev-parse", "HEAD"], work);
             await git(["push", "--quiet", "--force", repo.gitDir, `HEAD:refs/heads/${branch}`], work);
@@ -358,6 +360,21 @@ export class FakeGitHub {
             base: { ref: p.baseRef, sha: r.branches.get(p.baseRef) ?? "0".repeat(40), repo: { full_name: r.fullName } },
             updated_at: new Date().toISOString(),
         };
+    }
+
+    private commentView(r: FakeRepo, number: number, c: { id: number; body: string; user: string }) {
+        return {
+            id: c.id,
+            body: c.body,
+            user: { login: c.user, type: c.user.endsWith("[bot]") ? "Bot" : "User" },
+            issue_url: `${this.apiUrl}/repos/${r.fullName}/issues/${number}`,
+        };
+    }
+
+    /** Who GitHub says wrote something: a token's owner, or the app's bot for an installation token. */
+    private login(auth: ReturnType<FakeGitHub["who"]>): string {
+        if (auth.kind === "installation") return `${this.app?.slug ?? "app"}[bot]`;
+        return auth.login ?? auth.kind;
     }
 
     private installationView(i: FakeInstallation) {
@@ -611,24 +628,26 @@ export class FakeGitHub {
         m = /^\/issues\/(\d+)\/comments$/.exec(rest);
 
         if (m) {
-            const list = repo.comments.get(Number(m[1])) ?? [];
-            if (method === "GET") return json(res, 200, paged(list));
+            const number = Number(m[1]);
+            const list = repo.comments.get(number) ?? [];
+            if (method === "GET") return json(res, 200, paged(list.map((c) => this.commentView(repo, number, c))));
             if (method === "POST") {
                 if (!auth.canWrite(repo, "pull_requests")) return json(res, 403, { message: "Resource not accessible by integration" });
-                const comment = { id: ++this.ids, body: String(body.body), user: auth.kind };
-                repo.comments.set(Number(m[1]), [...list, comment]);
-                return json(res, 201, comment);
+                const comment = { id: ++this.ids, body: String(body.body), user: this.login(auth) };
+                repo.comments.set(number, [...list, comment]);
+                return json(res, 201, this.commentView(repo, number, comment));
             }
         }
         m = /^\/issues\/comments\/(\d+)$/.exec(rest);
-        if (m && method === "PATCH") {
-            if (!auth.canWrite(repo, "pull_requests")) return json(res, 403, { message: "Resource not accessible by integration" });
-            for (const list of repo.comments.values()) {
+        if (m && (method === "PATCH" || method === "GET")) {
+            if (method === "PATCH" && !auth.canWrite(repo, "pull_requests"))
+                return json(res, 403, { message: "Resource not accessible by integration" });
+            for (const [number, list] of repo.comments) {
                 const c = list.find((x) => x.id === Number(m?.[1]));
-                if (c) {
-                    c.body = String(body.body);
-                    return json(res, 200, c);
-                }
+                if (!c) continue;
+                // Like GitHub, anyone who may write to the repository may edit anyone's comment.
+                if (method === "PATCH") c.body = String(body.body);
+                return json(res, 200, this.commentView(repo, number, c));
             }
             return json(res, 404, { message: "Not Found" });
         }

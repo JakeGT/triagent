@@ -51,6 +51,13 @@ export interface Repo {
 
 export type CommitState = "pending" | "success" | "failure" | "error";
 
+interface Comment {
+    id: number;
+    body?: string;
+    user?: { login?: string } | null;
+    issue_url?: string;
+}
+
 /** How the client authenticates: a personal access token, an installation token, an app JWT or a user's token. */
 export type Credential = "token" | "app" | "user";
 
@@ -153,15 +160,38 @@ export class GitHubClient {
         return this.request("GET", `${this.r(t)}/compare/${seg(base)}...${seg(head)}`);
     }
 
-    /** Our comment on a pull request is found by a hidden marker, then updated, or created if there's none. */
-    async upsertComment(t: RepoTarget, number: number, marker: string, body: string): Promise<{ id: number; created: boolean }> {
-        let mine: { id: number } | null = null;
-        for (let page = 1; page <= 30 && !mine; page++) {
-            const comments = await this.request<{ id: number; body?: string }[]>(
-                "GET",
-                `${this.r(t)}/issues/${number}/comments?per_page=100&page=${page}`,
+    /**
+     * Our comment on a pull request: the one we remember (`known`) if it's still ours, otherwise the first
+     * that `author` wrote starting with the hidden marker (so not a reply quoting it); updated, or created
+     * if there's none. Comments by anyone else are never touched: the pull request's author could have
+     * planted one with the marker.
+     */
+    async upsertComment(
+        t: RepoTarget,
+        number: number,
+        marker: string,
+        body: string,
+        opts: { author: string; known?: number | null },
+    ): Promise<{ id: number; created: boolean }> {
+        const ours = (c: Comment | null): c is Comment =>
+            Boolean(
+                c &&
+                    typeof c.body === "string" &&
+                    c.body.startsWith(marker) &&
+                    c.user?.login?.toLowerCase() === opts.author.toLowerCase() &&
+                    (c.issue_url === undefined || c.issue_url.endsWith(`/issues/${number}`)),
             );
-            mine = comments.find((c) => typeof c.body === "string" && c.body.includes(marker)) ?? null;
+        let mine: Comment | null = null;
+        if (opts.known) {
+            const known = await this.request<Comment>("GET", `${this.r(t)}/issues/comments/${opts.known}`).catch((err: unknown) => {
+                if (err instanceof GitHubError && err.status === 404) return null;
+                throw err;
+            });
+            if (ours(known)) mine = known;
+        }
+        for (let page = 1; page <= 30 && !mine; page++) {
+            const comments = await this.request<Comment[]>("GET", `${this.r(t)}/issues/${number}/comments?per_page=100&page=${page}`);
+            mine = comments.find(ours) ?? null;
             if (comments.length < 100) break;
         }
         if (mine) {

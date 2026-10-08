@@ -61,6 +61,8 @@ export interface GithubState {
     branches: { items: Record<string, string>; seen: string[]; fetchedAt: string | null };
     /** For each Triagent branch with a report: how it compares with the branch on GitHub. */
     branchStatus: Record<string, { githubSha: string; reviewedSha: string | null; behind: number | null; diverged: boolean }>;
+    /** The id of the comment Triagent wrote on each pull request (by number), so it's the one updated. Kept by services/github/service.ts. */
+    comments?: Record<string, number>;
 }
 
 const EMPTY: GithubState = {

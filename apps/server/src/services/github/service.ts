@@ -10,7 +10,7 @@
 import { ROLE_PERMISSIONS } from "@triagent/shared";
 import { z } from "zod";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../../errors.ts";
-import { now } from "../../security.ts";
+import { now, sha256 } from "../../security.ts";
 import type { GithubDelivery, GithubInstallation, Project, Repos, User, Workspace } from "../../store/types.ts";
 import type { Actor, Core } from "../core.ts";
 import type { Projects } from "../projects.ts";
@@ -41,7 +41,12 @@ export interface GithubAccess {
     cloneUrl: string;
     /** A credential for one review's `git fetch`: read-only and limited to the repository where possible. */
     tokenForJob(): Promise<string>;
+    /** The login comments are posted as: the app's bot, or the token's owner. */
+    identity(): Promise<string>;
 }
+
+/** How many pull requests' comment ids a project remembers. */
+const KEEP_COMMENT_IDS = 1000;
 
 export class NotConnected extends ApiError {
     constructor(message: string) {
@@ -54,6 +59,8 @@ export class Github {
     private readonly core: Core;
     private readonly settings: Settings;
     private readonly projects: Projects;
+    /** Token owners' logins, by a hash of the token, so `GET /user` isn't asked on every comment. */
+    private readonly owners = new Map<string, string>();
 
     constructor(core: Core, settings: Settings, projects: Projects) {
         this.core = core;
@@ -108,6 +115,11 @@ export class Github {
                             permissions: { contents: "read", metadata: "read" },
                         })
                     ).token,
+                identity: async () => {
+                    const info = await this.app.info();
+                    if (!info) throw new NotConnected("The instance's GitHub App has been removed. An instance admin can set it up again.");
+                    return `${info.slug}[bot]`;
+                },
             };
         }
         const token = await this.settings.githubToken(repos, project);
@@ -117,12 +129,23 @@ export class Github {
             );
         const repo = parseRepo(project.repoUrl);
         if (!repo) throw new NotConnected("Set the project's repository address in its General settings first.");
+        const client = new GitHubClient(this.core.config.githubApiUrl, async () => token, "token");
         return {
             mode: "token",
-            client: new GitHubClient(this.core.config.githubApiUrl, async () => token, "token"),
+            client,
             repo,
             cloneUrl: this.cloneUrl(repo),
             tokenForJob: async () => token,
+            identity: async () => {
+                const key = sha256(token);
+                const known = this.owners.get(key);
+                if (known) return known;
+                const { login } = await client.viewer();
+                if (typeof login !== "string" || !login) throw new GitHubError(502, "GitHub didn't say who the token belongs to.");
+                this.owners.set(key, login);
+                if (this.owners.size > 1000) this.owners.delete(this.owners.keys().next().value as string);
+                return login;
+            },
         };
     }
 
@@ -143,9 +166,22 @@ export class Github {
         await gh.client.setStatus(gh.repo, sha, { state, description, context: STATUS_CONTEXT, targetUrl });
     }
 
+    /** Write Triagent's comment on a pull request: the one it wrote before, if it's still there, or a new one. */
     async upsertComment(project: Project, number: number, body: string) {
         const gh = await this.githubFor(project);
-        return gh.client.upsertComment(gh.repo, number, COMMENT_MARKER, body);
+        const author = await gh.identity();
+        const state = (await this.store.githubState.get(project.id)) as { comments?: Record<string, number> } | null;
+        const known = state?.comments?.[String(number)] ?? null;
+        const out = await gh.client.upsertComment(gh.repo, number, COMMENT_MARKER, body, { author, known });
+        if (out.id !== known)
+            await this.store.transaction(async (tx) => {
+                const current = ((await tx.githubState.get(project.id)) ?? {}) as { comments?: Record<string, number> };
+                const comments = { ...current.comments, [String(number)]: out.id };
+                for (const k of Object.keys(comments).slice(0, Math.max(0, Object.keys(comments).length - KEEP_COMMENT_IDS)))
+                    delete comments[k];
+                await tx.githubState.put(project.id, { ...current, comments });
+            });
+        return out;
     }
 
     // ---- project settings ---------------------------------------------------------------------------

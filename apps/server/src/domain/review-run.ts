@@ -44,17 +44,28 @@ export function reviewGaps(report: unknown): ReviewGaps | null {
     return { groups: n, files, reasons, note };
 }
 
-/** Text from the model, made safe to show in a GitHub comment: one line, no mentions, links or HTML. */
+const ZWSP = "​";
+const ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
+
+/**
+ * Text from the model, made safe to show in a GitHub comment: one line, every Markdown character
+ * escaped (so no links, emphasis or HTML), and what GitHub links after rendering broken up with a
+ * zero-width space: mentions, `#12` and `owner/repo#12` references, `GH-12`, and bare addresses.
+ */
 export function plain(s: string, max = 140): string {
-    const flat = s
-        .replace(/[\r\n|]+/g, " ")
-        .replace(/[<>]/g, (c) => (c === "<" ? "&lt;" : "&gt;"))
-        .replace(/@/g, "@\u200b")
-        .replace(/[[\]]/g, (c) => `\\${c}`)
-        // No autolinks: a finding's text shouldn't become a link someone clicks on GitHub.
-        .replace(/:\/\//g, ":\u200b//")
-        .trim();
-    return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+    const flat = s.replace(/[\r\n]+/g, " ").trim();
+    // Cut before escaping, so an escape is never cut in half.
+    const short = flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+    return (
+        short
+            // One pass, so nothing is escaped twice: entities for &, < and >, a backslash before other punctuation.
+            .replace(/[!-/:-@[-`{-~]/g, (c) => ENTITIES[c] ?? `\\${c}`)
+            .replace(/@/g, `@${ZWSP}`)
+            .replace(/#(?=\d)/g, `#${ZWSP}`)
+            .replace(/\b(GH)\\-(?=\d)/gi, `$1\\-${ZWSP}`)
+            .replace(/\/\\\//g, `/${ZWSP}\\/`)
+            .replace(/\b(www)\\\./gi, `$1${ZWSP}\\.`)
+    );
 }
 
 const code = (s: string) =>

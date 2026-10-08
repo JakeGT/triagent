@@ -3,6 +3,7 @@
 
 import { createServer } from "node:http";
 import { ConfigError, loadConfig } from "./config.ts";
+import { requireGit } from "./git.ts";
 import { start } from "./process.ts";
 import { Runner } from "./runner.ts";
 
@@ -17,6 +18,15 @@ try {
     throw err;
 }
 
+// A git too old to read .gitattributes from the base commit would let a pull request hide its changes.
+let gitVersion: string;
+try {
+    gitVersion = await requireGit(config.gitBin, config.path);
+} catch (err) {
+    console.error(`Not starting: ${(err as Error).message}`);
+    process.exit(1);
+}
+
 const version = await start(config.ocrBin, ["--version"], { env: { PATH: config.path, OCR_NO_UPDATE: "1" }, timeoutMs: 15_000 }).done;
 if (version.code !== 0)
     console.warn(
@@ -26,7 +36,7 @@ if (version.code !== 0)
 const runner = new Runner(config);
 runner.start();
 console.log(
-    `Triagent runner ${config.name} (${runner.id}) working for ${config.serverUrl}, ${config.concurrency} at a time${version.code === 0 ? `, with ${version.stdout.trim().split("\n")[0]}` : ""}.`,
+    `Triagent runner ${config.name} (${runner.id}) working for ${config.serverUrl}, ${config.concurrency} at a time, with ${gitVersion}${version.code === 0 ? ` and ${version.stdout.trim().split("\n")[0]}` : ""}.`,
 );
 
 if (config.healthPort) {

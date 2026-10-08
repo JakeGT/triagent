@@ -16,5 +16,9 @@
     "openid-client": "^6.8.8",
     "postgres": "^3.4.9",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "micromark": "^4.0.3",
+    "micromark-extension-gfm": "^3.0.0"
   }
 }

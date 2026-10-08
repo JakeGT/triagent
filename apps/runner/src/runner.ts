@@ -26,6 +26,7 @@ export function ocrEnv(
     config: Pick<RunnerConfig, "path" | "llmTimeout">,
     home: string,
     job: Pick<ClaimedJob, "model">,
+    attrSource: string | null = null,
 ): Record<string, string> {
     const git = gitEnv({ gitBin: "git", path: config.path, home }, [["protocol.allow", "never"]]);
     return {
@@ -47,6 +48,9 @@ export function ocrEnv(
         OCR_USE_ANTHROPIC: "false",
         ...(config.llmTimeout ? { OCR_LLM_TIMEOUT: config.llmTimeout } : {}),
         ...Object.fromEntries(Object.entries(git).filter(([k]) => k.startsWith("GIT_"))),
+        // For changes under review, every git command OCR runs reads .gitattributes from the base commit:
+        // the change's own could mark its files binary (`-diff`), and OCR skips binary files.
+        ...(attrSource ? { GIT_ATTR_SOURCE: attrSource } : {}),
     };
 }
 
@@ -300,7 +304,7 @@ export class Runner {
                 throw new Error(
                     `There are no changes to review: ${job.gitRef ?? "the pull request"} has nothing that isn't on ${job.baseRef}.`,
                 );
-            await this.git.addWorktree(mirror, tree, fetched.head);
+            await this.git.addWorktree(mirror, tree, fetched.head, fetched.base);
             if (fetched.base) {
                 const rules = await this.git.useBaseReviewRules(mirror, tree, fetched.base);
                 if (rules !== "unchanged")
@@ -309,6 +313,21 @@ export class Runner {
                             ? `Using ${job.baseRef}'s review rules (.opencodereview/), not the ones in the change under review.`
                             : "Ignoring the .opencodereview/ the change adds: changes under review can't set their own review rules.",
                     );
+                const restored = (what: string, changed: { path: string; now: "base" | "none" }[]) => {
+                    if (changed.length)
+                        run.say(
+                            `Using ${job.baseRef}'s ${what}, not the change's: ${changed
+                                .slice(0, 10)
+                                .map((c) => `${c.path}${c.now === "none" ? ` (none on ${job.baseRef})` : ""}`)
+                                .join(", ")}${changed.length > 10 ? ` and ${changed.length - 10} more` : ""}.`,
+                        );
+                };
+                restored(".gitignore files", await this.git.useBaseIgnoreFiles(mirror, tree, fetched.base, fetched.head));
+                restored(
+                    "rule files named in its .opencodereview/rule.json",
+                    (await this.git.useBaseRuleFiles(mirror, tree, fetched.base)).filter((c) => c.path !== ".opencodereview/rule.json"),
+                );
+                run.say(`Reading .gitattributes from ${job.baseRef} (${fetched.base.slice(0, 7)}), not from the change.`);
             }
             run.check();
             const args = ocrArgs(job, fetched.base, fetched.head);
@@ -318,7 +337,7 @@ export class Runner {
             run.setProgress({ phase: "starting" });
             const ocr = start(this.config.ocrBin, args, {
                 cwd: tree,
-                env: ocrEnv(this.config, home, job),
+                env: ocrEnv(this.config, home, job, fetched.base),
                 timeoutMs: job.timeoutMinutes * 60_000,
                 onLine: (line) => run.ocrLine(line),
             });
