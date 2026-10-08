@@ -6,8 +6,11 @@ import { cn } from "@/lib/utils";
 export function SeverityMark({ severity, was, className }: { severity: Severity; was?: Severity | null; className?: string }) {
     return (
         <span className={cn("sev", `sev-${severity}`, className)}>
-            {SEVERITY_LABEL[severity]}
-            {was && <span className="font-normal text-muted-foreground">, was {SEVERITY_LABEL[was].toLowerCase()}</span>}
+            {/* One text node after the shape, so the flex gap doesn't open up before ", was …". */}
+            <span>
+                {SEVERITY_LABEL[severity]}
+                {was && <span className="font-normal text-muted-foreground">, was {SEVERITY_LABEL[was].toLowerCase()}</span>}
+            </span>
         </span>
     );
 }
