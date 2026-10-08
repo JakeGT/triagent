@@ -52,6 +52,11 @@ interface Hooks {
     onSignedOut(): void;
     /** The account must set a new password before anything else (403 password_change_required). */
     onPasswordChangeRequired(): void;
+    /**
+     * The step needs a recent sign-in (401 reauth_required): ask the person to confirm it's them. Resolves
+     * true once they have (the request is then sent again), false if they'd rather not.
+     */
+    onReauthRequired?(body: ApiErrorBody): Promise<boolean>;
 }
 
 const state: { csrf: string; hooks: Hooks | null } = { csrf: "", hooks: null };
@@ -89,6 +94,8 @@ export interface RequestOptions {
     quiet401?: boolean;
     /** Read the body as text (Markdown, CSV). */
     text?: boolean;
+    /** Don't ask the person to confirm it's them on a 401 reauth_required (the confirmation itself, a retry). */
+    noReauth?: boolean;
 }
 
 async function errorBody(res: Response): Promise<ApiErrorBody> {
@@ -118,6 +125,11 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     });
     if (!res.ok) {
         const body = await errorBody(res);
+        // Still signed in, but this step needs a recent sign-in: confirm, then try once more.
+        if (res.status === 401 && body.code === "reauth_required") {
+            if (!options.noReauth && (await state.hooks?.onReauthRequired?.(body))) return request<T>(path, { ...options, noReauth: true });
+            throw new ApiError(res.status, body);
+        }
         if (res.status === 401 && !options.quiet401) state.hooks?.onSignedOut();
         if (res.status === 403 && body.code === "password_change_required") state.hooks?.onPasswordChangeRequired();
         throw new ApiError(res.status, body);
@@ -146,4 +158,13 @@ export const paths = {
     workspace: (ws: string) => `/api/v1/w/${enc(ws)}`,
     project: (ws: string, project: string) => `/api/v1/w/${enc(ws)}/p/${enc(project)}`,
     instanceUsers: "/api/v1/instance/users",
+    instanceInvites: "/api/v1/instance/invites",
+    authConfig: "/auth/config",
 };
+
+/** The address that starts signing in through the identity provider, coming back to `next` (a path here). */
+export function providerSignInUrl(next: string, extra: Record<string, string> = {}): string {
+    const params = new URLSearchParams(extra);
+    params.set("next", next.startsWith("/") && !next.startsWith("//") ? next : "/");
+    return `/auth/login?${params.toString()}`;
+}

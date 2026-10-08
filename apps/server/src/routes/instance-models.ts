@@ -33,6 +33,8 @@ export const instanceModelRoutes: Route[] = [
         method: "PUT",
         path: "/api/v1/instance/model/keys/{provider}",
         scope: "instance",
+        // A secret without the secrets permission (instance routes have none): it needs a recent sign-in all the same.
+        recentSignIn: true,
         tag: "Instance",
         summary: "Set the instance's API key for a provider (stored encrypted, never shown again)",
         body: z.object({ key: z.string().max(500) }),
@@ -44,6 +46,8 @@ export const instanceModelRoutes: Route[] = [
         method: "DELETE",
         path: "/api/v1/instance/model/keys/{provider}",
         scope: "instance",
+        // A secret without the secrets permission (instance routes have none): it needs a recent sign-in all the same.
+        recentSignIn: true,
         tag: "Instance",
         summary: "Forget the instance's API key for a provider",
         async handler({ services, params, actor }) {

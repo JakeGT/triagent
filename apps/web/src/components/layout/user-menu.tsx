@@ -51,11 +51,13 @@ export function UserMenu() {
                                 <Bell /> Notifications
                             </Link>
                         </DropdownMenuItem>
-                        <DropdownMenuItem asChild>
-                            <Link to="/w/$ws/settings/password" params={{ ws }}>
-                                <KeyRound /> Password
-                            </Link>
-                        </DropdownMenuItem>
+                        {me.authMode === "local" && (
+                            <DropdownMenuItem asChild>
+                                <Link to="/w/$ws/settings/password" params={{ ws }}>
+                                    <KeyRound /> Password
+                                </Link>
+                            </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem asChild>
                             <Link to="/w/$ws/settings/appearance" params={{ ws }}>
                                 <Palette /> Appearance

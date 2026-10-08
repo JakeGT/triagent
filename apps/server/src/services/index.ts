@@ -9,7 +9,9 @@ import { EventBus } from "./events.ts";
 import { Automation } from "./github/automation.ts";
 import { Github } from "./github/service.ts";
 import { History } from "./history.ts";
+import { Invites } from "./invites.ts";
 import { Models } from "./models.ts";
+import { Oidc } from "./oidc.ts";
 import { Prices } from "./prices.ts";
 import { Projects } from "./projects.ts";
 import { Reports } from "./reports.ts";
@@ -39,6 +41,9 @@ export interface Services {
     prices: Prices;
     allowances: Allowances;
     analytics: AnalyticsService;
+    invites: Invites;
+    /** The identity provider, when AUTH_MODE=oidc. */
+    oidc: Oidc | null;
 }
 
 /** Test seams: the clock, and how to reach OpenRouter. */
@@ -64,12 +69,13 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
     const runs = new Runs(core, github, reports, history, models, settings);
     const automation = new Automation(core, github, runs, reports, settings);
     webhooks.automation = automation;
+    const invites = new Invites(core);
     return {
         core,
         config,
         store,
         events,
-        accounts: new Accounts(core),
+        accounts: new Accounts(core, invites),
         projects,
         reports,
         triage: new Triage(core, reports),
@@ -84,5 +90,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         github,
         runs,
         automation,
+        invites,
+        oidc: config.oidc ? new Oidc(config.oidc, config.publicOrigin, config.secretsKey) : null,
     };
 }

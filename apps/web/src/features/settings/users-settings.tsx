@@ -16,6 +16,7 @@ import { formatDate, timeAgo } from "@/lib/format";
 import { instanceUsersQuery, keys } from "@/lib/queries";
 import { useMe } from "@/lib/session";
 import type { InstanceUser, PublicUser } from "@/lib/types";
+import { Invites } from "./invites";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
 interface Revealed {
@@ -114,24 +115,26 @@ function UserActions({ user, onPassword }: { user: InstanceUser; onPassword(r: R
     return (
         <div className="grid justify-items-end gap-1">
             <div className="flex flex-wrap justify-end gap-1">
-                <ConfirmAction
-                    trigger={
-                        <Button size="sm" variant="ghost">
-                            Reset password<span className="sr-only"> of {name}</span>
-                        </Button>
-                    }
-                    title={`Reset ${name}'s password?`}
-                    description="A temporary password is generated and shown once. They're signed out everywhere and must choose a new password when they next sign in."
-                    confirmLabel="Reset password"
-                    destructive={false}
-                    onConfirm={() =>
-                        run(async () => {
-                            const r = await api.post<{ password: string | null; signedOutSessions: number }>(`${url}/password`, {});
-                            if (r.password) onPassword({ label: `Temporary password for ${name}`, value: r.password });
-                            await refresh();
-                        })
-                    }
-                />
+                {user.signsInWith === "password" && (
+                    <ConfirmAction
+                        trigger={
+                            <Button size="sm" variant="ghost">
+                                Reset password<span className="sr-only"> of {name}</span>
+                            </Button>
+                        }
+                        title={`Reset ${name}'s password?`}
+                        description="A temporary password is generated and shown once. They're signed out everywhere and must choose a new password when they next sign in."
+                        confirmLabel="Reset password"
+                        destructive={false}
+                        onConfirm={() =>
+                            run(async () => {
+                                const r = await api.post<{ password: string | null; signedOutSessions: number }>(`${url}/password`, {});
+                                if (r.password) onPassword({ label: `Temporary password for ${name}`, value: r.password });
+                                await refresh();
+                            })
+                        }
+                    />
+                )}
                 <ConfirmAction
                     trigger={
                         <Button size="sm" variant="ghost">
@@ -177,6 +180,7 @@ function UserActions({ user, onPassword }: { user: InstanceUser; onPassword(r: R
 export function UsersSettings() {
     const me = useMe();
     const allowed = me.user.isInstanceAdmin;
+    const provider = me.authMode === "oidc";
     const query = useQuery({ ...instanceUsersQuery, enabled: allowed });
     // A generated password lives only here, shown once.
     const [revealed, setRevealed] = useState<Revealed | null>(null);
@@ -190,7 +194,14 @@ export function UsersSettings() {
         );
 
     return (
-        <SettingsPage title="Users" description="Every local account on this Triagent, across all workspaces.">
+        <SettingsPage
+            title="Users"
+            description={
+                provider
+                    ? "Everyone with an account on this Triagent, across all workspaces. People sign in through the identity provider, which looks after their passwords; members of its admin group are instance administrators."
+                    : "Every local account on this Triagent, across all workspaces."
+            }
+        >
             {revealed && (
                 <OneTimeReveal
                     value={revealed.value}
@@ -224,6 +235,7 @@ export function UsersSettings() {
                                             {u.username ?? u.displayName}
                                             {u.id === me.user.id && <span className="text-muted-foreground"> (you)</span>}
                                         </div>
+                                        {u.email && <div className="text-xs break-all text-muted-foreground">{u.email}</div>}
                                         <div className="text-xs text-muted-foreground">Created {formatDate(u.createdAt)}</div>
                                     </TableCell>
                                     <TableCell className="text-xs">
@@ -245,7 +257,15 @@ export function UsersSettings() {
                     </Table>
                 </div>
             )}
-            <CreateAccount onPassword={setRevealed} />
+            {provider ? (
+                <Invites
+                    queryKey={keys.instanceInvites}
+                    url={paths.instanceInvites}
+                    description="Invite an email address to have an account here. They accept by signing in with that address (it must be verified by the identity provider). Members of the admin group don't need an invite."
+                />
+            ) : (
+                <CreateAccount onPassword={setRevealed} />
+            )}
         </SettingsPage>
     );
 }

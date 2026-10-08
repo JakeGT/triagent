@@ -63,7 +63,12 @@ pnpm test:e2e     # builds the app and runs Playwright against the real server
 
 The server fetches OpenRouter's public model catalogue (model names and prices) when someone opens the model picker, model prices or analytics, and keeps it for an hour. Set `OPENROUTER_CATALOGUE=false` to stop that request; prices can still be set by hand. The tests never reach OpenRouter.
 
+### Signing in
+
+By default (`AUTH_MODE=local`) people sign in with a username and password. To sign in through an identity provider instead, set `AUTH_MODE=oidc` and the `OIDC_*` settings: see [docs/authentication.md](docs/authentication.md), which includes setting up Authentik. `pnpm test:e2e` covers both, the second against a fake provider.
+
 - [docs/architecture.md](docs/architecture.md): how the server and web app are put together, workspaces and permissions, secrets.
+- [docs/authentication.md](docs/authentication.md): signing in with passwords or an identity provider (OpenID Connect, e.g. Authentik), invites, and confirming it's you before changing secrets.
 - [tests/contract](tests/contract/README.md): what any Triagent server must do.
 - [skills/triagent](skills/triagent/SKILL.md): a skill that teaches agents to work through findings with the MCP tools.
 

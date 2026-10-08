@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { requestReauth } from "@/components/reauth-dialog";
 import { ThemeProvider } from "@/context/theme-provider";
 import { configureApi, isApiError } from "@/lib/api";
 import { keys } from "@/lib/queries";
@@ -32,6 +33,7 @@ configureApi({
         void queryClient.invalidateQueries({ queryKey: keys.me });
         void router.navigate({ to: "/change-password" });
     },
+    onReauthRequired: requestReauth,
 });
 
 const root = document.getElementById("root");

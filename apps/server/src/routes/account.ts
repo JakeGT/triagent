@@ -2,10 +2,20 @@
 
 import { setCookie } from "hono/cookie";
 import { z } from "zod";
-import { ApiError, forbidden } from "../errors.ts";
+import { ApiError, forbidden, notFound } from "../errors.ts";
 import { cookieName } from "../http/mount.ts";
 import { json, type Route, route } from "../http/route.ts";
 import { publicUser, publicWorkspace } from "../services/accounts.ts";
+import type { Services } from "../services/index.ts";
+import { setSessionCookie } from "./auth.ts";
+
+/** Passwords are only for AUTH_MODE=local: with an identity provider, it looks after them. */
+function passwordsOnly(services: Services): void {
+    if (services.config.authMode !== "local")
+        throw notFound(
+            `Passwords aren't used here: people sign in with ${services.config.oidc?.providerName ?? "the identity provider"}, which looks after them.`,
+        );
+}
 
 export const accountRoutes: Route[] = [
     route({
@@ -16,6 +26,7 @@ export const accountRoutes: Route[] = [
         summary: "Sign in with a username and password (AUTH_MODE=local)",
         body: z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(1024) }),
         async handler({ c, services, body, ip }) {
+            passwordsOnly(services);
             // Signing in from another site would let it plant its own session (login CSRF).
             const origin = c.req.header("origin");
             const site = c.req.header("sec-fetch-site");
@@ -30,13 +41,7 @@ export const accountRoutes: Route[] = [
                 console.warn(`Failed sign-in for "${body.username.slice(0, 64)}" from ${ip}`);
                 throw new ApiError(401, "Wrong username or password.");
             }
-            setCookie(c, cookieName(services), result.cookie, {
-                path: "/",
-                httpOnly: true,
-                secure: services.config.cookieSecure,
-                sameSite: "Lax",
-                maxAge: services.config.sessionMaxHours * 3600,
-            });
+            setSessionCookie(c, services, result.cookie);
             return json({ ok: true, mustChangePassword: result.user.mustChangePassword });
         },
     }),
@@ -48,7 +53,10 @@ export const accountRoutes: Route[] = [
         duringPasswordChange: true,
         tag: "Account",
         summary: "Sign out of this browser",
+        description:
+            "`redirect` is where to go next: with an identity provider, its sign-out page (which returns to this site); otherwise null.",
         async handler({ c, services, principal }) {
+            const idToken = principal?.kind === "session" ? principal.session.idToken : null;
             if (principal?.kind === "session") await services.accounts.signOut(principal.session.idHash);
             setCookie(c, cookieName(services), "", {
                 path: "/",
@@ -57,7 +65,7 @@ export const accountRoutes: Route[] = [
                 sameSite: "Lax",
                 maxAge: 0,
             });
-            return json({ ok: true });
+            return json({ ok: true, redirect: services.oidc ? await services.oidc.endSessionUrl(idToken) : null });
         },
     }),
     route({
@@ -101,6 +109,7 @@ export const accountRoutes: Route[] = [
         summary: "Change your password (signs out your other sessions)",
         body: z.object({ current: z.string().max(1024), password: z.string().max(1024) }),
         async handler({ services, principal, body, ip, actor }) {
+            passwordsOnly(services);
             if (principal?.kind !== "session") throw forbidden("Sign in through the browser to change a password.");
             return json(await services.accounts.changeOwnPassword(principal, body.current, body.password, ip, actor));
         },
@@ -166,6 +175,7 @@ export const accountRoutes: Route[] = [
             for (const u of users)
                 items.push({
                     ...publicUser(u),
+                    signsInWith: u.subject ? "provider" : "password",
                     mustChangePassword: u.mustChangePassword,
                     sessions: (await services.store.sessions.listForUser(u.id)).length,
                 });
@@ -185,6 +195,7 @@ export const accountRoutes: Route[] = [
             isInstanceAdmin: z.boolean().optional(),
         }),
         async handler({ services, body, actor }) {
+            passwordsOnly(services);
             return json(await services.accounts.adminCreateUser(actor, body), 201);
         },
     }),
@@ -196,6 +207,7 @@ export const accountRoutes: Route[] = [
         summary: "Reset an account's password (signs it out everywhere)",
         body: z.object({ password: z.string().max(1024).optional() }),
         async handler({ services, params, body, actor }) {
+            passwordsOnly(services);
             return json(await services.accounts.adminResetPassword(actor, params.userId as string, body.password));
         },
     }),

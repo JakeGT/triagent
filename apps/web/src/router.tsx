@@ -16,6 +16,7 @@ import { RouteError } from "@/components/load-state";
 import { NotFoundPage } from "@/components/not-found";
 import { RootLayout } from "@/components/root-layout";
 import { parseAnalyticsSearch } from "@/features/analytics/search";
+import type { SignInError } from "@/features/auth/sign-in-page";
 import { parseIssueSearch } from "@/features/issues/search";
 import { isApiError, setCsrfToken } from "@/lib/api";
 import { PREF, prefs } from "@/lib/prefs";
@@ -33,6 +34,8 @@ declare module "@tanstack/react-router" {
         branchScoped?: boolean;
     }
 }
+
+const SIGN_IN_ERRORS: readonly SignInError[] = ["expired", "denied", "failed", "unavailable"];
 
 const str = (v: unknown, max = 200) => (typeof v === "string" || typeof v === "number" ? String(v).slice(0, max) || undefined : undefined);
 
@@ -57,12 +60,20 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 const signInRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/sign-in",
-    validateSearch: (s: Record<string, unknown>): { redirect?: string } => {
+    validateSearch: (s: Record<string, unknown>): { redirect?: string; error?: SignInError } => {
         const r = str(s.redirect, 2000);
+        const error = SIGN_IN_ERRORS.find((e) => e === s.error);
         // Only paths on this site: never an absolute URL someone put in a link.
-        return r?.startsWith("/") && !r.startsWith("//") ? { redirect: r } : {};
+        return { ...(r?.startsWith("/") && !r.startsWith("//") ? { redirect: r } : {}), ...(error ? { error } : {}) };
     },
     component: lazyRouteComponent(() => import("@/features/auth/sign-in-page"), "SignInPage"),
+});
+
+/** Signed in at the identity provider, but no account here and no invite. */
+const inviteRequiredRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/invite-required",
+    component: lazyRouteComponent(() => import("@/features/auth/invite-required-page"), "InviteRequiredPage"),
 });
 
 const changePasswordRoute = createRoute({
@@ -323,6 +334,7 @@ const projectSettingsRoutes = [
 
 const routeTree = rootRoute.addChildren([
     signInRoute,
+    inviteRequiredRoute,
     changePasswordRoute,
     authedRoute.addChildren([
         homeRoute,

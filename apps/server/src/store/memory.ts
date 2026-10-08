@@ -14,6 +14,7 @@ import type {
     AuditRow,
     GithubDelivery,
     GithubInstallation,
+    Invite,
     Job,
     LogLine,
     Membership,
@@ -167,6 +168,7 @@ export class MemoryStore implements Store {
         runners: this.table<RunnerRecord>(),
         instanceSettings: this.table<{ value: unknown }>(),
         modelGrants: this.table<ModelGrant>(),
+        invites: this.table<Invite>(),
         activity: new Log<ActivityRow>(() => this.context.getStore()?.undo ?? null),
         audit: new Log<AuditRow>(() => this.context.getStore()?.undo ?? null),
         reviewHistory: new Log<ReviewRecord>(() => this.context.getStore()?.undo ?? null),
@@ -225,6 +227,7 @@ export class MemoryStore implements Store {
     users: Repos["users"] = {
         get: async (id) => this.t.users.get(id),
         byUsername: async (username) => this.t.users.values().find((u) => u.username?.toLowerCase() === username.toLowerCase()) ?? null,
+        byIdentity: async (issuer, subject) => this.t.users.values().find((u) => u.issuer === issuer && u.subject === subject) ?? null,
         list: async () => this.t.users.values(),
         count: async () => this.t.users.rows.size,
         put: (user) => this.write(() => this.t.users.set(user.id, user)),
@@ -260,6 +263,7 @@ export class MemoryStore implements Store {
                     if (s.workspaceId === id) this.t.settings.delete(key(id, s.projectId ?? "", s.key));
                 for (const s of this.t.secrets.values())
                     if (s.workspaceId === id) this.t.secrets.delete(key(id, s.projectId ?? "", s.name));
+                for (const i of this.t.invites.values()) if (i.workspaceId === id) this.t.invites.delete(i.id);
                 this.t.activity.remove((r) => r.workspaceId === id);
                 this.t.reviewHistory.remove((r) => r.workspaceId === id);
                 for (const i of this.t.githubInstallations.values())
@@ -533,5 +537,17 @@ export class MemoryStore implements Store {
         list: async () => this.t.modelGrants.values().sort((a, b) => a.grantedAt.localeCompare(b.grantedAt)),
         put: (g) => this.write(() => this.t.modelGrants.set(g.workspaceId, g)),
         delete: (workspaceId) => this.write(() => this.t.modelGrants.delete(workspaceId)),
+    };
+
+    invites: Repos["invites"] = {
+        get: async (id) => this.t.invites.get(id),
+        list: async (workspaceId) =>
+            this.t.invites
+                .values()
+                .filter((i) => i.workspaceId === workspaceId)
+                .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)),
+        pendingFor: async (email) => this.t.invites.values().filter((i) => i.email === email.toLowerCase() && !i.acceptedAt),
+        put: (invite) => this.write(() => this.t.invites.set(invite.id, invite)),
+        delete: (id) => this.write(() => this.t.invites.delete(id)),
     };
 }

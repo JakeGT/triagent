@@ -51,6 +51,27 @@ export interface Session {
     credential: string | null;
     createdAt: number;
     lastSeenAt: number;
+    /** When the person last proved who they are (signed in, or confirmed it): setting secrets needs a recent one. */
+    authAt: number;
+    /** The identity provider's ID token, kept only as the hint for signing out there. Never sent anywhere else. */
+    idToken?: string | null;
+}
+
+/** An invitation for an email address: to have an account (instance invite), or to join a workspace with a role. */
+export interface Invite {
+    id: string;
+    /** Lower-cased. Matched against the verified email address someone signs in with. */
+    email: string;
+    /** Null for an instance invite. */
+    workspaceId: string | null;
+    /** Null for an instance invite. */
+    role: Role | null;
+    /** The id of the person who sent it. */
+    createdBy: string | null;
+    createdAt: string;
+    expiresAt: string;
+    acceptedAt: string | null;
+    acceptedBy: string | null;
 }
 
 export interface ApiToken {
@@ -345,6 +366,8 @@ export interface Repos {
     users: {
         get(id: string): Promise<User | null>;
         byUsername(username: string): Promise<User | null>;
+        /** The account an identity provider's issuer and subject belong to. */
+        byIdentity(issuer: string, subject: string): Promise<User | null>;
         list(): Promise<User[]>;
         count(): Promise<number>;
         put(user: User): Promise<void>;
@@ -490,6 +513,15 @@ export interface Repos {
         list(): Promise<ModelGrant[]>;
         put(grant: ModelGrant): Promise<void>;
         delete(workspaceId: string): Promise<void>;
+    };
+    invites: {
+        get(id: string): Promise<Invite | null>;
+        /** A workspace's invites, or the instance invites (`null`), newest first. */
+        list(workspaceId: string | null): Promise<Invite[]>;
+        /** Invites for an email address that haven't been accepted (expired ones included). */
+        pendingFor(email: string): Promise<Invite[]>;
+        put(invite: Invite): Promise<void>;
+        delete(id: string): Promise<void>;
     };
 }
 

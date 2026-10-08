@@ -140,6 +140,8 @@ export const githubRoutes: Route[] = [
         method: "POST",
         path: "/api/v1/instance/github-app/manifest",
         scope: "instance",
+        // It ends with the app's keys stored: like setting any secret, it needs a recent sign-in.
+        recentSignIn: true,
         tag: "Instance",
         summary: "Start creating the GitHub App (GitHub's manifest flow): returns a page to open",
         body: z.object({
@@ -188,6 +190,7 @@ export const githubRoutes: Route[] = [
         method: "DELETE",
         path: "/api/v1/instance/github-app",
         scope: "instance",
+        recentSignIn: true,
         tag: "Instance",
         summary: "Forget the GitHub App (delete it on GitHub too); its installations are unlinked",
         async handler({ services, actor }) {
