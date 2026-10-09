@@ -145,7 +145,7 @@ test("the first sign-in starts the tour, after the new password, and every step 
 test("closing the browser mid-tour picks it up at the same step", async ({ page, admin, baseURL }) => {
     const username = await newcomer(admin, baseURL as string);
     await signInPage(page, username, PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
     await at(page, "welcome");
     await page.getByRole("button", { name: "Start the tour" }).click();
     await at(page, "pickers");
@@ -155,7 +155,7 @@ test("closing the browser mid-tour picks it up at the same step", async ({ page,
 
     await page.context().clearCookies();
     await signInPage(page, username, PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
     await at(page, "overview");
     await expectPlaced(page);
 });
@@ -163,7 +163,7 @@ test("closing the browser mid-tour picks it up at the same step", async ({ page,
 test("skipping (or Escape) closes the tour for good, and Settings can show it again", async ({ page, admin, baseURL }) => {
     const username = await newcomer(admin, baseURL as string);
     await signInPage(page, username, PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
     await at(page, "welcome");
     await page.getByRole("button", { name: "Start the tour" }).click();
     await at(page, "pickers");
@@ -180,7 +180,7 @@ test("skipping (or Escape) closes the tour for good, and Settings can show it ag
     // The next sign-in doesn't nag.
     await page.context().clearCookies();
     await signInPage(page, username, PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await page.waitForTimeout(1500);
     await expect(card(page)).toHaveCount(0);
@@ -204,7 +204,7 @@ test("skipping (or Escape) closes the tour for good, and Settings can show it ag
 test("the try-it step can be skipped, and the example can be removed at the end", async ({ page, admin, baseURL }) => {
     const username = await newcomer(admin, baseURL as string);
     await signInPage(page, username, PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
     await at(page, "welcome");
     // Straight to the try-it step, as if picked up there.
     await page.request.patch("/api/v1/me/tutorial", {
@@ -234,7 +234,7 @@ test("on a phone, steps whose part of the page is folded away show in the middle
     const username = await newcomer(admin, baseURL as string);
     await page.setViewportSize({ width: 390, height: 844 });
     await signInPage(page, username, PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
     await at(page, "welcome");
     await page.getByRole("button", { name: "Start the tour" }).click();
     // The pickers are in the folded rail.
@@ -264,7 +264,7 @@ test("on a phone, steps whose part of the page is folded away show in the middle
 test("after the tour, account setup: notifications, appearance, then the workspace's own setup", async ({ page, admin, baseURL }) => {
     const username = await newcomer(admin, baseURL as string);
     await signInPage(page, username, PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
     await at(page, "welcome");
     await page.getByRole("button", { name: "Skip tour" }).click();
 

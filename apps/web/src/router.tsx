@@ -52,9 +52,7 @@ async function loadMe(queryClient: QueryClient, href: string): Promise<Me> {
         setCsrfToken(me.csrf);
         return me;
     } catch (err) {
-        // Not signed in: the front door shows what Triagent is; anywhere else asks you to sign in and comes back.
-        if (isApiError(err, 401))
-            throw href === "/" ? redirect({ to: "/welcome" }) : redirect({ to: "/sign-in", search: { redirect: href } });
+        if (isApiError(err, 401)) throw redirect({ to: "/sign-in", search: { redirect: href } });
         throw err;
     }
 }
@@ -78,10 +76,10 @@ const signInRoute = createRoute({
     component: lazyRouteComponent(() => import("@/features/auth/sign-in-page"), "SignInPage"),
 });
 
-/** What Triagent is, with a demo to try: public, and where the front door leads when you're not signed in. */
+/** The front door, for everyone: what Triagent is, with a demo to try, and a button into the app. */
 const welcomeRoute = createRoute({
     getParentRoute: () => rootRoute,
-    path: "/welcome",
+    path: "/",
     component: lazyRouteComponent(() => import("@/features/landing/landing-page"), "LandingPage"),
 });
 
@@ -104,7 +102,7 @@ const changePasswordRoute = createRoute({
     path: "/change-password",
     beforeLoad: async ({ context, location }) => {
         const me = await loadMe(context.queryClient, location.href);
-        if (!me.mustChangePassword) throw redirect({ to: "/" });
+        if (!me.mustChangePassword) throw redirect({ to: "/dashboard" });
     },
     component: lazyRouteComponent(() => import("@/features/auth/change-password-page"), "ChangePasswordPage"),
 });
@@ -121,9 +119,10 @@ const authedRoute = createRoute({
     component: AuthedLayout,
 });
 
+/** Into the app: the workspace you last used. */
 const homeRoute = createRoute({
     getParentRoute: () => authedRoute,
-    path: "/",
+    path: "/dashboard",
     beforeLoad: ({ context }) => {
         const { workspaces } = context.me;
         const last = prefs.get(PREF.lastWorkspace);

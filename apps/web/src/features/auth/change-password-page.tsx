@@ -17,7 +17,7 @@ export function ChangePasswordPage() {
                 submitLabel="Save and continue"
                 onChanged={async () => {
                     await queryClient.invalidateQueries({ queryKey: keys.me });
-                    await navigate({ to: "/" });
+                    await navigate({ to: "/dashboard" });
                 }}
             />
             <Button variant="link" className="px-0" onClick={() => signOut.mutate()}>

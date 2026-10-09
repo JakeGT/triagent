@@ -46,7 +46,7 @@ export function AppShell() {
         queryClient.removeQueries({ queryKey: keys.me });
         void navigate({ to: "/sign-in", search: { redirect: router.state.location.href } });
     }, [queryClient, navigate, router]);
-    const onLostAccess = useCallback(() => void navigate({ to: "/" }), [navigate]);
+    const onLostAccess = useCallback(() => void navigate({ to: "/dashboard" }), [navigate]);
     const onEvent = useRunNotifications(ws);
     const status = useLiveUpdates(ws, onSessionEnded, onLostAccess, onEvent);
 

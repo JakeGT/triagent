@@ -1,4 +1,4 @@
-// The public page at /welcome: where the front door leads when you're not signed in, its two demos, and
+// The landing page at the front door, for everyone signed in or not: its two demos, and
 // the same accessibility and content-security checks as the rest of the app.
 
 import AxeBuilder from "@axe-core/playwright";
@@ -7,32 +7,31 @@ import { expect, signInPage, test } from "./fixtures";
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
 
-test("the front door shows the landing page to someone who isn't signed in", async ({ page }) => {
+test("the front door is the landing page, with a way to sign in and back", async ({ page }) => {
     await page.goto("/");
-    await expect(page).toHaveURL(/\/welcome$/);
     await expect(page.getByRole("heading", { level: 1 })).toContainText("One list");
     await page.getByRole("link", { name: "Sign in" }).first().click();
     await expect(page).toHaveURL(/\/sign-in$/);
     // And the sign-in page's logo leads back.
     await page.getByRole("link", { name: "Triagent" }).click();
-    await expect(page).toHaveURL(/\/welcome$/);
+    await expect(page).toHaveURL(/^http:\/\/[^/]+\/$/);
 });
 
-test("anywhere else still asks you to sign in and comes back", async ({ page }) => {
-    await page.goto("/w/ada/agents");
+test("the app itself still asks you to sign in and comes back", async ({ page }) => {
+    await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/sign-in\?redirect=/);
 });
 
-test("signed in, the front door is the app and the landing page offers a way in", async ({ page }) => {
+test("signed in, the front door is still the landing page, with a button to the dashboard", async ({ page }) => {
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
     await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("One list");
+    await page.getByRole("link", { name: "Open dashboard" }).first().click();
     await expect(page).toHaveURL(/\/w\//);
-    await page.goto("/welcome");
-    await expect(page.getByRole("link", { name: "Open Triagent" }).first()).toBeVisible();
 });
 
 test("the demo list filters, opens findings and can be triaged by hand or by an agent", async ({ page }) => {
-    await page.goto("/welcome");
+    await page.goto("/");
     const demo = page.getByTestId("try-it");
     await expect(demo.locator("tbody tr")).toHaveCount(8);
     await expect(page.getByTestId("try-progress")).toContainText("0 of 8");
@@ -65,7 +64,7 @@ test("the demo list filters, opens findings and can be triaged by hand or by an 
 });
 
 test("the hero's review can be paused and played, and rests on its last frame with reduced motion", async ({ page }) => {
-    await page.goto("/welcome");
+    await page.goto("/");
     const stage = page.getByTestId("review-stage");
     await stage.getByRole("button", { name: "Pause" }).click();
     await expect(stage.getByRole("button", { name: /^Play/ })).toBeVisible();
@@ -85,7 +84,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
         // Reduced motion rests the hero on its last, fullest frame.
         await page.emulateMedia({ reducedMotion: "reduce" });
-        await page.goto("/welcome");
+        await page.goto("/");
         await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
         await page.getByTestId("try-it").getByRole("button", { name: "Let an agent take the next one" }).click();
         await expect(page.getByTestId("try-panel")).toContainText("An agent resolved it.");
@@ -97,7 +96,7 @@ for (const theme of ["light", "dark"] as const) {
 
 test("the page fits a phone without scrolling sideways", async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 740 });
-    await page.goto("/welcome");
+    await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);

@@ -10,7 +10,7 @@ export function NotFoundPage() {
             </p>
             <div>
                 <Button asChild>
-                    <Link to="/">Go to my workspace</Link>
+                    <Link to="/dashboard">Go to my workspace</Link>
                 </Button>
             </div>
         </main>

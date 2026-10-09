@@ -36,7 +36,7 @@ function ProviderSignIn({ config, redirect, error }: { config: AuthConfig; redir
                 <FieldError message={error ? signInErrorMessage(error, provider) : null} />
                 {/* A plain link, not a form: the server redirects to the provider, which a form's CSP (form-action 'self') would block. */}
                 <Button asChild>
-                    <a href={providerSignInUrl(redirect ?? "/")}>
+                    <a href={providerSignInUrl(redirect ?? "/dashboard")}>
                         <LogIn /> Sign in with {provider}
                     </a>
                 </Button>
@@ -68,7 +68,7 @@ function PasswordSignIn({ redirect }: { redirect?: string }) {
                 setCsrfToken(me.csrf);
                 if (me.mustChangePassword) await navigate({ to: "/change-password" });
                 else if (redirect) router.history.push(redirect);
-                else await navigate({ to: "/" });
+                else await navigate({ to: "/dashboard" });
                 return { error: null, username };
             } catch (err) {
                 return { error: errorMessage(err), username };

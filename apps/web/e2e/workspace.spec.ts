@@ -7,7 +7,7 @@ import { expect, signInPage, test, unique } from "./fixtures";
 
 test("create an organisation and a project, then upload a report after previewing it", async ({ page }) => {
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
 
     const slug = unique("acme");
     await page.getByRole("button", { name: /Workspace/ }).click();
@@ -63,7 +63,7 @@ test("create an organisation and a project, then upload a report after previewin
 
 test("the workspace setup's Models step: connect a provider, and its model is the default; more can be added", async ({ page }) => {
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
-    await page.goto("/");
+    await page.goto("/dashboard");
     const slug = unique("models");
     await page.getByRole("button", { name: /Workspace/ }).click();
     await page.getByRole("menuitem", { name: /Create an organisation/ }).click();

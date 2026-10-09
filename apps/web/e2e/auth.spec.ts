@@ -16,7 +16,7 @@ test("sign in, land in your workspace, and sign out", async ({ page }) => {
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/w\/admin\/settings\/appearance$/);
 
-    await page.goto("/");
+    await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/w\/admin$/);
     await page.getByTestId("user-menu").click();
     await page.getByRole("menuitem", { name: "Sign out" }).click();

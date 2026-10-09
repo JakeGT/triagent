@@ -20,7 +20,7 @@ export function InviteRequiredPage() {
                     Ask someone who uses this Triagent to invite the email address you sign in with. Once they have, sign in again.
                 </p>
                 <Button asChild>
-                    <a href={providerSignInUrl("/", { prompt: "login" })}>Sign in again</a>
+                    <a href={providerSignInUrl("/dashboard", { prompt: "login" })}>Sign in again</a>
                 </Button>
                 <Button asChild variant="link" className="px-0">
                     <Link to="/sign-in">Back to the sign-in page</Link>

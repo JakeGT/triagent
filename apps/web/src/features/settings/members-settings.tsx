@@ -111,7 +111,7 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
                             if (isMe) await queryClient.invalidateQueries({ queryKey: keys.me });
                             toast.success(isMe ? "You left the workspace." : `${member.user.displayName} removed.`);
                             // This workspace's pages are no longer yours to see.
-                            if (isMe) await navigate({ to: "/" });
+                            if (isMe) await navigate({ to: "/dashboard" });
                         }}
                     />
                 )}

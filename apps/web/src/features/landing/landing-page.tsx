@@ -212,8 +212,8 @@ export function LandingPage() {
     const signedIn = me.isSuccess;
     const enter = signedIn ? (
         <Button asChild>
-            <Link to="/">
-                Open Triagent <ArrowRight />
+            <Link to="/dashboard">
+                Open dashboard <ArrowRight />
             </Link>
         </Button>
     ) : (
@@ -236,7 +236,7 @@ export function LandingPage() {
 
             <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur">
                 <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:px-6">
-                    <Link to="/welcome" className="flex items-center gap-2 text-base font-semibold">
+                    <Link to="/" className="flex items-center gap-2 text-base font-semibold">
                         <Logo className="size-7" /> Triagent
                     </Link>
                     <nav aria-label="On this page" className="ms-4 hidden items-center gap-5 text-sm text-muted-foreground md:flex">
