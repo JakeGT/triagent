@@ -19,7 +19,8 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16-alpine
+        # From AWS's public mirror of Docker's official images: Docker Hub rate-limits GitHub's runners.
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_PASSWORD: test
         ports:
@@ -92,8 +93,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Both images build (each runs its own start-up checks), so a file missing from an image fails here
       # rather than at deployment. Nothing is pushed.
-      - run: docker build --target server -t triagent-server:ci .
-      - run: docker build --target runner -t triagent-runner:ci .
+      # The Dockerfile's own Node image, from AWS's public mirror: Docker Hub rate-limits GitHub's runners.
+      - run: echo "NODE_IMAGE=public.ecr.aws/docker/library/$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile)" >> "$GITHUB_ENV"
+      - run: docker build --build-arg NODE_IMAGE="$NODE_IMAGE" --target server -t triagent-server:ci .
+      - run: docker build --build-arg NODE_IMAGE="$NODE_IMAGE" --target runner -t triagent-runner:ci .
       - name: The images start
         run: |
           docker run --rm --entrypoint sh triagent-runner:ci -c 'git --version && ocr version'
