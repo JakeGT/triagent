@@ -84,13 +84,13 @@ export function ChecksNote({ data }: { data: GithubSettings }) {
                     <>
                         <p>
                             The GitHub App needs the repository permission <span className="font-medium">Checks: Read-only</span>, and the
-                            events <span className="font-medium">Check suite</span>, <span className="font-medium">Check run</span>,{" "}
-                            <span className="font-medium">Status</span> and <span className="font-medium">Issue comment</span>. Whoever owns
-                            the app can add them in{" "}
-                            <a href={`${data.app.htmlUrl}/permissions`} target="_blank" rel="noopener noreferrer" className="underline">
-                                the app's settings on GitHub<span className="sr-only"> (opens in a new tab)</span>
+                            events <span className="font-medium">Check suite</span>, <span className="font-medium">Check run</span>, and{" "}
+                            <span className="font-medium">Status</span>. Whoever owns the app can add them on GitHub: open{" "}
+                            <a href={data.app.htmlUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                                the app's page<span className="sr-only"> (opens in a new tab)</span>
                             </a>{" "}
-                            (Settings → Developer settings → GitHub Apps → {data.app.name} → Permissions & events).
+                            and choose App settings, or go to Settings → Developer settings → GitHub Apps → {data.app.name}, then
+                            Permissions & events.
                         </p>
                         <p>
                             GitHub then asks an owner of each account the app is installed on to accept the new permission; it only takes

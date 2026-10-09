@@ -538,16 +538,7 @@ describe("the GitHub App", () => {
             statuses: "write",
             checks: "read",
         });
-        assert.deepEqual(manifest.default_events, [
-            "pull_request",
-            "push",
-            "create",
-            "delete",
-            "check_suite",
-            "check_run",
-            "status",
-            "issue_comment",
-        ]);
+        assert.deepEqual(manifest.default_events, ["pull_request", "push", "create", "delete", "check_suite", "check_run", "status"]);
         // Someone else can't use the admin's form.
         assert.equal((await env.t.request(start.body.formUrl, { session: mallory })).status, 403);
 

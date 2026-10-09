@@ -229,8 +229,10 @@ export class GithubApp {
                 statuses: "write",
                 checks: "read",
             },
-            // Checks and statuses finishing, and comments (`/review`), besides pull requests (labels too) and branches.
-            default_events: ["pull_request", "push", "create", "delete", "check_suite", "check_run", "status", "issue_comment"],
+            // Checks and statuses finishing, besides pull requests (labels too) and branches. Not issue_comment:
+            // GitHub only delivers it to apps that can read every issue, which Triagent doesn't ask for, so
+            // `/review` comments are found by the poller instead (and handled at once if an app does send them).
+            default_events: ["pull_request", "push", "create", "delete", "check_suite", "check_run", "status"],
         };
     }
 
