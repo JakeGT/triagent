@@ -41,7 +41,7 @@ export interface InstallationToken {
 }
 
 /** Permissions an installation token may be narrowed to. */
-export type TokenPermissions = Partial<Record<"contents" | "pull_requests" | "statuses" | "metadata", "read" | "write">>;
+export type TokenPermissions = Partial<Record<"contents" | "pull_requests" | "statuses" | "metadata" | "checks", "read" | "write">>;
 
 const base64url = (b: Buffer | string) => Buffer.from(b).toString("base64url");
 
@@ -220,8 +220,17 @@ export class GithubApp {
             // People linking an installation to a workspace prove they can see it with this authorization.
             request_oauth_on_install: true,
             // members: read, so linking an organisation's installation can check the person administers it.
-            default_permissions: { contents: "read", metadata: "read", members: "read", pull_requests: "write", statuses: "write" },
-            default_events: ["pull_request", "push", "create", "delete"],
+            // checks: read, so a pull request's first review can wait for its checks to pass.
+            default_permissions: {
+                contents: "read",
+                metadata: "read",
+                members: "read",
+                pull_requests: "write",
+                statuses: "write",
+                checks: "read",
+            },
+            // Checks and statuses finishing, and comments (`/review`), besides pull requests (labels too) and branches.
+            default_events: ["pull_request", "push", "create", "delete", "check_suite", "check_run", "status", "issue_comment"],
         };
     }
 

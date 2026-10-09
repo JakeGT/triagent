@@ -1,5 +1,6 @@
 // A fake GitHub for tests: an in-process HTTP server with the REST calls Triagent makes (repositories,
-// pull requests, branches, compare, comments, statuses), the GitHub App's calls (JWTs checked against the
+// pull requests with their labels, files and diffs, branches, compare, comments, statuses, check runs), the
+// GitHub App's calls (JWTs checked against the
 // app's key, installation tokens, installations), the OAuth code exchange and the manifest conversion,
 // and git over smart HTTP (`git http-backend`) for repositories made with `gitRepo`, which only accepts
 // requests carrying a token that may read the repository (sent as git's Authorization header).
@@ -28,11 +29,25 @@ export interface FakeRepo {
     branches: Map<string, string>;
     pulls: Map<number, FakePull>;
     /** Each pull request's comments; `user` is the author's login (an app's is "<slug>[bot]"). */
-    comments: Map<number, { id: number; body: string; user: string }[]>;
+    comments: Map<number, FakeComment[]>;
+    /** Check runs by commit (the latest of each name). */
+    checkRuns: Map<string, { name: string; status: string; conclusion: string | null }[]>;
+    /** For a repository without git: a commit's diff against its base, and a pull request's files, when a test gives them. */
+    diffs: Map<string, string>;
+    files: Map<number, string[]>;
     statuses: { sha: string; state: string; description: string; context: string; target_url?: string; by: string }[];
     /** A bare repository served over smart HTTP. */
     gitDir: string | null;
     compares: Map<string, { ahead_by: number; behind_by: number }>;
+}
+
+export interface FakeComment {
+    id: number;
+    body: string;
+    user: string;
+    /** GitHub's author_association (MEMBER unless given). */
+    association?: string;
+    createdAt?: string;
 }
 
 export interface FakePull {
@@ -48,6 +63,9 @@ export interface FakePull {
     fork: boolean;
     /** GitHub's author_association: how the author relates to the repository (MEMBER unless given). */
     association?: string;
+    labels?: string[];
+    /** GitHub's user type for the author: "Bot" for an app's account. */
+    authorType?: string;
 }
 
 export interface FakeApp {
@@ -71,6 +89,8 @@ export interface FakeInstallation {
     suspended: boolean;
     /** Logins that can see the installation (GET /user/installations). */
     users: Set<string>;
+    /** Permissions the installation has accepted beyond the original ones: without "checks", no token can ask for it. */
+    permissions: Set<string>;
 }
 
 export interface Logged {
@@ -104,7 +124,7 @@ async function git(args: string[], cwd?: string): Promise<string> {
 export class FakeGitHub {
     readonly repos = new Map<string, FakeRepo>();
     readonly installations = new Map<number, FakeInstallation>();
-    readonly pats = new Map<string, { login: string; repos: Set<string> }>();
+    readonly pats = new Map<string, { login: string; repos: Set<string>; noChecks?: boolean }>();
     readonly installationTokens = new Map<
         string,
         { installationId: number; repoIds: number[] | null; permissions: Record<string, string> | null; expiresAt: number }
@@ -176,6 +196,9 @@ export class FakeGitHub {
             pulls: new Map(),
             comments: new Map(),
             statuses: [],
+            checkRuns: new Map(),
+            diffs: new Map(),
+            files: new Map(),
             gitDir: null,
             compares: new Map(),
         };
@@ -183,8 +206,35 @@ export class FakeGitHub {
         return repo;
     }
 
-    pat(token: string, login: string, repos: string[]): void {
-        this.pats.set(token, { login, repos: new Set(repos) });
+    /** `noChecks`: GitHub won't show this token check runs (as with a fine-grained token). */
+    pat(token: string, login: string, repos: string[], extra: { noChecks?: boolean } = {}): void {
+        this.pats.set(token, { login, repos: new Set(repos), ...extra });
+    }
+
+    /** A check run on a commit: a later one of the same name replaces the earlier. */
+    checkRun(fullName: string, sha: string, name: string, status: string, conclusion: string | null = null): void {
+        const repo = this.repo(fullName);
+        repo.checkRuns.set(sha, [...(repo.checkRuns.get(sha) ?? []).filter((r) => r.name !== name), { name, status, conclusion }]);
+    }
+
+    /** A commit status from something other than Triagent (a CI service). */
+    status(fullName: string, sha: string, context: string, state: string): void {
+        this.repo(fullName).statuses.push({ sha, state, description: "", context, by: "ci" });
+    }
+
+    /** Someone comments on a pull request. */
+    comment(fullName: string, number: number, body: string, user: string, association = "MEMBER"): FakeComment {
+        const repo = this.repo(fullName);
+        const comment: FakeComment = { id: ++this.ids, body, user, association, createdAt: new Date().toISOString() };
+        repo.comments.set(number, [...(repo.comments.get(number) ?? []), comment]);
+        return comment;
+    }
+
+    /** Add a label to a pull request, or (`on: false`) take it off. */
+    label(fullName: string, number: number, label: string, on = true): void {
+        const pull = this.repo(fullName).pulls.get(number);
+        if (!pull) throw new Error(`${fullName} has no pull request #${number}.`);
+        pull.labels = [...(pull.labels ?? []).filter((l) => l !== label), ...(on ? [label] : [])];
     }
 
     pull(fullName: string, p: Partial<FakePull> & { number: number; headRef: string }): FakePull {
@@ -230,6 +280,7 @@ export class FakeGitHub {
             selection: "selected",
             suspended: false,
             users: new Set(users),
+            permissions: new Set(["checks"]),
             ...extra,
         };
         this.installations.set(inst.id, inst);
@@ -370,7 +421,8 @@ export class FakeGitHub {
             state: p.state,
             draft: p.draft,
             html_url: `https://github.com/${r.fullName}/pull/${p.number}`,
-            user: { login: p.author },
+            user: { login: p.author, type: p.authorType ?? (p.author.endsWith("[bot]") ? "Bot" : "User") },
+            labels: (p.labels ?? []).map((name) => ({ name })),
             author_association: p.association ?? "MEMBER",
             head: { ref: p.headRef, sha: p.headSha, repo: { full_name: fork } },
             base: { ref: p.baseRef, sha: r.branches.get(p.baseRef) ?? "0".repeat(40), repo: { full_name: r.fullName } },
@@ -378,11 +430,14 @@ export class FakeGitHub {
         };
     }
 
-    private commentView(r: FakeRepo, number: number, c: { id: number; body: string; user: string }) {
+    private commentView(r: FakeRepo, number: number, c: FakeComment) {
         return {
             id: c.id,
             body: c.body,
             user: { login: c.user, type: c.user.endsWith("[bot]") ? "Bot" : "User" },
+            author_association: c.association ?? "MEMBER",
+            created_at: c.createdAt ?? new Date(0).toISOString(),
+            updated_at: c.createdAt ?? new Date(0).toISOString(),
             issue_url: `${this.apiUrl}/repos/${r.fullName}/issues/${number}`,
         };
     }
@@ -422,13 +477,22 @@ export class FakeGitHub {
         kind: "pat" | "installation" | "app" | "user" | "none";
         canRead(r: FakeRepo): boolean;
         canWrite(r: FakeRepo, what: string): boolean;
+        /** Whether it may read check runs. */
+        canChecks(r: FakeRepo): boolean;
         login?: string;
         installationId?: number;
     } {
-        if (!token) return { kind: "none", canRead: () => false, canWrite: () => false };
+        const no = { canRead: () => false, canWrite: () => false, canChecks: () => false };
+        if (!token) return { kind: "none", ...no };
         const pat = this.pats.get(token);
         if (pat)
-            return { kind: "pat", login: pat.login, canRead: (r) => pat.repos.has(r.fullName), canWrite: (r) => pat.repos.has(r.fullName) };
+            return {
+                kind: "pat",
+                login: pat.login,
+                canRead: (r) => pat.repos.has(r.fullName),
+                canWrite: (r) => pat.repos.has(r.fullName),
+                canChecks: (r) => pat.repos.has(r.fullName) && !pat.noChecks,
+            };
         const inst = this.installationTokens.get(token);
         if (inst && inst.expiresAt > Date.now()) {
             const installation = this.installations.get(inst.installationId);
@@ -445,12 +509,14 @@ export class FakeGitHub {
                 installationId: inst.installationId,
                 canRead: (r) => reach(r) && (!inst.permissions || Boolean(inst.permissions.contents || inst.permissions.pull_requests)),
                 canWrite: (r, what) => reach(r) && perm(what),
+                canChecks: (r) =>
+                    reach(r) && Boolean(installation?.permissions.has("checks")) && (!inst.permissions || Boolean(inst.permissions.checks)),
             };
         }
         const user = this.userTokens.get(token);
-        if (user) return { kind: "user", login: user, canRead: () => false, canWrite: () => false };
-        if (this.checkJwt(token)) return { kind: "app", canRead: () => false, canWrite: () => false };
-        return { kind: "none", canRead: () => false, canWrite: () => false };
+        if (user) return { kind: "user", login: user, ...no };
+        if (this.checkJwt(token)) return { kind: "app", ...no };
+        return { kind: "none", ...no };
     }
 
     // ---- requests -------------------------------------------------------------------------------------
@@ -557,6 +623,9 @@ export class FakeGitHub {
             const repoIds = Array.isArray(body.repository_ids) ? (body.repository_ids as number[]) : null;
             if (repoIds?.some((id) => !inst.repoIds.includes(id)))
                 return json(res, 422, { message: "There is at least one repository that does not exist or is not accessible" });
+            // A permission the installation hasn't accepted can't be asked for.
+            if ((body.permissions as Record<string, string> | undefined)?.checks && !inst.permissions.has("checks"))
+                return json(res, 422, { message: "The permissions requested are not granted to this installation." });
             const t = `ghs_${randomBytes(18).toString("hex")}`;
             const expiresAt = Date.now() + 3600_000;
             this.installationTokens.set(t, {
@@ -608,7 +677,7 @@ export class FakeGitHub {
         if (m) {
             const repo = this.repos.get(`${m[1]}/${m[2]}`);
             if (auth.kind === "none") return json(res, 401, { message: "Bad credentials" });
-            if (!repo || !auth.canRead(repo)) return json(res, 404, { message: "Not Found" });
+            if (!repo || !(auth.canRead(repo) || auth.canChecks(repo))) return json(res, 404, { message: "Not Found" });
             return this.repoApi(req, res, repo, m[3] ?? "", body, auth, paged, url);
         }
         return json(res, 404, { message: "Not Found" });
@@ -626,6 +695,31 @@ export class FakeGitHub {
     ): unknown {
         let m: RegExpExecArray | null;
         const method = req.method ?? "GET";
+        const wantsDiff = (req.headers.accept ?? "").includes("application/vnd.github.diff");
+        const text = (body: string) => {
+            res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+            res.end(body);
+        };
+        m = /^\/commits\/([0-9a-f]{40})\/check-runs$/.exec(rest);
+        if (m && method === "GET") {
+            if (!auth.canChecks(repo)) return json(res, 403, { message: "Resource not accessible by integration" });
+            const runs = repo.checkRuns.get(m[1] as string) ?? [];
+            return json(res, 200, { total_count: runs.length, check_runs: paged(runs) });
+        }
+        if (!auth.canRead(repo)) return json(res, 404, { message: "Not Found" });
+        m = /^\/commits\/([0-9a-f]{40})\/status$/.exec(rest);
+        if (m && method === "GET") {
+            // The latest of each context.
+            const latest = new Map<string, FakeRepo["statuses"][number]>();
+            for (const s of repo.statuses) if (s.sha === m[1]) latest.set(s.context, s);
+            const statuses = [...latest.values()].map(({ by: _by, sha: _sha, ...s }) => s);
+            const state = statuses.some((s) => s.state === "failure" || s.state === "error")
+                ? "failure"
+                : statuses.some((s) => s.state === "pending") || !statuses.length
+                  ? "pending"
+                  : "success";
+            return json(res, 200, { state, sha: m[1], total_count: statuses.length, statuses });
+        }
         if (rest === "" && method === "GET") return json(res, 200, this.repoView(repo));
         if (rest === "/pulls" && method === "GET") {
             const state = url.searchParams.get("state") ?? "open";
@@ -635,7 +729,20 @@ export class FakeGitHub {
         m = /^\/pulls\/(\d+)$/.exec(rest);
         if (m && method === "GET") {
             const pull = repo.pulls.get(Number(m[1]));
-            return pull ? json(res, 200, this.pullView(repo, pull)) : json(res, 404, { message: "Not Found" });
+            if (!pull) return json(res, 404, { message: "Not Found" });
+            if (!wantsDiff) return json(res, 200, this.pullView(repo, pull));
+            void this.diff(repo, pull.baseRef, pull.headSha).then(text, () => json(res, 404, { message: "Not Found" }));
+            return;
+        }
+        m = /^\/pulls\/(\d+)\/files$/.exec(rest);
+        if (m && method === "GET") {
+            const pull = repo.pulls.get(Number(m[1]));
+            if (!pull) return json(res, 404, { message: "Not Found" });
+            void this.changedFiles(repo, pull).then(
+                (files) => json(res, 200, paged(files.map((filename) => ({ filename, status: "modified" })))),
+                () => json(res, 404, { message: "Not Found" }),
+            );
+            return;
         }
         if (rest === "/branches" && method === "GET") {
             const items = [...repo.branches].map(([name, sha]) => ({ name, commit: { sha } }));
@@ -651,6 +758,10 @@ export class FakeGitHub {
         if (m && method === "GET") {
             const base = decodeURIComponent(m[1] as string);
             const head = decodeURIComponent(m[2] as string);
+            if (wantsDiff) {
+                void this.diff(repo, base, head).then(text, () => json(res, 404, { message: "Not Found" }));
+                return;
+            }
             void this.compare(repo, base, head).then(
                 (c) =>
                     c
@@ -663,6 +774,27 @@ export class FakeGitHub {
             );
             return;
         }
+        if (rest === "/issues/comments" && method === "GET") {
+            const since = url.searchParams.get("since") ?? "";
+            const items = [...repo.comments]
+                .flatMap(([number, list]) => list.map((c) => this.commentView(repo, number, c)))
+                .filter((c) => c.updated_at >= since)
+                .sort((a, b) => a.created_at.localeCompare(b.created_at));
+            return json(res, 200, paged(items));
+        }
+        m = /^\/issues\/(\d+)\/labels\/(.+)$/.exec(rest);
+        if (m && method === "DELETE") {
+            if (!auth.canWrite(repo, "pull_requests")) return json(res, 403, { message: "Resource not accessible by integration" });
+            const pull = repo.pulls.get(Number(m[1]));
+            const label = decodeURIComponent(m[2] as string);
+            if (!pull?.labels?.includes(label)) return json(res, 404, { message: "Label does not exist" });
+            pull.labels = pull.labels.filter((l) => l !== label);
+            return json(
+                res,
+                200,
+                pull.labels.map((name) => ({ name })),
+            );
+        }
         m = /^\/issues\/(\d+)\/comments$/.exec(rest);
 
         if (m) {
@@ -671,7 +803,7 @@ export class FakeGitHub {
             if (method === "GET") return json(res, 200, paged(list.map((c) => this.commentView(repo, number, c))));
             if (method === "POST") {
                 if (!auth.canWrite(repo, "pull_requests")) return json(res, 403, { message: "Resource not accessible by integration" });
-                const comment = { id: ++this.ids, body: String(body.body), user: this.login(auth) };
+                const comment = { id: ++this.ids, body: String(body.body), user: this.login(auth), createdAt: new Date().toISOString() };
                 repo.comments.set(number, [...list, comment]);
                 return json(res, 201, this.commentView(repo, number, comment));
             }
@@ -732,10 +864,27 @@ export class FakeGitHub {
             case "/_fake/next-install":
                 this.nextInstall = b as never;
                 return json(res, 200, { ok: true });
+            case "/_fake/check-run":
+                this.checkRun(str("fullName"), str("sha"), str("name"), str("status"), b.conclusion ? str("conclusion") : null);
+                return json(res, 200, { ok: true });
+            case "/_fake/comment":
+                return json(
+                    res,
+                    200,
+                    this.comment(str("fullName"), Number(b.number), str("body"), str("user"), str("association") || "MEMBER"),
+                );
+            case "/_fake/label":
+                this.label(str("fullName"), Number(b.number), str("label"), b.on !== false);
+                return json(res, 200, { ok: true });
             case "/_fake/repo": {
                 const repo = this.repos.get(url.searchParams.get("fullName") ?? "");
                 if (!repo) return json(res, 404, { message: "Not Found" });
-                return json(res, 200, { statuses: repo.statuses, comments: Object.fromEntries(repo.comments), id: repo.id });
+                return json(res, 200, {
+                    statuses: repo.statuses,
+                    comments: Object.fromEntries(repo.comments),
+                    pulls: Object.fromEntries(repo.pulls),
+                    id: repo.id,
+                });
             }
             default:
                 return json(res, 404, { message: `No fake endpoint ${req.method} ${url.pathname}` });
@@ -751,6 +900,25 @@ export class FakeGitHub {
             return { ahead_by: await count(`${ref(base)}..${ref(head)}`), behind_by: await count(`${ref(head)}..${ref(base)}`) };
         }
         return { ahead_by: 1, behind_by: 0 };
+    }
+
+    /** What `head` changes since it left `base`, as a unified diff (as GitHub's three-dot compare and a pull request's diff are). */
+    private async diff(repo: FakeRepo, base: string, head: string): Promise<string> {
+        const ref = (x: string) => repo.branches.get(x) ?? x;
+        const given = repo.diffs.get(ref(head));
+        if (given !== undefined) return given;
+        if (repo.gitDir) return `${await git(["--git-dir", repo.gitDir, "diff", `${ref(base)}...${ref(head)}`])}\n`;
+        // No git: every commit changes something of its own.
+        return `diff --git a/src/change.ts b/src/change.ts\n--- a/src/change.ts\n+++ b/src/change.ts\n@@ -1 +1 @@\n-before\n+${ref(head)}\n`;
+    }
+
+    private async changedFiles(repo: FakeRepo, pull: FakePull): Promise<string[]> {
+        const given = repo.files.get(pull.number);
+        if (given) return given;
+        const base = repo.branches.get(pull.baseRef);
+        if (!repo.gitDir || !base) return [`src/${pull.headRef}.ts`];
+        const names = await git(["--git-dir", repo.gitDir, "diff", "--name-only", `${base}...${pull.headSha}`]);
+        return names ? names.split("\n") : [];
     }
 
     /** Git's smart HTTP protocol, through `git http-backend`, for tokens that may read the repository. */

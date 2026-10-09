@@ -22,6 +22,8 @@ const CONNECTION = "github-connection";
 const KEEP_DELIVERIES = 50;
 export const STATUS_CONTEXT = "Triagent";
 export const COMMENT_MARKER = "<!-- triagent-review -->";
+/** In Triagent's comment, what follows this is a note about what's happened since the review, replaced each time. */
+export const NOTE_MARKER = "<!-- triagent-since -->";
 
 export const ConnectionSchema = z.object({ installationId: z.number().int().positive(), repositoryId: z.number().int().positive() });
 
@@ -37,6 +39,11 @@ export interface GithubAccess {
     mode: "app" | "token";
     /** For reading pull requests and branches, and writing comments and statuses. */
     client: GitHubClient;
+    /**
+     * For reading a commit's check runs. The app's has a token of its own, asking for "Checks: read":
+     * an installation that hasn't accepted that permission can't be given one, and then only this fails.
+     */
+    checks: GitHubClient;
     repo: RepoTarget;
     cloneUrl: string;
     /**
@@ -154,6 +161,7 @@ export class Github {
                     pull_requests: "write",
                     statuses: "write",
                 }),
+                checks: this.app.clientFor(conn.installationId, conn.repositoryId, { checks: "read" }),
                 repo,
                 cloneUrl: this.cloneUrl(repo),
                 // Reviews only need to read the code. Never the server's own (cached) token: this one is
@@ -185,6 +193,7 @@ export class Github {
         return {
             mode: "token",
             client,
+            checks: client,
             repo,
             cloneUrl: this.cloneUrl(repo),
             tokenForJob: async () => ({ token, revoke: false }),
@@ -234,13 +243,38 @@ export class Github {
     }
 
     /** Write Triagent's comment on a pull request: the one it wrote before, if it's still there, or a new one. */
-    async upsertComment(project: Project, number: number, body: string, expect: RepoRef | null = null) {
+    upsertComment(project: Project, number: number, body: string, expect: RepoRef | null = null) {
+        return this.writeComment(project, number, body, expect, false);
+    }
+
+    /**
+     * Add a line to the end of Triagent's comment on a pull request, in place of the last such line (what's
+     * happened since the review: commits pushed, a review asked for). Does nothing when it hasn't commented.
+     * `note` is Markdown: escape anything from GitHub in it.
+     */
+    noteOnComment(project: Project, number: number, note: string) {
+        return this.writeComment(
+            project,
+            number,
+            (body) => `${body.split(NOTE_MARKER)[0]?.trimEnd()}\n\n${NOTE_MARKER}\n${note}`,
+            null,
+            true,
+        );
+    }
+
+    private async writeComment(
+        project: Project,
+        number: number,
+        body: string | ((current: string) => string),
+        expect: RepoRef | null,
+        onlyIfThere: boolean,
+    ) {
         const gh = await this.reporting(project, expect);
         const author = await gh.identity();
         const state = (await this.store.githubState.get(project.id)) as { comments?: Record<string, number> } | null;
         const known = state?.comments?.[String(number)] ?? null;
-        const out = await gh.client.upsertComment(gh.repo, number, COMMENT_MARKER, body, { author, known });
-        if (out.id !== known)
+        const out = await gh.client.upsertComment(gh.repo, number, COMMENT_MARKER, body, { author, known, onlyIfThere });
+        if (out && out.id !== known)
             await this.store.transaction(async (tx) => {
                 const current = ((await tx.githubState.get(project.id)) ?? {}) as { comments?: Record<string, number> };
                 const comments = { ...current.comments, [String(number)]: out.id };
@@ -258,8 +292,11 @@ export class Github {
         const conn = await this.connection(this.store, project);
         const app = await this.app.info();
         const installations = await this.store.githubInstallations.forWorkspace(project.workspaceId);
+        const state = (await this.store.githubState.get(project.id)) as { checksReadable?: boolean } | null;
         return {
             ...base,
+            // False once GitHub has refused to show this connection a commit's check runs (services/github/automation.ts).
+            checksReadable: state?.checksReadable ?? null,
             mode: conn ? "app" : base.connection.method === "token" ? "token" : "none",
             app: app ? { available: true, name: app.name, slug: app.slug, htmlUrl: app.htmlUrl } : { available: false },
             installations: installations.map(publicInstallation),

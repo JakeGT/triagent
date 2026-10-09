@@ -83,7 +83,7 @@ export function plain(s: string, max = 140): string {
     );
 }
 
-const code = (s: string) =>
+export const code = (s: string) =>
     `\`${s
         .replace(/`/g, "'")
         .replace(/[\r\n]/g, " ")
@@ -106,6 +106,8 @@ export interface CommentInput {
     /** Links into Triagent: the branch's issues, and one issue. */
     issuesUrl: string;
     issueUrl(id: string): string;
+    /** The project's Pull requests page, where Review now is. */
+    pullRequestsUrl?: string | null;
 }
 
 /** The one comment Triagent keeps on a pull request, updated after every review. */
@@ -143,6 +145,11 @@ export function commentBody(c: CommentInput): string {
         );
     lines.push(
         `[Triage these in Triagent](${href(c.issuesUrl)}). Reviewed commit ${code(c.commit.slice(0, 10))}. This comment is updated on every review.`,
+    );
+    // Later pushes aren't reviewed by themselves: how to ask.
+    lines.push(
+        "",
+        `New commits aren't reviewed until someone asks. To have this pull request reviewed again, comment \`/review\`, add the \`review\` label, or use ${c.pullRequestsUrl ? `[Review now in Triagent](${href(c.pullRequestsUrl)})` : "Review now in Triagent"}.`,
     );
     return lines.join("\n");
 }

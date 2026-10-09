@@ -48,7 +48,8 @@ describe("pull requests with a token: webhooks, checks and the baseline", () => 
         assert.ok(off.body.lastCheck.decisions.every((d: { action: string }) => d.action === "skipped"));
         assert.match(off.body.items.find((p: { number: number }) => p.number === 1).lastDecision.why, /automatic reviews are off/);
 
-        assert.equal((await automation({ enabled: true, pollMinutes: 1 })).status, 200);
+        // Reviewed as soon as they're ready: waiting for checks has tests of its own (review-triggers.test.ts).
+        assert.equal((await automation({ enabled: true, pollMinutes: 1, firstReview: "ready" })).status, 200);
         await env.t.services.automation.tick(later(2));
         let page = await prs();
         const one = page.items.find((p: { number: number }) => p.number === 1);
@@ -154,7 +155,7 @@ describe("more than a page of pull requests, and a project that moves to another
                 await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
                     method: "PATCH",
                     session: env.admin,
-                    body: { enabled: true },
+                    body: { enabled: true, firstReview: "ready" },
                 })
             ).status,
             200,
@@ -339,7 +340,7 @@ describe("pull requests from people outside the repository", () => {
         const settings = await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
             method: "PATCH",
             session: env.admin,
-            body: { enabled: true },
+            body: { enabled: true, firstReview: "ready" },
         });
         assert.equal(settings.body.reviewPullRequestsFrom, "collaborators");
         await check(); // the baseline, with nothing open
@@ -378,7 +379,11 @@ describe("pull requests from people outside the repository", () => {
         if (pr2) pr2.headSha = randomBytes(20).toString("hex");
         assert.equal(item(await check(), 2).status, "waiting for approval");
 
-        // Reviewing everyone's: the next push is queued without waiting.
+        // Reviewing everyone's: the next push is queued without waiting (once nothing earlier of it is queued:
+        // a push after a review that's queued or done waits to be asked for).
+        for (const j of await env.t.services.store.jobs.list({ statuses: ["queued"] }, 20))
+            await env.t.request(`/api/v1/w/acme/runs/${j.id}/cancel`, { method: "POST", session: env.admin, body: {} });
+        await env.t.services.runs.settled();
         await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
             method: "PATCH",
             session: env.admin,
@@ -531,7 +536,18 @@ describe("the GitHub App", () => {
             members: "read",
             pull_requests: "write",
             statuses: "write",
+            checks: "read",
         });
+        assert.deepEqual(manifest.default_events, [
+            "pull_request",
+            "push",
+            "create",
+            "delete",
+            "check_suite",
+            "check_run",
+            "status",
+            "issue_comment",
+        ]);
         // Someone else can't use the admin's form.
         assert.equal((await env.t.request(start.body.formUrl, { session: mallory })).status, 403);
 
@@ -726,7 +742,7 @@ describe("the GitHub App", () => {
             await env.t.request(`/api/v1/w/${ws}/p/app/settings/automation`, {
                 method: "PATCH",
                 session: ws === "acme" ? env.admin : mallory,
-                body: { enabled: true },
+                body: { enabled: true, firstReview: "ready" },
             });
         // A first check sets the baseline (nothing open yet).
         for (const ws of ["acme", "evil"]) {
@@ -821,6 +837,76 @@ describe("the GitHub App", () => {
         assert.equal(comments[1]?.user, `${env.fake.app?.slug}[bot]`);
         assert.match(comments[1]?.body ?? "", /Open Code Review/);
         assert.ok(env.fake.gitLog.some((g) => g.token.startsWith("ghs_")));
+    });
+
+    test("an installation that hasn't accepted Checks: read: reviews start when ready, and say so, until it has", async () => {
+        const installation = [...env.fake.installations.values()].find((i) => i.account.login === "acme") as {
+            id: number;
+            permissions: Set<string>;
+        };
+        const acme = await env.t.services.store.workspaces.bySlug("acme");
+        const project = (await env.t.services.store.projects.bySlug(acme?.id as string, "app")) as never;
+        const page = async (n: number) =>
+            (await env.t.request("/api/v1/w/acme/p/app/pull-requests", { session: env.admin })).body.items.find(
+                (p: { number: number }) => p.number === n,
+            );
+        await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
+            method: "PATCH",
+            session: env.admin,
+            body: { firstReview: "checks" },
+        });
+        // The app was created before it asked for the permission: a token that asks for it is refused.
+        installation.permissions.delete("checks");
+        const second = await env.fake.commit("acme/app", "second", { "src/s.ts": "s\n" }, "s", "main");
+        await env.fake.openPull("acme/app", { number: 2, headRef: "second" });
+        env.fake.checkRun("acme/app", second, "build", "in_progress");
+        await env.t.services.automation.checkPulls(project);
+        assert.deepEqual(
+            [(await page(2)).lastDecision.action, (await page(2)).lastDecision.why],
+            ["queued", "can't see checks, so reviewing when ready"],
+        );
+        let settings = (await env.t.request("/api/v1/w/acme/p/app/settings/github", { session: env.admin })).body;
+        assert.equal(settings.checksReadable, false);
+        assert.ok(settings.app.htmlUrl);
+        // Everything else the app does still works: only the checks are asked for with their own token.
+        assert.equal((await env.t.request("/api/v1/w/acme/p/app/pull-requests", { session: env.admin })).body.lastCheck.error, undefined);
+
+        // Accepted on the installation: checks are waited for, and their events (through the app's webhook) start the review.
+        installation.permissions.add("checks");
+        const third = await env.fake.commit("acme/app", "third", { "src/t.ts": "t\n" }, "t", "main");
+        await env.fake.openPull("acme/app", { number: 3, headRef: "third" });
+        env.fake.checkRun("acme/app", third, "build", "in_progress");
+        await env.t.services.automation.checkPulls(project);
+        assert.equal((await page(3)).status, "waiting for checks (1 of 1)");
+        settings = (await env.t.request("/api/v1/w/acme/p/app/settings/github", { session: env.admin })).body;
+        assert.equal(settings.checksReadable, true);
+        env.fake.checkRun("acme/app", third, "build", "completed", "success");
+        const delivered = await env.fake.deliver(
+            `${env.url}/api/v1/github/app/webhook`,
+            "check_suite",
+            {
+                action: "completed",
+                check_suite: { head_sha: third },
+                installation: { id: installation.id },
+                repository: { id: env.fake.repo("acme/app").id, full_name: "acme/app" },
+            },
+            env.fake.app?.webhookSecret as string,
+        );
+        assert.equal(delivered.status, 200);
+        await env.t.services.runs.settled();
+        assert.equal((await page(3)).lastDecision.action, "queued");
+        assert.match((await page(3)).lastDecision.why, /its check has passed/);
+        await eventually(
+            async () => (await env.t.services.store.jobs.list({ statuses: ["queued", "running"] }, 10)).length === 0,
+            "the reviews to finish",
+        );
+        await env.t.services.runs.settled();
+        assert.equal((await page(3)).reviewed, true);
+        await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
+            method: "PATCH",
+            session: env.admin,
+            body: { firstReview: "ready" },
+        });
     });
 
     test("each review's token is its own, and is revoked however the review ends: cancelled, or its runner lost", async () => {

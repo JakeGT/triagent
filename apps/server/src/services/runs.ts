@@ -429,7 +429,16 @@ export class Runs {
             running: active.filter((j) => j.status === "running" && mine(j)).map((j) => this.view(j, projects.get(j.projectId) ?? null)),
             queued: active
                 .filter((j) => j.status === "queued" && mine(j))
-                .map((j) => this.view(j, projects.get(j.projectId) ?? null, reasons.get(waitsOn(j)) ?? busy)),
+                .map((j) =>
+                    this.view(
+                        j,
+                        projects.get(j.projectId) ?? null,
+                        reasons.get(waitsOn(j)) ??
+                            (active.some((r) => r.status === "running" && r.projectId === j.projectId && r.dedupeKey === j.dedupeKey)
+                                ? "Waiting for the review of the same thing that's running to finish."
+                                : busy),
+                    ),
+                ),
             recent,
             counts: {
                 running: active.filter((j) => j.status === "running" && mine(j)).length,
@@ -669,6 +678,8 @@ export class Runs {
                 const workspace = await tx.workspaces.get(workspaceId);
                 if (!workspace) continue;
                 for (const job of queuedIn.get(workspaceId) ?? []) {
+                    // A review of the same thing (a pull request, say) is running: this one waits for it.
+                    if (running.some((r) => r.projectId === job.projectId && r.dedupeKey === job.dedupeKey)) continue;
                     const project = await tx.projects.get(job.projectId);
                     if (!project) continue;
                     // Which models depends on the run, its kind and its project; a job whose models aren't ready
@@ -1387,6 +1398,7 @@ export class Runs {
                         commit: sha,
                         issuesUrl: this.issuesUrl(workspace, project, job.branch),
                         issueUrl: (id) => this.issuesUrl(workspace, project, job.branch, id),
+                        pullRequestsUrl: `${this.core.config.publicOrigin}/w/${encodeURIComponent(workspace.slug)}/p/${encodeURIComponent(project.slug)}/pull-requests`,
                     }),
                     job.repository,
                 ),

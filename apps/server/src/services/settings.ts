@@ -5,6 +5,7 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { MAX_MODELS } from "../domain/merge.ts";
+import { MAX_SKIP_PATH_LENGTH, MAX_SKIP_PATHS } from "../domain/review-triggers.ts";
 import { badRequest, conflict } from "../errors.ts";
 import type { JobKind, Project, Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
@@ -56,6 +57,29 @@ export const AutomationSchema = z.object({
      */
     reviewPullRequestsFrom: z.enum(["collaborators", "everyone"]),
     /**
+     * When a pull request gets its first review by itself: once it's ready and the checks on its head
+     * commit have passed ("checks"), as soon as it's ready ("ready"), or never ("manual": only when
+     * someone asks). Later pushes are never reviewed until someone asks.
+     */
+    firstReview: z.enum(["checks", "ready", "manual"]),
+    /**
+     * Patterns for files that don't need a review (`docs/**`, `*.lock`, `*.md`): a pull request that
+     * changes only such files isn't reviewed automatically. Matched by domain/review-triggers.ts.
+     */
+    skipPaths: z
+        .array(
+            z
+                .string()
+                .trim()
+                .min(1)
+                .max(MAX_SKIP_PATH_LENGTH)
+                // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what's refused
+                .regex(/^[^\u0000-\u001f\u007f]+$/, "can't contain control characters"),
+        )
+        .max(MAX_SKIP_PATHS),
+    /** Don't review pull requests opened by bots (Dependabot and the like) automatically. */
+    skipBots: z.boolean(),
+    /**
      * The models reviews run with, as ids of the workspace's favourite models (Settings → Models): `all` for
      * every review, and `pr`, `changes` and `full` for one kind of review, which wins. A set left out or
      * empty falls through: the kind's, then `all`, then the workspace's default model. With several, each
@@ -87,6 +111,9 @@ export const AUTOMATION_DEFAULTS: Automation = {
     fullScanTimeoutMinutes: null,
     stallMinutes: 30,
     reviewPullRequestsFrom: "collaborators",
+    firstReview: "checks",
+    skipPaths: [],
+    skipBots: true,
     models: {},
 };
 

@@ -1,6 +1,8 @@
 // A small GitHub REST client on fetch: just the calls Triagent makes. It never logs a token, and its
 // errors say what to check, in words for the person reading the settings page.
 
+import { MAX_DIFF_BYTES } from "../../domain/review-triggers.ts";
+
 export class GitHubError extends Error {
     readonly status: number;
 
@@ -35,7 +37,8 @@ export interface Pull {
     state: string;
     draft?: boolean;
     html_url: string;
-    user: { login: string } | null;
+    user: { login: string; type?: string } | null;
+    labels?: { name?: string }[];
     /** How the author relates to the repository: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, NONE… */
     author_association?: string;
     head: { ref: string; sha: string; repo: { full_name: string } | null };
@@ -53,11 +56,14 @@ export interface Repo {
 
 export type CommitState = "pending" | "success" | "failure" | "error";
 
-interface Comment {
+export interface Comment {
     id: number;
     body?: string;
     user?: { login?: string } | null;
+    /** How the comment's author relates to the repository (as for a pull request's author). */
+    author_association?: string;
     issue_url?: string;
+    created_at?: string;
 }
 
 /** How the client authenticates: a personal access token, an installation token, an app JWT or a user's token. */
@@ -120,6 +126,54 @@ export class GitHubClient {
         return data as T;
     }
 
+    /**
+     * A diff, as text (GitHub's diff media type), or null when it's too large: GitHub refuses one over its
+     * own limits (406), and nothing over `MAX_DIFF_BYTES` is read.
+     */
+    private async diff(path: string): Promise<string | null> {
+        let res: Response;
+        try {
+            res = await fetch(`${this.apiUrl}${path}`, {
+                headers: {
+                    Accept: "application/vnd.github.diff",
+                    Authorization: `Bearer ${await this.auth()}`,
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "triagent",
+                },
+                signal: AbortSignal.timeout(20_000),
+            });
+        } catch (err) {
+            if (err instanceof GitHubError) throw err;
+            throw new GitHubError(0, `Couldn't reach GitHub (${(err as Error).message}).`);
+        }
+        if (res.status === 406 || res.status === 422) {
+            await res.body?.cancel().catch(() => {});
+            return null;
+        }
+        if (!res.ok) {
+            await res.body?.cancel().catch(() => {});
+            throw new GitHubError(res.status, `GitHub said ${res.status} for a diff. ${this.hint(res.status)}`.trim());
+        }
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        const reader = res.body?.getReader();
+        try {
+            for (;;) {
+                const part = await reader?.read();
+                if (!part || part.done) break;
+                size += part.value.byteLength;
+                if (size > MAX_DIFF_BYTES) {
+                    await reader?.cancel().catch(() => {});
+                    return null;
+                }
+                chunks.push(part.value);
+            }
+        } catch (err) {
+            throw new GitHubError(0, `Couldn't read a diff from GitHub (${(err as Error).message}).`);
+        }
+        return Buffer.concat(chunks).toString("utf8");
+    }
+
     /** Every page of a list (100 at a time), up to `max` items. */
     async all<T>(path: string, max = 5000, pick?: (page: unknown) => T[]): Promise<T[]> {
         const out: T[] = [];
@@ -166,18 +220,82 @@ export class GitHubClient {
     }
 
     /**
+     * What a pull request changes at `head`: the diff from where it left `base` (as GitHub shows a pull
+     * request's), for that commit whatever the pull request's head is by now. Null when it's too large.
+     */
+    compareDiff(t: RepoTarget, base: string, head: string): Promise<string | null> {
+        return this.diff(`${this.r(t)}/compare/${seg(base)}...${seg(head)}`);
+    }
+
+    /** A pull request's diff as it is now. Null when it's too large. */
+    pullDiff(t: RepoTarget, number: number): Promise<string | null> {
+        return this.diff(`${this.r(t)}/pulls/${number}`);
+    }
+
+    /**
+     * The files a pull request changes (a renamed file under both names), or null when there are more
+     * than `max`.
+     */
+    async pullFiles(t: RepoTarget, number: number, max = 300): Promise<string[] | null> {
+        const files = await this.all<{ filename: string; previous_filename?: string }>(`${this.r(t)}/pulls/${number}/files`, max + 1);
+        if (files.length > max) return null;
+        return files.flatMap((f) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]));
+    }
+
+    /** The check runs on a commit (the latest of each name), up to 300. */
+    checkRuns(t: RepoTarget, sha: string): Promise<{ name: string; status: string; conclusion: string | null }[]> {
+        return this.all(
+            `${this.r(t)}/commits/${encodeURIComponent(sha)}/check-runs?filter=latest`,
+            300,
+            (page) => (page as { check_runs: never[] }).check_runs,
+        );
+    }
+
+    /** The commit statuses on a commit: the latest of each context (the first 100). */
+    async statuses(
+        t: RepoTarget,
+        sha: string,
+    ): Promise<{ context: string; state: string; description?: string | null; target_url?: string | null }[]> {
+        const combined = await this.request<{ statuses?: never[] }>(
+            "GET",
+            `${this.r(t)}/commits/${encodeURIComponent(sha)}/status?per_page=100`,
+        );
+        return Array.isArray(combined.statuses) ? combined.statuses : [];
+    }
+
+    /** Comments on the repository's issues and pull requests changed since `since`, oldest first: one page of up to 100. */
+    commentsSince(t: RepoTarget, since: string): Promise<Comment[]> {
+        return this.request(
+            "GET",
+            `${this.r(t)}/issues/comments?sort=created&direction=asc&since=${encodeURIComponent(since)}&per_page=100`,
+        );
+    }
+
+    createComment(t: RepoTarget, number: number, body: string): Promise<{ id: number }> {
+        return this.request("POST", `${this.r(t)}/issues/${number}/comments`, { body });
+    }
+
+    /** Take a label off a pull request (fine if it's already gone). */
+    async removeLabel(t: RepoTarget, number: number, label: string): Promise<void> {
+        await this.request("DELETE", `${this.r(t)}/issues/${number}/labels/${encodeURIComponent(label)}`).catch((err: unknown) => {
+            if (!(err instanceof GitHubError && err.status === 404)) throw err;
+        });
+    }
+
+    /**
      * Our comment on a pull request: the one we remember (`known`) if it's still ours, otherwise the first
      * that `author` wrote starting with the hidden marker (so not a reply quoting it); updated, or created
      * if there's none. Comments by anyone else are never touched: the pull request's author could have
-     * planted one with the marker.
+     * planted one with the marker. `body` can be worked out from the comment as it is (to add a line to
+     * it); with `onlyIfThere`, nothing is created when there's none, and the answer is null.
      */
     async upsertComment(
         t: RepoTarget,
         number: number,
         marker: string,
-        body: string,
-        opts: { author: string; known?: number | null },
-    ): Promise<{ id: number; created: boolean }> {
+        body: string | ((current: string) => string),
+        opts: { author: string; known?: number | null; onlyIfThere?: boolean },
+    ): Promise<{ id: number; created: boolean } | null> {
         const ours = (c: Comment | null): c is Comment =>
             Boolean(
                 c &&
@@ -200,11 +318,13 @@ export class GitHubClient {
             mine = comments.find(ours) ?? null;
             if (comments.length < 100) break;
         }
+        const text = typeof body === "function" ? body(mine?.body ?? "") : body;
         if (mine) {
-            await this.request("PATCH", `${this.r(t)}/issues/comments/${mine.id}`, { body });
+            if (text !== mine.body) await this.request("PATCH", `${this.r(t)}/issues/comments/${mine.id}`, { body: text });
             return { id: mine.id, created: false };
         }
-        const made = await this.request<{ id: number }>("POST", `${this.r(t)}/issues/${number}/comments`, { body });
+        if (opts.onlyIfThere) return null;
+        const made = await this.createComment(t, number, text);
         return { id: made.id, created: true };
     }
 
