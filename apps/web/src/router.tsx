@@ -52,7 +52,9 @@ async function loadMe(queryClient: QueryClient, href: string): Promise<Me> {
         setCsrfToken(me.csrf);
         return me;
     } catch (err) {
-        if (isApiError(err, 401)) throw redirect({ to: "/sign-in", search: { redirect: href } });
+        // Not signed in: the front door shows what Triagent is; anywhere else asks you to sign in and comes back.
+        if (isApiError(err, 401))
+            throw href === "/" ? redirect({ to: "/welcome" }) : redirect({ to: "/sign-in", search: { redirect: href } });
         throw err;
     }
 }
@@ -74,6 +76,13 @@ const signInRoute = createRoute({
         return { ...(redirect ? { redirect } : {}), ...(error ? { error } : {}) };
     },
     component: lazyRouteComponent(() => import("@/features/auth/sign-in-page"), "SignInPage"),
+});
+
+/** What Triagent is, with a demo to try: public, and where the front door leads when you're not signed in. */
+const welcomeRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/welcome",
+    component: lazyRouteComponent(() => import("@/features/landing/landing-page"), "LandingPage"),
 });
 
 /** Signed in at the identity provider, but no account here and no invite. */
@@ -406,6 +415,7 @@ const projectSettingsRoutes = [
 
 const routeTree = rootRoute.addChildren([
     signInRoute,
+    welcomeRoute,
     inviteRequiredRoute,
     reauthenticatedRoute,
     changePasswordRoute,

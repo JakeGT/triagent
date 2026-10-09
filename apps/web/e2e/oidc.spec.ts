@@ -174,8 +174,8 @@ test("signing out ends the session here and at the provider, then comes back to 
     await signIn(page, /\/w\/ada$/);
     await page.getByTestId("user-menu").click();
     await page.getByRole("menuitem", { name: "Sign out" }).click();
-    // The provider's sign-out page sends people back to the front page, which asks them to sign in.
-    await expect(page).toHaveURL(/\/sign-in/);
+    // The provider's sign-out page sends people back to the front door, which shows the landing page to someone signed out.
+    await expect(page).toHaveURL(/\/welcome$/);
     await page.goto("/w/ada");
     await expect(page).toHaveURL(/\/sign-in/);
 });
