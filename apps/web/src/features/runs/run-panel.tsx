@@ -153,22 +153,25 @@ function RunDetailView({ runId }: { runId: string }) {
                         <dt className="text-muted-foreground">Models</dt>
                         <dd>
                             {r.result?.models ? (
-                                <ul className="grid gap-0.5" data-testid="run-models">
-                                    {r.result.models.map((m) => (
-                                        <li key={m.label}>
-                                            <Badge variant="outline" className="font-mono font-normal">
-                                                {m.label}
-                                            </Badge>{" "}
-                                            {m.status === "done" || m.status === "partial"
-                                                ? `${plural(m.total ?? 0, "finding")}${m.status === "partial" ? " (partly)" : ""}`
-                                                : m.status === "cancelled"
-                                                  ? "cancelled"
-                                                  : `failed${m.error ? ` (${m.error})` : ""}`}
-                                            {m.tokens !== null && `, ${m.tokens.toLocaleString("en-GB")} tokens`}
-                                            {m.seconds !== null && `, ${duration(m.seconds)}`}
-                                        </li>
-                                    ))}
-                                </ul>
+                                <>
+                                    <ul className="grid gap-0.5" data-testid="run-models">
+                                        {r.result.models.map((m) => (
+                                            <li key={m.label}>
+                                                <Badge variant="outline" className="font-mono font-normal">
+                                                    {m.label}
+                                                </Badge>{" "}
+                                                {m.status === "done" || m.status === "partial"
+                                                    ? `${plural(m.total ?? 0, "finding")}${m.status === "partial" ? " (partly)" : ""}`
+                                                    : m.status === "cancelled"
+                                                      ? "cancelled"
+                                                      : `failed${m.error ? ` (${m.error})` : ""}`}
+                                                {m.tokens !== null && `, ${m.tokens.toLocaleString("en-GB")} tokens`}
+                                                {m.seconds !== null && `, ${duration(m.seconds)}`}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    {r.requestedModels && <p data-testid="run-models-chosen">Chosen for this review.</p>}
+                                </>
                             ) : (
                                 <span data-testid="run-models">
                                     <ModelChips labels={runModelLabels(r)} /> in turn

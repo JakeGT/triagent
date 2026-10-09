@@ -38,10 +38,18 @@ export function modelOptions(choices: ModelChoices | undefined): ModelOption[] {
     return options;
 }
 
-/** What people call the models with these ids, in order. One that's gone is left out. */
+/** What to call a model that was chosen once but isn't on offer now (a favourite removed, the allowance taken away). */
+const goneLabel = (id: string) => (id === "instance" ? "Instance model" : "A model that isn't a favourite any more");
+
+/**
+ * What people call the models with these ids, in order. One that's gone is still named (as the list to
+ * tick names it), so a review that would wait for it, or fail, isn't shown as if it used the others only.
+ * Nothing until the choices are known.
+ */
 export function modelLabels(choices: ModelChoices | undefined, ids: readonly string[]): string[] {
+    if (!choices) return [];
     const options = modelOptions(choices);
-    return ids.flatMap((id) => options.find((o) => o.id === id)?.label ?? []);
+    return ids.map((id) => options.find((o) => o.id === id)?.label ?? goneLabel(id));
 }
 
 /** Models as chips: what a review ran with, or will. */
@@ -88,7 +96,7 @@ export function ModelChoice({
         .filter((v) => !options.some((o) => o.id === v))
         .map((v) => ({
             id: v,
-            label: v === "instance" ? "Instance model" : "A model that isn't a favourite any more",
+            label: goneLabel(v),
             detail: "Not available now: untick it.",
             notReady: null,
         }));

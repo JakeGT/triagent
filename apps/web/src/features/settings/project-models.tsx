@@ -5,6 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CheckField } from "@/components/field";
+import { LoadError } from "@/components/load-state";
 import { ModelChoice, modelLabels, modelOptions } from "@/components/model-choice";
 import { Switch } from "@/components/ui/switch";
 import { modelsQuery } from "@/lib/queries";
@@ -74,16 +75,19 @@ export function ProjectModels({
     onChange(next: ModelSets): void;
 }) {
     const choices = useQuery(modelsQuery(ws));
+    // The lists appear once the favourites are known (nothing is shown disabled meanwhile: it would fade in).
+    if (!choices.data)
+        return choices.isError ? (
+            <LoadError error={choices.error} title="Couldn't load the models" onRetry={() => choices.refetch()} />
+        ) : null;
     const options = modelOptions(choices.data);
-    const max = choices.data?.max ?? 3;
-    const usual = modelLabels(choices.data, choices.data?.fallback ?? []).join(", ");
+    const max = choices.data.max;
+    const usual = modelLabels(choices.data, choices.data.fallback).join(", ");
     const settings = (
         <Link to="/w/$ws/settings/models" params={{ ws }} className="underline">
             Settings → Models
         </Link>
     );
-    // The lists appear once the favourites are known (nothing is shown disabled meanwhile: it would fade in).
-    if (!choices.data) return null;
     if (!options.length)
         return <p className="text-sm">This workspace has no favourite models yet. Add one in {settings}, then choose here.</p>;
     return (

@@ -119,6 +119,23 @@ test("a project's review models: a set for every review, and one for pull reques
     expect((await admin.get(api)).models).toEqual({ all: [second] });
 });
 
+test("a project's review models say so when the favourites can't be loaded, and can be tried again", async ({ page, admin }) => {
+    const { ws, project } = await seedProject(admin);
+    await withKey(admin, ws);
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    const models = `**/api/v1/w/${ws}/models`;
+    await page.route(models, (route) => route.fulfill({ status: 400, json: { error: "The models can't be listed now." } }));
+    await page.goto(`/w/${ws}/p/${project}/settings/automation`);
+    const failed = page.getByRole("alert").filter({ hasText: "Couldn't load the models" });
+    await expect(failed).toContainText("The models can't be listed now.");
+    await expect(page.getByRole("group", { name: "For every review" })).toHaveCount(0);
+
+    await page.unroute(models);
+    await failed.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByRole("group", { name: "For every review" }).getByRole("checkbox", { name: "fake/model" })).toBeVisible();
+    await expect(failed).toHaveCount(0);
+});
+
 test("the default favourite a project uses can't be removed without saying what happens to the project", async ({ page, admin }) => {
     const { ws, project } = await seedProject(admin);
     const usual = await withKey(admin, ws);
@@ -212,6 +229,7 @@ test("Start a review: the models are the project's for that kind of review, and 
     await expect(panel.getByText("Done", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(panel.getByTestId("run-models")).toContainText("fake/wordy-extra");
     await expect(panel.getByTestId("run-models")).toContainText("Second");
+    await expect(panel.getByTestId("run-models-chosen")).toHaveText("Chosen for this review.");
     const id = page.url().split("/").at(-1) as string;
     await expect(page.getByTestId(`recent-${id}`).getByTestId("run-model-chips")).toHaveText("Models: fake/wordy-extraSecond");
     await axe(page, "a run with several models");
