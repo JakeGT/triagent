@@ -71,6 +71,7 @@ test("fields side by side line up, and are wired to their labels and description
             "/settings/projects",
             "/settings/members",
             "/settings/users",
+            "/settings/models",
             "/settings/model-prices",
             `/p/${project}/branches`,
             `/p/${project}/compare`,
@@ -85,19 +86,50 @@ test("fields side by side line up, and are wired to their labels and description
     }
 });
 
-test("the review model form lines up for every kind of provider", async ({ page, admin }) => {
+test("the provider form lines up for every kind of provider", async ({ page, admin }) => {
     const { ws } = await seedProject(admin);
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    const labels = ["OpenAI", "Amazon Bedrock", "Azure OpenAI", "Custom (OpenAI-compatible)"];
     for (const width of [1440, 700]) {
         await page.setViewportSize({ width, height: 900 });
-        for (const path of ["/settings/review-model", "/settings/instance-model"]) {
-            await page.goto(`/w/${ws}${path}`);
-            for (const label of ["OpenAI", "Amazon Bedrock", "Azure OpenAI", "Custom (OpenAI-compatible)"]) {
-                await page.getByLabel("Provider").selectOption({ label });
-                await expectAligned(page, `${path} with ${label} at ${width}px`);
-                await expectWired(page, `${path} with ${label}`);
-            }
+        // A workspace's providers each open to their own settings and keys.
+        await page.goto(`/w/${ws}/settings/models`);
+        for (const label of labels) {
+            await page.getByLabel("Add a provider").selectOption({ label });
+            await page.getByRole("button", { name: "Add provider" }).click();
+            await expect(page.getByTestId("provider-detail").getByRole("heading", { name: `${label} keys` })).toBeVisible();
+            await expectAligned(page, `/settings/models with ${label} at ${width}px`);
+            await expectWired(page, `/settings/models with ${label}`);
         }
+        await page.goto(`/w/${ws}/settings/instance-model`);
+        for (const label of labels) {
+            await page.getByLabel("Provider").selectOption({ label });
+            await expectAligned(page, `/settings/instance-model with ${label} at ${width}px`);
+            await expectWired(page, `/settings/instance-model with ${label}`);
+        }
+    }
+});
+
+test("the models page lines up with providers connected and favourites listed", async ({ page, admin }) => {
+    const { ws } = await seedProject(admin);
+    const settings = `/api/v1/w/${ws}/settings`;
+    await admin.put(`${settings}/review-model/keys/openrouter`, { key: `sk-or-v1-${"x".repeat(40)}` });
+    await admin.patch(`${settings}/review-model/providers/bedrock`, { region: "eu-west-2" });
+    await admin.post(`${settings}/models/favourites`, { provider: "openrouter", model: "fake/model", name: "Fast" });
+    await admin.post(`${settings}/models/favourites`, { provider: "bedrock", model: "global.anthropic.claude-opus-4-6-v1" });
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    for (const width of [1440, 1024, 700, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`/w/${ws}/settings/models`);
+        await expect(page.getByTestId("favourites").getByRole("row")).toHaveCount(4);
+        await page.getByRole("button", { name: "Edit Amazon Bedrock" }).click();
+        await expect(page.getByTestId("provider-detail")).toBeVisible();
+        await expectAligned(page, `/settings/models at ${width}px`);
+        await expectWired(page, "/settings/models");
+        expect(
+            await page.evaluate(() => document.documentElement.scrollWidth),
+            `width of the models page at ${width}px`,
+        ).toBeLessThanOrEqual(width);
     }
 });
 
@@ -143,9 +175,10 @@ test("no page is wider than a phone", async ({ page, admin }) => {
         expect(wide, `width of ${path}`).toBeLessThanOrEqual(390);
     }
     // Long model ids among Bedrock's suggestions.
-    await page.goto(`/w/${ws}/settings/review-model`);
-    await page.getByLabel("Provider").selectOption({ label: "Amazon Bedrock" });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth), "width of the review model page").toBeLessThanOrEqual(390);
+    await admin.patch(`/api/v1/w/${ws}/settings/review-model/providers/bedrock`, { region: "eu-west-2" });
+    await page.goto(`/w/${ws}/settings/models`);
+    await expect(page.getByTestId("add-favourite").getByTestId("model-suggestions")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), "width of the models page").toBeLessThanOrEqual(390);
 });
 
 /**
@@ -201,7 +234,7 @@ test("drop-down options are readable in light and dark mode", async ({ page, adm
     for (const theme of ["dark", "light"]) {
         await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
         await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
-        for (const path of ["/settings/tokens", "/settings/review-model"]) {
+        for (const path of ["/settings/tokens", "/settings/models"]) {
             await page.goto(`/w/${ws}${path}`);
             await expect(page.locator("select").first()).toBeVisible();
             expect(await worstOptionContrast(page), `option contrast on ${path} (${theme})`).toBeGreaterThanOrEqual(4.5);

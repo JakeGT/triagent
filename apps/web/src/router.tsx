@@ -187,9 +187,17 @@ const wsSettingsRoutes = [
         lazyRouteComponent(() => import("@/features/settings/projects-settings"), "ProjectsSettings"),
     ),
     settingsPage(
-        "/review-model",
-        lazyRouteComponent(() => import("@/features/settings/review-model-settings"), "ReviewModelSettings"),
+        "/models",
+        lazyRouteComponent(() => import("@/features/settings/models-settings"), "ModelsSettings"),
     ),
+    // The page's old address: links kept elsewhere still arrive.
+    createRoute({
+        getParentRoute: () => wsSettingsRoute,
+        path: "/review-model",
+        beforeLoad: ({ params }) => {
+            throw redirect({ to: "/w/$ws/settings/models", params: { ws: params.ws }, replace: true });
+        },
+    }),
     settingsPage(
         "/model-prices",
         lazyRouteComponent(() => import("@/features/settings/model-prices-settings"), "ModelPricesSettings"),

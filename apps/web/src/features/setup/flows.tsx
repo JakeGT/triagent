@@ -16,13 +16,13 @@ import { Switch } from "@/components/ui/switch";
 import { AppearanceSections } from "@/features/settings/appearance-settings";
 import { GithubAppConnection, TestConnection } from "@/features/settings/github-app-connection";
 import { AddPeople } from "@/features/settings/members-settings";
-import { ModelProviderForm } from "@/features/settings/model-provider-form";
+import { ModelLibrary } from "@/features/settings/model-library";
 import { NotificationsForm } from "@/features/settings/notifications-settings";
 import { GithubTokenSection, WebhookSection } from "@/features/settings/project-github";
 import { CreateProjectForm } from "@/features/settings/projects-settings";
 import { StatusNote } from "@/features/settings/settings-page";
 import { api, errorMessage, paths } from "@/lib/api";
-import { allowanceQuery, insightKeys } from "@/lib/insights-queries";
+import { allowanceQuery } from "@/lib/insights-queries";
 import { automationQuery, githubQuery, keys, membersQuery, meQuery, projectsQuery, reviewModelQuery } from "@/lib/queries";
 import { useMe, useProject, useWorkspace } from "@/lib/session";
 import { isExample, tutorialApi } from "@/lib/tutorial";
@@ -119,54 +119,38 @@ export function useAccountFlow(): SetupFlow {
 export function useWorkspaceFlow(): SetupFlow {
     const me = useMe();
     const { ws, workspace, can } = useWorkspace();
-    const queryClient = useQueryClient();
     const navigate = useNavigate();
     const model = useQuery(reviewModelQuery(ws));
     const allowance = useQuery(allowanceQuery(ws));
     const projects = useQuery(projectsQuery(ws));
     const personal = workspace.kind === "personal";
     const members = useQuery({ ...membersQuery(ws), enabled: !personal && can("members") });
-    const refresh = () =>
-        Promise.all([
-            queryClient.invalidateQueries({ queryKey: keys.wsSettings(ws, "review-model") }),
-            queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) }),
-        ]);
     const modelReady = Boolean(model.data?.ready || allowance.data?.now.ready);
     const own = (projects.data ?? []).filter((p) => !isExample(me, ws, p.slug));
 
     const steps: SetupStep[] = [
         {
             id: "model",
-            title: "Review model & key",
+            title: "Models",
             need: "required",
             done: modelReady,
             body: model.data ? (
                 <>
                     <p className="text-sm">
-                        Open Code Review asks a model to review the code. Choose a provider and model, and add the provider's API key: it's
-                        stored encrypted and never shown again.
+                        Open Code Review asks a model to review the code. Connect a provider with its API key (stored encrypted and never
+                        shown again), then choose one of its models: the first is the default that reviews use. More models, from any
+                        provider, can be added now or later in Settings → Models.
                     </p>
                     <StatusNote data-testid="setup-model-status">
                         {model.data.ready
                             ? `Ready: reviews use ${model.data.model} through ${model.data.providers.find((p) => p.id === model.data?.provider)?.name ?? model.data.provider}.`
                             : allowance.data?.now.ready
                               ? `Ready: reviews use ${allowance.data.now.model} through the instance's key.`
-                              : `Not ready yet: add ${model.data.missing ?? "an API key"}.`}
+                              : model.data.favourites.length
+                                ? `Not ready yet: add ${model.data.missing ?? "an API key"}.`
+                                : "Not ready yet: connect a provider and choose a model."}
                     </StatusNote>
-                    <ModelProviderForm
-                        data={model.data}
-                        base={`${paths.workspace(ws)}/settings/review-model`}
-                        ws={ws}
-                        queryKey={keys.wsSettings(ws, "review-model")}
-                        scope="workspace"
-                        canConfigure={can("configure")}
-                        canSetSecrets={can("secrets")}
-                        onSaved={(m) => {
-                            queryClient.setQueryData(keys.wsSettings(ws, "review-model"), m);
-                            void queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) });
-                        }}
-                        refresh={refresh}
-                    />
+                    <ModelLibrary data={model.data} setup />
                 </>
             ) : (
                 <p className="text-sm text-muted-foreground">Loading…</p>

@@ -199,8 +199,8 @@ test("reviews say why they're waiting", async ({ page, admin }) => {
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
     await page.goto(`${base}/runs`);
     const banner = page.getByTestId("reviews-waiting");
-    await expect(banner).toContainText("Add an OpenRouter API key in Settings → Review model & keys.");
-    await expect(banner.getByRole("link", { name: /Review model/ })).toBeVisible();
+    await expect(banner).toContainText("Add an OpenRouter API key in Settings → Models.");
+    await expect(banner.getByRole("link", { name: "Open Models" })).toBeVisible();
     await expect(page.getByRole("cell", { name: /Add an OpenRouter API key/ })).toBeVisible();
     // The rail counts it.
     await expect(page.getByRole("link", { name: /Runs/ })).toContainText("1");

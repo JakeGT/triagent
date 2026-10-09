@@ -1,5 +1,6 @@
 // From nothing to triage: create an organisation and a project, then upload a report with a preview.
 
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { ADMIN_PASSWORD, ADMIN_USER } from "./constants";
 import { expect, signInPage, test, unique } from "./fixtures";
@@ -17,10 +18,10 @@ test("create an organisation and a project, then upload a report after previewin
     await dialog.getByRole("button", { name: "Create organisation" }).click();
     await expect(page).toHaveURL(new RegExp(`/w/${slug}$`));
 
-    // The new workspace's guided setup opens, at what it needs first: a review model and key.
+    // The new workspace's guided setup opens, at what it needs first: a model to review with.
     const setup = page.getByTestId("setup-dialog");
     await expect(setup.getByRole("heading", { name: "Set up Acme" })).toBeVisible();
-    await expect(setup.getByRole("heading", { name: "Review model & key", level: 3 })).toBeVisible();
+    await expect(setup.getByRole("heading", { name: "Models", level: 3 })).toBeVisible();
     await expect(setup.getByTestId("setup-progress")).toHaveText("0 of 2 required steps done.");
     await setup.getByRole("button", { name: "Do this later" }).click();
     await expect(setup.getByRole("heading", { name: "People", level: 3 })).toBeVisible();
@@ -58,6 +59,41 @@ test("create an organisation and a project, then upload a report after previewin
     await page.getByRole("link", { name: /^Issues/ }).click();
     await expect(page.getByTestId("issues-summary")).toHaveText(/^10 issues/);
     await expect(page.getByRole("link", { name: /Issues\s*10/ })).toBeVisible();
+});
+
+test("the workspace setup's Models step: connect a provider, and its model is the default; more can be added", async ({ page }) => {
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    await page.goto("/");
+    const slug = unique("models");
+    await page.getByRole("button", { name: /Workspace/ }).click();
+    await page.getByRole("menuitem", { name: /Create an organisation/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Create an organisation" });
+    await dialog.getByLabel("Name").fill("Models Inc");
+    await dialog.getByLabel("Id").fill(slug);
+    await dialog.getByRole("button", { name: "Create organisation" }).click();
+
+    const setup = page.getByTestId("setup-dialog");
+    await expect(setup.getByRole("heading", { name: "Models", level: 3 })).toBeVisible();
+    await expect(setup.getByTestId("setup-model-status")).toHaveText("Not ready yet: connect a provider and choose a model.");
+    await expect(setup.getByText("Connect a provider above first")).toBeVisible();
+
+    // Connecting OpenRouter (its catalogue is off here, so nothing is fetched): its usual model is the default.
+    await setup.getByLabel("Add a provider").selectOption({ label: "OpenRouter" });
+    await setup.getByRole("button", { name: "Add provider" }).click();
+    const field = setup.getByTestId("provider-detail").getByTestId("secret-field");
+    await field.getByLabel("OpenRouter API key").fill(`sk-or-v1-${randomBytes(20).toString("hex")}`);
+    await field.getByRole("button", { name: "Save" }).click();
+    await expect(setup.getByTestId("setup-model-status")).toContainText("Ready: reviews use");
+    await expect(setup.getByTestId("setup-progress")).toHaveText("1 of 2 required steps done.");
+    await expect(setup.getByTestId("favourites").getByRole("row")).toHaveCount(2);
+
+    // Another model is offered, not required.
+    await expect(setup.getByRole("heading", { name: "Add another model" })).toBeVisible();
+    const add = setup.getByTestId("add-favourite");
+    await add.getByLabel("Model", { exact: true }).fill("fake/extra");
+    await add.getByRole("button", { name: "Add favourite" }).click();
+    await expect(setup.getByTestId("favourites").getByRole("row")).toHaveCount(3);
+    await expect(setup.getByTestId("setup-progress")).toHaveText("1 of 2 required steps done.");
 });
 
 test("a file that isn't a report is refused before anything changes", async ({ page, admin }) => {

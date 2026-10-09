@@ -585,14 +585,34 @@ export interface Provider {
     ready: boolean;
     /** What it still needs, as "Add …" would finish it. */
     missing: string | null;
+    /** In use: set up at all (a key, an address, a region), or the provider of a favourite. */
+    connected: boolean;
+    /** What the provider itself still needs, whichever model is used with it. */
+    needs: string | null;
+}
+
+/** A model in use: a provider's model, with a nickname if it has one. Its id never changes. */
+export interface Favourite {
+    id: string;
+    provider: string;
+    providerName: string;
+    model: string;
+    name: string | null;
+    isDefault: boolean;
+    ready: boolean;
+    /** What it still needs, as "Add …" would finish it. */
+    missing: string | null;
 }
 
 export interface ReviewModel {
+    /** The default favourite's provider and model. */
     provider: string;
     model: string | null;
     ready: boolean;
     missing: string | null;
     providers: Provider[];
+    favourites: Favourite[];
+    defaultId: string | null;
 }
 
 /** A provider's models, fetched by the server with the stored key. */

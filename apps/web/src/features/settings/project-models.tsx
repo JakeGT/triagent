@@ -1,6 +1,6 @@
 // A project's review models: none (the workspace's model), or two or three that each review the change,
 // their findings merged into one list marked with the models that found them. Each uses the workspace's
-// key for its provider, set in Settings → Review model & keys.
+// key for its provider, set in Settings → Models.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -116,8 +116,8 @@ export function ProjectModels({
     const providers = review.data?.providers ?? [];
     const own = providers.find((p) => p.id === review.data?.provider);
     const keys = (
-        <Link to="/w/$ws/settings/review-model" params={{ ws }} className="underline">
-            Settings → Review model & keys
+        <Link to="/w/$ws/settings/models" params={{ ws }} className="underline">
+            Settings → Models
         </Link>
     );
     const fresh = (): ModelRef => {

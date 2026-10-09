@@ -219,13 +219,13 @@ export const STEPS: readonly Step[] = [
         id: "settings",
         title: "Settings",
         anchor: "settings-nav",
-        path: (e) => `/w/${encodeURIComponent(e.workspace)}/settings/review-model`,
+        path: (e) => `/w/${encodeURIComponent(e.workspace)}/settings/models`,
         body: ({ isInstanceAdmin }) => (
             <>
                 <p>
                     Connect a project to GitHub (Project → GitHub) through the <strong>GitHub App</strong> or a fine-grained token, and
-                    choose the model reviews use under <strong>Review model & keys</strong>: Anthropic, OpenAI, Google Gemini, Mistral,
-                    OpenRouter, Amazon Bedrock, Azure OpenAI, your own OpenAI-compatible server and more, each with its own key.
+                    choose the models reviews use under <strong>Models</strong>: Anthropic, OpenAI, Google Gemini, Mistral, OpenRouter,
+                    Amazon Bedrock, Azure OpenAI, your own OpenAI-compatible server and more, each with its own key.
                 </p>
                 <p>
                     <strong>Members</strong> and invites decide who can use a workspace, and API tokens let agents in.

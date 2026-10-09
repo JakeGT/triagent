@@ -24,9 +24,9 @@ export function WaitingBanner({ list, ws }: { list: Pick<RunList, "ready" | "wai
             <AlertTitle>Reviews are waiting</AlertTitle>
             <AlertDescription>
                 <p>{list.waiting}</p>
-                {/Review model/.test(list.waiting) && (
-                    <Link to="/w/$ws/settings/review-model" params={{ ws }} className="underline">
-                        Open Review model &amp; keys
+                {/Settings → Models/.test(list.waiting) && (
+                    <Link to="/w/$ws/settings/models" params={{ ws }} className="underline">
+                        Open Models
                     </Link>
                 )}
             </AlertDescription>

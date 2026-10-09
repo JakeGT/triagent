@@ -154,11 +154,12 @@ for (const theme of ["light", "dark"] as const) {
     });
 }
 
-test("the review model picker lists OpenRouter's models with prices, and fills in the model", async ({ page, admin }) => {
+test("the model picker lists OpenRouter's models with prices, and fills in the model to add", async ({ page, admin }) => {
     const { ws } = await seedProject(admin);
+    await admin.put(`/api/v1/w/${ws}/settings/review-model/keys/openrouter`, { key: `sk-or-v1-${"x".repeat(40)}` });
     await page.route("**/models/catalogue", (route) => route.fulfill({ json: CATALOGUE }));
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
-    await page.goto(`/w/${ws}/settings/review-model`);
+    await page.goto(`/w/${ws}/settings/models`);
     await expect(page.getByTestId("instance-key-status")).toContainText("can't use the instance's key");
     await page.getByRole("button", { name: "Browse OpenRouter models" }).click();
     const dialog = page.getByRole("dialog", { name: "OpenRouter models" });
@@ -169,10 +170,12 @@ test("the review model picker lists OpenRouter's models with prices, and fills i
     await axe(page, "model picker");
     await dialog.getByRole("button", { name: "Choose DeepSeek: DeepSeek V3" }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByLabel("Model", { exact: true })).toHaveValue("deepseek/deepseek-v3");
-    await page.getByRole("button", { name: "Save model" }).click();
-    await expect(page.getByTestId("review-model-status")).toContainText("Not ready");
-    expect((await admin.get(`/api/v1/w/${ws}/settings/review-model`)).model).toBe("deepseek/deepseek-v3");
+    const add = page.getByTestId("add-favourite");
+    await expect(add.getByLabel("Model", { exact: true })).toHaveValue("deepseek/deepseek-v3");
+    await add.getByRole("button", { name: "Add favourite" }).click();
+    await expect(page.getByTestId("favourites").getByRole("row", { name: /deepseek\/deepseek-v3/ })).toContainText("OpenRouter");
+    const saved = await admin.get(`/api/v1/w/${ws}/settings/models/favourites`);
+    expect(saved.favourites.map((f: { model: string }) => f.model)).toContain("deepseek/deepseek-v3");
 });
 
 test("workspace model prices: set, listed with where each price comes from, and removed", async ({ page, admin }) => {
@@ -227,7 +230,7 @@ test("instance admins set the instance key and give a workspace a monthly allowa
     await shot(page, "instance-grants");
 
     // The workspace sees its allowance, and reviews would use the instance key.
-    await page.goto(`/w/${other}/settings/review-model`);
+    await page.goto(`/w/${other}/settings/models`);
     await expect(page.getByTestId("instance-key-status")).toContainText("for up to 2,000,000 tokens a month");
     await expect(page.getByTestId("instance-key-status")).toContainText("Reviews use it now");
     await expect(page.getByTestId("review-model-status")).toContainText("through the instance's key");

@@ -18,9 +18,7 @@ describe("the tutorial's steps", () => {
 
     it("mention the range of review model providers in Settings", () => {
         const settings = STEPS.find((s) => s.id === "settings");
-        expect(JSON.stringify(settings?.body({ example: {} as never, isInstanceAdmin: false }))).toMatch(
-            /Review model & keys.*Bedrock.*Azure/s,
-        );
+        expect(JSON.stringify(settings?.body({ example: {} as never, isInstanceAdmin: false }))).toMatch(/Models.*Bedrock.*Azure/s);
     });
 });
 

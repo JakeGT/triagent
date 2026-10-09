@@ -113,7 +113,12 @@ test("with popups blocked, confirming it's you goes there and back in the same p
         window.open = () => null;
     });
     await signIn(page, /\/w\/ada$/);
-    await page.goto("/w/ada/settings/review-model");
+    await page.goto("/w/ada/settings/models");
+    const openProvider = async () => {
+        await page.getByLabel("Add a provider").selectOption({ label: "OpenRouter" });
+        await page.getByRole("button", { name: "Add provider" }).click();
+    };
+    await openProvider();
     const field = page.getByTestId("secret-field").first();
     await field.locator("input").fill("sk-or-e2e-key-0001");
     await field.getByRole("button", { name: "Save" }).click();
@@ -126,7 +131,8 @@ test("with popups blocked, confirming it's you goes there and back in the same p
     // This time the provider checks again (a fresh auth_time).
     await provide(request, ADMIN);
     await dialog.getByRole("button", { name: "Sign in with Test ID" }).click();
-    await expect(page).toHaveURL(/\/w\/ada\/settings\/review-model$/);
+    await expect(page).toHaveURL(/\/w\/ada\/settings\/models$/);
+    await openProvider();
     const again = page.getByTestId("secret-field").first();
     await again.locator("input").fill("sk-or-e2e-key-0001");
     await again.getByRole("button", { name: "Save" }).click();

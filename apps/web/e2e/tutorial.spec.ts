@@ -284,7 +284,7 @@ test("after the tour, account setup: notifications, appearance, then the workspa
     await expect.poll(async () => (await tutorialOf(page)).setup).toBe("done");
 
     // On to the workspace's setup, at its model key; the example project doesn't count as a project.
-    await expect(setup.getByRole("heading", { name: "Review model & key", level: 3 })).toBeVisible();
+    await expect(setup.getByRole("heading", { name: "Models", level: 3 })).toBeVisible();
     await expect(setup.getByRole("button", { name: /First project\s*Required/ })).toBeVisible();
     await axe(page, "workspace setup");
 });

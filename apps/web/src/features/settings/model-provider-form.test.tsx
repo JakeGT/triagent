@@ -26,6 +26,8 @@ function provider(over: Partial<Provider> & Pick<Provider, "id" | "name" | "grou
         accessKeyId: null,
         ready: false,
         missing: `a ${over.name} API key`,
+        connected: false,
+        needs: `a ${over.name} API key`,
         ...over,
     };
 }
@@ -53,6 +55,8 @@ const DATA: ReviewModel = {
             key: { name: "model-key:mistral", set: true, hint: "…wxyz", setBy: "Sam", setAt: "2026-10-01T09:00:00.000Z" },
             ready: true,
             missing: null,
+            connected: true,
+            needs: null,
         }),
         provider({
             id: "bedrock",
@@ -69,12 +73,25 @@ const DATA: ReviewModel = {
             accessKeyId: unset("model-key:bedrock:access-key-id"),
         }),
     ],
+    favourites: [
+        {
+            id: "fav-1",
+            provider: "mistral",
+            providerName: "Mistral",
+            model: "mistral-medium-latest",
+            name: null,
+            isDefault: true,
+            ready: true,
+            missing: null,
+        },
+    ],
+    defaultId: "fav-1",
 };
 
 const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-function setup(fetchMock: ReturnType<typeof vi.fn>, data = DATA) {
+function setup(fetchMock: ReturnType<typeof vi.fn>, data = DATA, only?: string) {
     vi.stubGlobal("fetch", fetchMock);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const onSaved = vi.fn();
@@ -86,6 +103,7 @@ function setup(fetchMock: ReturnType<typeof vi.fn>, data = DATA) {
                 ws="acme"
                 queryKey={["ws", "acme", "settings", "review-model"]}
                 scope="workspace"
+                {...(only ? { only } : {})}
                 canConfigure
                 canSetSecrets
                 onSaved={onSaved}
@@ -172,5 +190,36 @@ describe("ModelProviderForm", () => {
             region: "eu-west-2",
         });
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/providers/bedrock/models"))).toBe(false);
+    });
+
+    it("for one provider: its settings and keys only, saved without choosing it", async () => {
+        const user = userEvent.setup();
+        const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => json(DATA));
+        const { onSaved } = setup(fetchMock, DATA, "openai");
+        expect(screen.getByRole("heading", { name: "OpenAI settings" })).toBeTruthy();
+        expect(screen.getByRole("heading", { name: "OpenAI keys" })).toBeTruthy();
+        // No choice of provider, no model, and no list of models fetched.
+        expect(screen.queryByLabelText("Provider")).toBeNull();
+        expect(screen.queryByLabelText("Model")).toBeNull();
+        expect(screen.getByLabelText("OpenAI API key")).toBeTruthy();
+        await user.selectOptions(screen.getByLabelText("API"), "openai-responses");
+        await user.click(screen.getByRole("button", { name: "Save settings" }));
+        await waitFor(() => expect(onSaved).toHaveBeenCalled());
+        const patch = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH") as unknown as [string, RequestInit];
+        expect(patch[0]).toBe("/api/v1/w/acme/settings/review-model/providers/openai");
+        expect(JSON.parse(patch[1].body as string)).toEqual({ protocol: "openai-responses" });
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/models"))).toBe(false);
+    });
+
+    it("for a provider with nothing to set but its key, shows just the key", () => {
+        setup(
+            vi.fn(async () => json(DATA)),
+            DATA,
+            "mistral",
+        );
+        expect(screen.queryByRole("heading", { name: "Mistral settings" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
+        expect(screen.getByTestId("provider-keys").textContent).toContain("ends …wxyz");
+        expect(screen.queryByText(/Keys are also stored for/)).toBeNull();
     });
 });

@@ -62,7 +62,7 @@ test("agents and settings pages", async ({ page, admin }) => {
         `/p/${project}/settings/automation`,
         `/p/${project}/settings/github`,
         "/settings/projects",
-        "/settings/review-model",
+        "/settings/models",
         "/settings/members",
         "/settings/tokens",
         "/settings/audit",

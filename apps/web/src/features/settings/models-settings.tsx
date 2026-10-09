@@ -1,31 +1,28 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+// Settings → Models: the providers this workspace has connected, each with its own key and settings, and
+// its favourite models, one of them the default that reviews use.
+
+import { useQuery } from "@tanstack/react-query";
 import { UsageBar } from "@/components/charts";
 import { LoadError, LoadingRows } from "@/components/load-state";
-import { paths } from "@/lib/api";
 import { count, utcDay } from "@/lib/insights-format";
-import { allowanceQuery, insightKeys } from "@/lib/insights-queries";
+import { allowanceQuery } from "@/lib/insights-queries";
 import type { Allowance } from "@/lib/insights-types";
-import { keys, reviewModelQuery } from "@/lib/queries";
+import { reviewModelQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
-import { ModelProviderForm } from "./model-provider-form";
+import { ModelLibrary } from "./model-library";
 import { SettingsPage, SettingsSection, StatusNote } from "./settings-page";
 
-export function ReviewModelSettings() {
-    const { ws, workspace, can } = useWorkspace();
-    const queryClient = useQueryClient();
+export function ModelsSettings() {
+    const { ws, workspace } = useWorkspace();
     const query = useQuery(reviewModelQuery(ws));
     const data = query.data;
     const allowance = useQuery(allowanceQuery(ws));
-    const refresh = () =>
-        Promise.all([
-            queryClient.invalidateQueries({ queryKey: keys.wsSettings(ws, "review-model") }),
-            queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) }),
-        ]);
 
     return (
         <SettingsPage
-            title="Review model & keys"
-            description={`The model Open Code Review uses for ${workspace.name}'s reviews, and the API keys for its providers.`}
+            title="Models"
+            wide
+            description={`The models Open Code Review uses for ${workspace.name}'s reviews, and the providers they come from, each with its own API key.`}
         >
             {query.isError ? (
                 <LoadError error={query.error} onRetry={() => query.refetch()} />
@@ -40,20 +37,7 @@ export function ReviewModelSettings() {
                               ? `Ready: reviews use ${allowance.data.now.model} through the instance's key.`
                               : `Not ready: ${allowance.data && !allowance.data.now.ready ? allowance.data.now.reason : `add ${data.missing ?? "an API key"}.`}`}
                     </StatusNote>
-                    <ModelProviderForm
-                        data={data}
-                        base={`${paths.workspace(ws)}/settings/review-model`}
-                        ws={ws}
-                        queryKey={keys.wsSettings(ws, "review-model")}
-                        scope="workspace"
-                        canConfigure={can("configure")}
-                        canSetSecrets={can("secrets")}
-                        onSaved={(m) => {
-                            queryClient.setQueryData(keys.wsSettings(ws, "review-model"), m);
-                            void queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) });
-                        }}
-                        refresh={refresh}
-                    />
+                    <ModelLibrary data={data} />
                     {allowance.data && <InstanceKeyStatus a={allowance.data} />}
                 </>
             )}
@@ -71,7 +55,7 @@ function InstanceKeyStatus({ a }: { a: Allowance }) {
         >
             <div className="grid gap-2 text-sm" data-testid="instance-key-status">
                 {!a.granted || a.monthlyTokens === null ? (
-                    <p>This workspace can't use the instance's key. Reviews need a key of its own, above.</p>
+                    <p>This workspace can't use the instance's key. Reviews need a provider's key of its own, above.</p>
                 ) : (
                     <>
                         <p>
@@ -80,7 +64,7 @@ function InstanceKeyStatus({ a }: { a: Allowance }) {
                             {!a.instance.keySet
                                 ? "The instance administrator hasn't set the key up yet."
                                 : usingIt
-                                  ? "Reviews use it now, because this workspace has no key of its own for its provider."
+                                  ? "Reviews use it now, because this workspace's default model isn't ready."
                                   : a.now.ready
                                     ? "Reviews use this workspace's own key, so the allowance isn't used."
                                     : ""}

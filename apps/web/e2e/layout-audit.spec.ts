@@ -73,7 +73,7 @@ for (const theme of ["light", "dark"] as const)
                 ["settings-project-automation", `${s.base}/settings/automation`],
                 ["settings-project-github", `${s.base}/settings/github`],
                 ["settings-projects", `/w/${s.ws}/settings/projects`],
-                ["settings-review-model", `/w/${s.ws}/settings/review-model`],
+                ["settings-models", `/w/${s.ws}/settings/models`],
                 ["settings-model-prices", `/w/${s.ws}/settings/model-prices`],
                 ["settings-members", `/w/${s.ws}/settings/members`],
                 ["settings-tokens", `/w/${s.ws}/settings/tokens`],
@@ -101,9 +101,11 @@ for (const theme of ["light", "dark"] as const)
                 ["azure", "Azure OpenAI"],
                 ["custom", "Custom (OpenAI-compatible)"],
             ]) {
-                await page.goto(`/w/${s.ws}/settings/review-model`);
-                await page.getByLabel("Provider").selectOption({ label });
-                await shot(`settings-review-model-${name}`);
+                await page.goto(`/w/${s.ws}/settings/models`);
+                await page.getByLabel("Add a provider").selectOption({ label });
+                await page.getByRole("button", { name: "Add provider" }).click();
+                await expect(page.getByTestId("provider-detail")).toBeVisible();
+                await shot(`settings-models-${name}`);
             }
 
             // Dialogs and popovers, over the page that opens them (the viewport, as a phone's dialog is fixed).
@@ -137,7 +139,7 @@ for (const theme of ["light", "dark"] as const)
             }
             await page.goto(`${s.base}/settings/general`);
             await dialog("dialog-delete-project", () => page.getByRole("button", { name: "Delete project" }).click(), "alertdialog");
-            await page.goto(`/w/${s.ws}/settings/review-model`);
+            await page.goto(`/w/${s.ws}/settings/models`);
             await dialog("dialog-model-picker", () => page.getByRole("button", { name: "Browse OpenRouter models" }).click());
             await page.goto(`${s.base}/overview`);
             await expect(page.getByRole("heading", { level: 1 })).toBeVisible();

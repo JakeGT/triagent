@@ -100,7 +100,7 @@ export function SettingsLayout() {
     });
     const workspaceItems: Item[] = [
         wsLink("/projects", "Projects", "/w/$ws/settings/projects"),
-        wsLink("/review-model", "Review model & keys", "/w/$ws/settings/review-model"),
+        wsLink("/models", "Models", "/w/$ws/settings/models"),
         wsLink("/model-prices", "Model prices", "/w/$ws/settings/model-prices"),
         wsLink("/members", "Members", "/w/$ws/settings/members"),
         ...(can("tokens") ? [wsLink("/tokens", "API tokens", "/w/$ws/settings/tokens")] : []),
