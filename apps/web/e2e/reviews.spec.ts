@@ -113,7 +113,8 @@ test("the New review button opens a page for starting one: pick what to review, 
     await page.getByTestId("new-review").click();
     await expect(page).toHaveURL(new RegExp(`${base}/start-review$`));
     await expect(page.getByRole("heading", { level: 1, name: "Start a review" })).toBeVisible();
-    await expect(page.getByTestId("review-models")).toContainText("the workspace's model, fake/model");
+    await expect(page.getByTestId("review-models-chosen")).toHaveText("fake/model");
+    await expect(page.getByTestId("review-models")).toContainText("The workspace's default model.");
 
     // Open pull requests to pick from; or a branch's changes, with the known branches suggested.
     await expect(page.getByLabel("Pull request", { exact: true })).toHaveValue("8");

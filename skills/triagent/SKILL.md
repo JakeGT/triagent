@@ -50,3 +50,7 @@ After running `ocr scan` or `ocr review`, upload the JSON it wrote without pasti
 2. Run the `curl` command it returns. The link works once and expires after 15 minutes.
 
 If the branch's current report still has unresolved issues, the upload is refused unless you pass `confirm: true`; ask before replacing it.
+
+## Choose a review's models
+
+`start_review` runs with the project's models for that kind of review (pull request, branch changes, full scan), which fall back to the project's models, then the workspace's default. To use others for one review, pass `models`: up to three ids from `list_models`, in the order they should review (the first one's wording leads when findings are merged). `list_models` lists the workspace's favourite models, which is the default and whether each is ready, and with `project` what each kind of review of it uses. Only choose models when asked to: each one spends its own tokens.

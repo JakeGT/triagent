@@ -439,7 +439,7 @@ export function useProjectFlow(): SetupFlow {
             body: automation.data ? (
                 <>
                     <p className="text-sm">
-                        When reviews run without anyone starting them. Time limits, token budgets and reviewing with several models are in{" "}
+                        When reviews run without anyone starting them. Time limits, token budgets and which models review are in{" "}
                         <Link
                             to="/w/$ws/p/$project/settings/automation"
                             params={{ ws, project: slug }}

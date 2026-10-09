@@ -3,16 +3,17 @@
 // request or branch open with the choice made already.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Play } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { toast } from "sonner";
-import { type Choice, ChoiceField, Field, FieldError, NativeSelect } from "@/components/field";
+import { type Choice, ChoiceField, Field, FieldError, FieldHint, NativeSelect } from "@/components/field";
+import { ModelChips, ModelChoice, modelLabels, modelOptions } from "@/components/model-choice";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api, errorMessage, paths } from "@/lib/api";
-import { branchesQuery, keys, pullRequestsQuery } from "@/lib/queries";
+import { branchesQuery, keys, modelsQuery, pullRequestsQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { Run, RunKind } from "@/lib/types";
 
@@ -28,6 +29,25 @@ const KINDS: readonly Choice<RunKind>[] = [
     { value: "changes", label: "A branch's changes", hint: "What the branch changed since it left its base." },
     { value: "full", label: "A whole branch", hint: "Every file: slower, and uses more of the model." },
 ];
+
+/** Where a kind of review's models come from, when the run doesn't choose its own. */
+const RULE_TEXT: Record<RunKind, Record<"kind" | "project" | "default", string>> = {
+    pr: {
+        kind: "This project's models for pull requests.",
+        project: "This project's models.",
+        default: "The workspace's default model.",
+    },
+    changes: {
+        kind: "This project's models for branch changes.",
+        project: "This project's models.",
+        default: "The workspace's default model.",
+    },
+    full: {
+        kind: "This project's models for full scans.",
+        project: "This project's models.",
+        default: "The workspace's default model.",
+    },
+};
 
 /** The select's value for "type a number instead": no pull request has number 0. */
 const OTHER = "0";
@@ -52,6 +72,14 @@ export function StartReviewForm({
     const [branch, setBranch] = useState(defaults.branch ?? "");
     const [base, setBase] = useState(defaults.base ?? "");
     const [typing, setTyping] = useState(false);
+    // The models: what the project uses for this kind of review (so they follow the kind), until someone
+    // chooses others for this review.
+    const can = useCan();
+    const choices = useQuery(modelsQuery(ws, slug));
+    const rule = choices.data?.rules?.[kind];
+    const [chosen, setChosen] = useState<string[] | null>(null);
+    const [choosing, setChoosing] = useState(false);
+    const models = chosen ?? rule?.ids ?? [];
     // Suggestions: the open pull requests, and the branches this project knows of.
     const prs = useQuery(pullRequestsQuery(ws, slug));
     const branches = useQuery(branchesQuery(ws, slug));
@@ -76,6 +104,7 @@ export function StartReviewForm({
                 ...(kind === "pr" ? { number: Number(pr) } : {}),
                 ...(kind !== "pr" && branch.trim() ? { branch: branch.trim() } : {}),
                 ...(kind === "changes" && base.trim() ? { base: base.trim() } : {}),
+                ...(chosen ? { models: chosen } : {}),
             }),
         onSuccess: (run) => {
             toast.success(run.status === "queued" ? `Queued: ${run.title}.` : `Already ${run.status}: ${run.title}.`);
@@ -85,8 +114,11 @@ export function StartReviewForm({
             void navigate({ to: "/w/$ws/p/$project/runs/$runId", params: { ws, project: slug, runId: run.id } });
         },
     });
-    const ready = kind === "pr" ? /^[1-9]\d*$/.test(pr) : kind === "changes" ? Boolean(branch.trim()) : true;
+    const ready =
+        (kind === "pr" ? /^[1-9]\d*$/.test(pr) : kind === "changes" ? Boolean(branch.trim()) : true) &&
+        (chosen === null || chosen.length > 0);
     const branchList = `${id}-branches`;
+    const modelList = `${id}-models`;
 
     return (
         <form
@@ -163,6 +195,54 @@ export function StartReviewForm({
                     <option key={b} value={b} />
                 ))}
             </datalist>
+            {choices.data && rule && modelOptions(choices.data).length > 0 && (
+                <div className="grid gap-field" data-testid="review-models">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm leading-snug font-medium">Models</span>
+                        <ModelChips labels={modelLabels(choices.data, models)} data-testid="review-models-chosen" />
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            aria-expanded={choosing}
+                            aria-controls={modelList}
+                            onClick={() => setChoosing(!choosing)}
+                        >
+                            {choosing ? "Hide the models" : "Change the models"}
+                        </Button>
+                        {chosen !== null && (
+                            <Button type="button" variant="ghost" size="sm" onClick={() => setChosen(null)}>
+                                Use the project's
+                            </Button>
+                        )}
+                    </div>
+                    <FieldHint>
+                        {chosen !== null
+                            ? "Chosen for this review only."
+                            : `${RULE_TEXT[kind][rule.from]} Changing them applies to this review only.`}
+                        {can("configure") && (
+                            <>
+                                {" "}
+                                <Link to="/w/$ws/p/$project/settings/automation" params={{ ws, project: slug }} className="underline">
+                                    Change the project's models
+                                </Link>
+                            </>
+                        )}
+                    </FieldHint>
+                    <div id={modelList} hidden={!choosing}>
+                        {choosing && (
+                            <ModelChoice
+                                legend="Models for this review"
+                                options={modelOptions(choices.data)}
+                                value={models}
+                                max={choices.data.max}
+                                empty="None ticked: tick at least one, or use the project's."
+                                onChange={setChosen}
+                            />
+                        )}
+                    </div>
+                </div>
+            )}
             <FieldError message={start.error ? errorMessage(start.error) : null} />
             <div className="flex flex-wrap items-center justify-end gap-2">
                 {actions}

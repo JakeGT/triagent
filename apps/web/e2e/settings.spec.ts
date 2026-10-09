@@ -1,5 +1,6 @@
 // Settings: API tokens shown once, write-only secrets, and what a viewer can and can't do.
 
+import { randomBytes } from "node:crypto";
 import { ADMIN_PASSWORD, ADMIN_USER, PASSWORD } from "./constants";
 import { Api, addMember, createUser, expect, issuesOf, seedProject, signInPage, test, unique } from "./fixtures";
 
@@ -58,6 +59,8 @@ test("a viewer sees settings and issues but can't change them", async ({ page, a
     const { ws, project } = await seedProject(admin);
     const viewer = await addMember(admin, baseURL as string, ws, "viewer");
     await viewer.api.ctx.dispose();
+    // A favourite model, so the project's review models have something to choose from.
+    await admin.put(`/api/v1/w/${ws}/settings/review-model/keys/openrouter`, { key: `sk-or-v1-${randomBytes(20).toString("hex")}` });
     await signInPage(page, viewer.username, PASSWORD);
 
     // Issues: no selection, no triage controls, no note box.
@@ -81,7 +84,8 @@ test("a viewer sees settings and issues but can't change them", async ({ page, a
 
     await page.goto(`/w/${ws}/p/${project}/settings/automation`);
     await expect(page.getByRole("heading", { name: "Review models" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Review with several models" })).toHaveCount(0);
+    await expect(page.getByRole("group", { name: "For every review" }).getByRole("checkbox").first()).toBeDisabled();
+    await expect(page.getByRole("switch", { name: "Use different models for pull requests" })).toBeDisabled();
     await expect(page.getByRole("button", { name: /Save/ })).toHaveCount(0);
 
     await page.goto(`/w/${ws}/settings/members`);

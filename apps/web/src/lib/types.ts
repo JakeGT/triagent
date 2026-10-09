@@ -362,13 +362,37 @@ export interface Automation {
     /** Stop a review whose model has printed nothing for this long; null to never. */
     stallMinutes: number | null;
     reviewPullRequestsFrom: "collaborators" | "everyone";
-    /** The models reviews run with, in order; empty for the workspace's model. */
-    models: ModelRef[];
+    /** The models reviews run with: favourite models' ids (or "instance"), for every review and for each kind. A set left out falls through. */
+    models: ProjectModels;
 }
 
-export interface ModelRef {
+/** A project's sets of models: for every review, or for one kind of review (which wins). */
+export const MODEL_SETS = ["all", "pr", "changes", "full"] as const;
+export type ModelSet = (typeof MODEL_SETS)[number];
+export type ProjectModels = Partial<Record<ModelSet, string[]>>;
+
+/** The instance's model, chosen like a favourite when the workspace has an allowance. */
+export interface InstanceModel {
+    id: "instance";
     provider: string;
-    model: string;
+    providerName: string;
+    model: string | null;
+    name: string;
+    ready: boolean;
+    /** Why it can't be used now. */
+    reason: string | null;
+}
+
+/** What reviews can run with (GET …/models), and for a project what each kind of review uses when a run doesn't choose. */
+export interface ModelChoices {
+    favourites: Favourite[];
+    defaultId: string | null;
+    instance: InstanceModel | null;
+    /** How many models one review can use. */
+    max: number;
+    /** With nothing chosen anywhere: the default favourite, or the instance's model. */
+    fallback: string[];
+    rules?: Record<RunKind, { ids: string[]; from: "kind" | "project" | "default" }>;
 }
 
 export interface GithubSettings {
@@ -493,12 +517,17 @@ export interface Run {
         example?: boolean;
     } | null;
     error: string | null;
+    /** The models it was asked to use (favourite models' ids, or "instance"); null for the project's own. */
+    requestedModels: string[] | null;
+    /** What it ran with, as it was then. */
     model: {
         provider: string;
         model: string;
+        /** How people knew it: the favourite's nickname, or its name. Absent on older runs. */
+        label?: string;
         keySource: "workspace" | "instance";
         /** Every model, when it runs with several. */
-        models?: { provider: string; model: string; label: string }[];
+        models?: { provider: string; model: string; label: string; keySource?: "workspace" | "instance" }[];
     } | null;
     log: { lines: number; dropped: number };
     /** For a queued run: why it hasn't started. */

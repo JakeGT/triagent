@@ -17,11 +17,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, errorMessage, paths } from "@/lib/api";
+import { api, errorMessage, isApiError, paths } from "@/lib/api";
 import { insightKeys } from "@/lib/insights-queries";
 import { keys } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
-import type { Favourite, Provider, ReviewModel } from "@/lib/types";
+import type { Favourite, ModelSet, Provider, ReviewModel } from "@/lib/types";
 import { groups, ModelField, ModelProviderForm } from "./model-provider-form";
 import { ReadOnlyNote, SettingsSection } from "./settings-page";
 
@@ -30,6 +30,37 @@ export const MAX_FAVOURITE_NAME = 40;
 
 /** What people call a favourite: its nickname, or the model's own name. */
 export const favouriteLabel = (f: Pick<Favourite, "name" | "model">) => f.name ?? f.model;
+
+/** A project whose reviews use a favourite, and in which of its sets (the server's 409 when one is removed). */
+interface FavouriteUse {
+    slug: string;
+    name: string;
+    sets: ModelSet[];
+}
+
+const SET_WORDS: Record<ModelSet, string> = { all: "every review", pr: "pull requests", changes: "branch changes", full: "full scans" };
+
+/** The projects using a favourite, from the server's refusal to remove it; null for any other error. */
+function usesFrom(err: unknown): FavouriteUse[] | null {
+    return isApiError(err, 409) && err.code === "favourite_in_use" ? (err.body.projects as FavouriteUse[]) : null;
+}
+
+/** Which projects' reviews use the favourite being removed, and what removing it does to them. */
+function InUse({ uses }: { uses: FavouriteUse[] }) {
+    return (
+        <div className="grid gap-2" data-testid="favourite-in-use">
+            <p>These projects' reviews use it:</p>
+            <ul className="list-disc ps-5">
+                {uses.map((u) => (
+                    <li key={u.slug}>
+                        {u.name} ({u.sets.map((k) => SET_WORDS[k]).join(", ")})
+                    </li>
+                ))}
+            </ul>
+            <p>Removing it takes it out of their review models too. A project left with none uses the workspace default.</p>
+        </div>
+    );
+}
 
 /** `ids` with the one at `index` moved one place up (-1) or down (1); unchanged at either end. */
 export function moved(ids: readonly string[], index: number, by: -1 | 1): string[] {
@@ -69,7 +100,12 @@ export function ModelLibrary({
     const base = `${paths.workspace(ws)}/settings/review-model`;
     const queryKey = keys.wsSettings(ws, "review-model");
     const refresh = () =>
-        Promise.all([queryClient.invalidateQueries({ queryKey }), queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) })]);
+        Promise.all([
+            queryClient.invalidateQueries({ queryKey }),
+            queryClient.invalidateQueries({ queryKey: insightKeys.allowance(ws) }),
+            // What reviews can be given, and what projects' reviews use (removing a favourite can change that).
+            queryClient.invalidateQueries({ queryKey: keys.models(ws) }),
+        ]);
     const canConfigure = can("configure");
     const canSetSecrets = can("secrets");
     const shown = data.providers.filter((p) => p.connected || p.id === open);
@@ -229,7 +265,7 @@ function Favourites({ data, canConfigure, refresh }: { data: ReviewModel; canCon
     return (
         <SettingsSection
             title="Favourites"
-            description="The models this workspace reviews with. Reviews use the default unless a project lists its own."
+            description="The models this workspace reviews with. Reviews use the default unless a project, or the person starting one, chooses others."
         >
             {list.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No favourite models yet. Connect a provider, then add one of its models.</p>
@@ -319,21 +355,7 @@ function Favourites({ data, canConfigure, refresh }: { data: ReviewModel; canCon
                                                                 Remove<span className="sr-only"> {label}</span>
                                                             </Button>
                                                         ) : (
-                                                            <ConfirmAction
-                                                                trigger={
-                                                                    <Button type="button" size="sm" variant="ghost">
-                                                                        Remove<span className="sr-only"> {label}</span>
-                                                                    </Button>
-                                                                }
-                                                                title={`Remove ${label}?`}
-                                                                description="It leaves the favourites. Its provider and key stay."
-                                                                confirmLabel="Remove favourite"
-                                                                onConfirm={async () => {
-                                                                    await api.delete(`${base}/favourites/${encodeURIComponent(f.id)}`);
-                                                                    await refresh();
-                                                                    toast.success(`${label} removed.`);
-                                                                }}
-                                                            />
+                                                            <RemoveFavourite favourite={f} base={base} refresh={refresh} />
                                                         ))}
                                                 </div>
                                             </TableCell>
@@ -429,6 +451,48 @@ function RenameDialog({
     );
 }
 
+/**
+ * Removing a favourite that isn't the default: asked once, and again, naming them, if projects' reviews use it.
+ */
+function RemoveFavourite({ favourite, base, refresh }: { favourite: Favourite; base: string; refresh(): Promise<unknown> }) {
+    const { ws } = useWorkspace();
+    const queryClient = useQueryClient();
+    const [uses, setUses] = useState<FavouriteUse[] | null>(null);
+    const label = favouriteLabel(favourite);
+    return (
+        <ConfirmAction
+            trigger={
+                <Button type="button" size="sm" variant="ghost">
+                    Remove<span className="sr-only"> {label}</span>
+                </Button>
+            }
+            title={`Remove ${label}?`}
+            description={uses ? <InUse uses={uses} /> : "It leaves the favourites. Its provider and key stay."}
+            confirmLabel={uses ? "Remove it from them too" : "Remove favourite"}
+            onOpenChange={(open) => {
+                if (!open) setUses(null);
+            }}
+            onConfirm={async () => {
+                try {
+                    await api.delete(`${base}/favourites/${encodeURIComponent(favourite.id)}${uses ? "?force=true" : ""}`);
+                } catch (err) {
+                    const found = usesFrom(err);
+                    if (!found) throw err;
+                    // The dialog stays open, now saying which projects, and asks again.
+                    setUses(found);
+                    throw new Error(
+                        `${found.length === 1 ? "A project's reviews use" : `${found.length} projects' reviews use`} this model.`,
+                    );
+                }
+                // The projects' own settings changed with it.
+                if (uses) void queryClient.invalidateQueries({ queryKey: ["ws", ws, "p"] });
+                await refresh();
+                toast.success(`${label} removed.`);
+            }}
+        />
+    );
+}
+
 /** Removing the default: reviews always have one, so another favourite takes over. */
 function RemoveDefaultDialog({
     favourite,
@@ -443,18 +507,27 @@ function RemoveDefaultDialog({
     refresh(): Promise<unknown>;
     onClose(): void;
 }) {
+    const { ws } = useWorkspace();
+    const queryClient = useQueryClient();
     const choices = others.filter((f) => f.id !== favourite?.id);
     const [chosen, setChosen] = useState("");
+    // The projects whose reviews use it, once the server has refused to remove it for that.
+    const [uses, setUses] = useState<FavouriteUse[] | null>(null);
     const next = choices.find((f) => f.id === chosen) ?? choices.find((f) => f.ready) ?? choices[0];
     const close = () => {
         setChosen("");
+        setUses(null);
         remove.reset();
         onClose();
     };
     const remove = useMutation({
         mutationFn: () =>
-            api.delete(`${base}/favourites/${encodeURIComponent(favourite?.id ?? "")}?defaultId=${encodeURIComponent(next?.id ?? "")}`),
+            api.delete(
+                `${base}/favourites/${encodeURIComponent(favourite?.id ?? "")}?defaultId=${encodeURIComponent(next?.id ?? "")}${uses ? "&force=true" : ""}`,
+            ),
+        onError: (err) => setUses(usesFrom(err) ?? uses),
         onSuccess: async () => {
+            if (uses) void queryClient.invalidateQueries({ queryKey: ["ws", ws, "p"] });
             await refresh();
             toast.success(
                 `${favourite ? favouriteLabel(favourite) : "Favourite"} removed. ${next ? favouriteLabel(next) : ""} is now the default.`,
@@ -495,13 +568,18 @@ function RemoveDefaultDialog({
                             </NativeSelect>
                         )}
                     </Field>
-                    <FieldError message={remove.error ? errorMessage(remove.error) : null} />
+                    {uses && (
+                        <div className="text-sm">
+                            <InUse uses={uses} />
+                        </div>
+                    )}
+                    <FieldError message={remove.error && !usesFrom(remove.error) ? errorMessage(remove.error) : null} />
                     <DialogFooter>
                         <Button type="button" variant="ghost" onClick={close}>
                             Cancel
                         </Button>
                         <Button type="submit" variant="destructive" disabled={remove.isPending || !next}>
-                            {remove.isPending ? "Working…" : "Remove favourite"}
+                            {remove.isPending ? "Working…" : uses ? "Remove it from them too" : "Remove favourite"}
                         </Button>
                     </DialogFooter>
                 </form>
@@ -602,7 +680,10 @@ function AddFavourite({ data, title, base, refresh }: { data: ReviewModel; title
                         canConfigure
                     />
                     {current && (
-                        <CheckField label="Make it the default" hint="The model reviews use unless a project lists its own.">
+                        <CheckField
+                            label="Make it the default"
+                            hint="The model reviews use unless a project, or the person starting one, chooses others."
+                        >
                             {(f) => <Checkbox {...f} checked={makeDefault} onCheckedChange={(v) => setAsDefault(v === true)} />}
                         </CheckField>
                     )}

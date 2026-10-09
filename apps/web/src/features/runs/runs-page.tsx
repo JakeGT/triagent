@@ -14,7 +14,7 @@ import { runListQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { Run, RunList } from "@/lib/types";
 import { NewReviewButton } from "./new-review-button";
-import { CancelRun, duration, findingsText, kindText, progressText, RunStatusBadge } from "./run-bits";
+import { CancelRun, duration, findingsText, kindText, progressText, RunModels, RunStatusBadge } from "./run-bits";
 
 export function WaitingBanner({ list, ws }: { list: Pick<RunList, "ready" | "waiting">; ws: string }) {
     if (list.ready || !list.waiting) return null;
@@ -111,15 +111,12 @@ export function RunsPage() {
                                         <p className="text-sm" aria-live="off">
                                             {progressText(r)}
                                         </p>
-                                        <p className="text-xs text-muted-foreground">
-                                            {[
-                                                kindText(r),
-                                                r.model &&
-                                                    `${r.model.model} (${r.model.keySource === "instance" ? "instance key" : r.model.provider})`,
-                                                `requested by ${r.source === "automation" ? "automatic reviews" : r.requestedBy.name}`,
-                                            ]
-                                                .filter(Boolean)
-                                                .join(" · ")}
+                                        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                                            <span>
+                                                {kindText(r)} · requested by{" "}
+                                                {r.source === "automation" ? "automatic reviews" : r.requestedBy.name}
+                                            </span>
+                                            <RunModels run={r} />
                                         </p>
                                     </li>
                                 ))}
@@ -206,6 +203,7 @@ export function RunsPage() {
                                                     {all && r.project && (
                                                         <span className="block text-xs text-muted-foreground">{r.project}</span>
                                                     )}
+                                                    <RunModels run={r} className="mt-1 block" />
                                                 </TableCell>
                                                 <TableCell>
                                                     {r.project && (r.status === "done" || r.status === "partial") ? (

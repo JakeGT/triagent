@@ -6,14 +6,16 @@ import { Link, useParams } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { LoadError, LoadingRows } from "@/components/load-state";
+import { ModelChips, modelLabels } from "@/components/model-choice";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api, isApiError, paths } from "@/lib/api";
 import { formatDateTime, plural } from "@/lib/format";
-import { keys } from "@/lib/queries";
+import { keys, modelsQuery } from "@/lib/queries";
 import { safeHref } from "@/lib/safe-href";
 import { useCan, useProject } from "@/lib/session";
 import type { LogLine, RunDetail } from "@/lib/types";
-import { CancelRun, duration, findingsText, kindText, progressText, RunStatusBadge } from "./run-bits";
+import { CancelRun, duration, findingsText, kindText, progressText, RunStatusBadge, runModelLabels } from "./run-bits";
 
 const KEEP_LINES = 5000;
 
@@ -48,6 +50,10 @@ function RunDetailView({ runId }: { runId: string }) {
         },
         staleTime: 0,
     });
+
+    // A run that hasn't started says which models it was asked to use, by what they're called now.
+    const asked = run.data?.model ? null : (run.data?.requestedModels ?? null);
+    const choices = useQuery({ ...modelsQuery(ws), enabled: Boolean(asked) });
 
     // Focus the heading once it's there (the first render shows the loading rows).
     const loaded = run.data !== undefined;
@@ -123,12 +129,22 @@ function RunDetailView({ runId }: { runId: string }) {
                 <dd>
                     {r.source === "automation" ? "Automatically" : `By ${r.requestedBy.name}`}, {formatDateTime(r.queuedAt)}
                 </dd>
+                {asked && choices.data && (
+                    <>
+                        <dt className="text-muted-foreground">Asked to use</dt>
+                        <dd data-testid="run-asked-models">
+                            <ModelChips labels={modelLabels(choices.data, asked)} />
+                        </dd>
+                    </>
+                )}
                 {r.model && !r.model.models && (
                     <>
                         <dt className="text-muted-foreground">Model</dt>
-                        <dd>
-                            {r.model.model} (
-                            {r.model.keySource === "instance" ? "the instance's key" : `the workspace's ${r.model.provider} key`})
+                        <dd data-testid="run-models">
+                            <ModelChips labels={runModelLabels(r)} />{" "}
+                            {r.model.label && r.model.label !== r.model.model ? `${r.model.model}, ` : ""}
+                            {r.model.keySource === "instance" ? "the instance's key" : `the workspace's ${r.model.provider} key`}
+                            {r.requestedModels ? ", chosen for this review" : ""}
                         </dd>
                     </>
                 )}
@@ -140,7 +156,9 @@ function RunDetailView({ runId }: { runId: string }) {
                                 <ul className="grid gap-0.5" data-testid="run-models">
                                     {r.result.models.map((m) => (
                                         <li key={m.label}>
-                                            <span className="font-mono text-xs">{m.label}</span>:{" "}
+                                            <Badge variant="outline" className="font-mono font-normal">
+                                                {m.label}
+                                            </Badge>{" "}
                                             {m.status === "done" || m.status === "partial"
                                                 ? `${plural(m.total ?? 0, "finding")}${m.status === "partial" ? " (partly)" : ""}`
                                                 : m.status === "cancelled"
@@ -152,7 +170,10 @@ function RunDetailView({ runId }: { runId: string }) {
                                     ))}
                                 </ul>
                             ) : (
-                                `${r.model.models.map((m) => m.label).join(", ")}, in turn, each with the workspace's key for its provider`
+                                <span data-testid="run-models">
+                                    <ModelChips labels={runModelLabels(r)} /> in turn
+                                    {r.requestedModels ? ", chosen for this review" : ""}
+                                </span>
                             )}
                         </dd>
                     </>

@@ -1,5 +1,5 @@
-// Reviews run with several models: a project lists its models, and triage shows which found each
-// finding, filters and sorts by agreement, and shows what the other models said.
+// Reviews run with several models: triage shows which found each finding, filters and sorts by agreement,
+// and shows what the other models said. (Choosing the models is in review-models.spec.ts.)
 
 import { ADMIN_PASSWORD, ADMIN_USER } from "./constants";
 import { expect, seedProject, signInPage, test } from "./fixtures";
@@ -64,30 +64,4 @@ test("triage shows which models found each finding, and filters and sorts by agr
     await expect(found).toContainText("model-a, model-b");
     await found.getByText("What model-b said").click();
     await expect(found).toContainText("Discounts are ignored in the total.");
-});
-
-test("a project's review models are chosen in its settings", async ({ page, admin }) => {
-    const { ws, project } = await seedProject(admin);
-    await admin.put(`/api/v1/w/${ws}/settings/review-model/keys/openrouter`, { key: `sk-or-v1-${"x".repeat(40)}` });
-    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
-    await page.goto(`/w/${ws}/p/${project}/settings/automation`);
-
-    await expect(page.getByText(/Reviews use the workspace's model/)).toBeVisible();
-    await page.getByRole("button", { name: "Review with several models" }).click();
-    const first = page.getByRole("group", { name: /Model 1/ });
-    const second = page.getByRole("group", { name: /Model 2/ });
-    await first.getByLabel("Model", { exact: true }).fill("vendor/first-model");
-    await second.getByLabel("Provider", { exact: true }).selectOption("openrouter");
-    await second.getByLabel("Model", { exact: true }).fill("vendor/second-model");
-    // The second leads instead.
-    await page.getByRole("button", { name: "Move model 2 up" }).click();
-    await expect(first.getByLabel("Model", { exact: true })).toHaveValue("vendor/second-model");
-    await page.getByRole("button", { name: "Save changes" }).click();
-    await expect(page.getByText("Automation settings saved.")).toBeVisible();
-
-    const saved = await admin.get(`/api/v1/w/${ws}/p/${project}/settings/automation`);
-    expect(saved.models).toEqual([
-        { provider: "openrouter", model: "vendor/second-model" },
-        { provider: "openrouter", model: "vendor/first-model" },
-    ]);
 });

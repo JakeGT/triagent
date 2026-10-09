@@ -20,6 +20,7 @@ import type {
     IssueList,
     Me,
     Member,
+    ModelChoices,
     Overview,
     Project,
     ProjectListItem,
@@ -59,6 +60,9 @@ export const keys = {
     runList: (ws: string, project: string | null) => ["ws", ws, "runs", "list", project ?? ""] as const,
     run: (ws: string, id: string) => ["ws", ws, "runs", "one", id] as const,
     pullRequests: (ws: string, p: string) => ["ws", ws, "p", p, "pull-requests"] as const,
+    /** What reviews can run with, for the workspace and for each project: favourites and projects' settings both change it. */
+    models: (ws: string) => ["ws", ws, "models"] as const,
+    modelChoices: (ws: string, p: string | null) => ["ws", ws, "models", p ?? ""] as const,
     installations: (ws: string) => ["ws", ws, "settings", "github-installations"] as const,
     githubApp: ["instance", "github-app"] as const,
 };
@@ -187,6 +191,13 @@ export const reviewModelQuery = (ws: string) =>
     queryOptions({
         queryKey: keys.wsSettings(ws, "review-model"),
         queryFn: ({ signal }) => api.get<ReviewModel>(`${paths.workspace(ws)}/settings/review-model`, undefined, { signal }),
+    });
+
+/** The models reviews can use, and (for a project) what each kind of review uses when a run doesn't choose. */
+export const modelsQuery = (ws: string, p: string | null = null) =>
+    queryOptions({
+        queryKey: keys.modelChoices(ws, p),
+        queryFn: ({ signal }) => api.get<ModelChoices>(`${paths.workspace(ws)}/models`, { project: p ?? undefined }, { signal }),
     });
 
 export const auditQuery = (ws: string) =>

@@ -18,7 +18,7 @@ import { safeHref } from "@/lib/safe-href";
 import { useCan, useProject } from "@/lib/session";
 import type { GithubDelivery, PullRequests, RefusedDeliveries } from "@/lib/types";
 import { NewReviewButton } from "./new-review-button";
-import { RunStatusBadge } from "./run-bits";
+import { NextReviewModels, RunStatusBadge } from "./run-bits";
 import { WaitingBanner } from "./runs-page";
 import { StartReview } from "./start-review";
 
@@ -152,6 +152,7 @@ export function PullRequestsPage() {
                 <>
                     {runs.data && <WaitingBanner list={runs.data} ws={ws} />}
                     <Automation data={data} ws={ws} slug={slug} />
+                    <NextReviewModels ws={ws} slug={slug} automatic={data.automation.enabled} />
                     {data.lastCheck && (
                         <p className="text-xs text-muted-foreground" data-testid="last-check">
                             Last checked{" "}

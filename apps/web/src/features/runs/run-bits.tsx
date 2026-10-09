@@ -1,15 +1,16 @@
 // Small pieces shared by the Runs and Pull requests pages: a run's status, its progress in words, how
 // long it took, and cancelling it.
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Square } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
+import { ModelChips, modelLabels } from "@/components/model-choice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api, paths } from "@/lib/api";
 import { plural } from "@/lib/format";
-import { keys } from "@/lib/queries";
+import { keys, modelsQuery } from "@/lib/queries";
 import type { Run, RunStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,37 @@ export function RunStatusBadge({ status }: { status: RunStatus }) {
         <Badge variant="outline" className={cn(STATUS_CLASS[status])}>
             {STATUS_TEXT[status]}
         </Badge>
+    );
+}
+
+/** What a run ran with (or is running with), as people knew the models then. None before it starts. */
+export function runModelLabels(run: Pick<Run, "model">): string[] {
+    const m = run.model;
+    if (!m) return [];
+    return m.models?.map((x) => x.label) ?? [m.label ?? m.model];
+}
+
+/** A run's models as chips; nothing before it starts. */
+export function RunModels({ run, className }: { run: Pick<Run, "model">; className?: string }) {
+    const labels = runModelLabels(run);
+    if (!labels.length) return null;
+    return (
+        <span className={className} data-testid="run-model-chips">
+            <span className="sr-only">Models: </span>
+            <ModelChips labels={labels} />
+        </span>
+    );
+}
+
+/** What the next review of a pull request runs with, unless whoever starts it chooses others. */
+export function NextReviewModels({ ws, slug, automatic }: { ws: string; slug: string; automatic: boolean }) {
+    const choices = useQuery(modelsQuery(ws, slug));
+    const labels = modelLabels(choices.data, choices.data?.rules?.pr.ids ?? []);
+    if (!labels.length) return null;
+    return (
+        <p className="text-sm" data-testid="next-review-models">
+            {automatic ? "The next automatic review uses" : "A review of a pull request uses"} <ModelChips labels={labels} />
+        </p>
     );
 }
 

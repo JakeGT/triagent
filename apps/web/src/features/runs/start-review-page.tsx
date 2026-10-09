@@ -1,6 +1,6 @@
 // Start a review: a page for that alone, reached from the rail's New review button (or a link with the
-// choice made, ?kind=pr&number=12). It says what the review will run with and whether it can start now,
-// then asks what to review.
+// choice made, ?kind=pr&number=12). It says whether a review can start now, then asks what to review and
+// with which models.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
@@ -9,39 +9,11 @@ import { useEffect, useRef } from "react";
 import { Page, PageHeader, PageMeta } from "@/components/page";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { api, paths } from "@/lib/api";
-import { automationQuery, keys, pullRequestsQuery, reviewModelQuery, runListQuery } from "@/lib/queries";
+import { keys, pullRequestsQuery, runListQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { PullRequests } from "@/lib/types";
 import { WaitingBanner } from "./runs-page";
 import { StartReviewForm } from "./start-review";
-
-/** Which models the project's reviews run with, in words. */
-function ModelsLine({ ws, slug }: { ws: string; slug: string }) {
-    const can = useCan();
-    const automation = useQuery(automationQuery(ws, slug));
-    const review = useQuery(reviewModelQuery(ws));
-    const listed = automation.data?.models ?? [];
-    const own = review.data?.providers.find((p) => p.id === review.data?.provider);
-    const text =
-        listed.length > 1
-            ? `Each of ${listed.map((m) => m.model).join(", ")} reviews it in turn, and their findings are merged.`
-            : listed.length === 1
-              ? `It runs with ${listed[0]?.model}.`
-              : review.data?.model
-                ? `It runs with the workspace's model, ${review.data.model}${own ? ` via ${own.name}` : ""}.`
-                : null;
-    if (!text) return null;
-    return (
-        <p className="text-sm text-muted-foreground" data-testid="review-models">
-            {text}{" "}
-            {can("configure") && (
-                <Link to="/w/$ws/p/$project/settings/automation" params={{ ws, project: slug }} className="underline">
-                    Change the models
-                </Link>
-            )}
-        </p>
-    );
-}
 
 export function StartReviewPage() {
     const { ws, slug, project } = useProject();
@@ -105,7 +77,6 @@ export function StartReviewPage() {
                         </Alert>
                     )}
                     <section aria-label="What to review" className="grid gap-form rounded-lg border bg-card p-inset">
-                        <ModelsLine ws={ws} slug={slug} />
                         <StartReviewForm defaults={search} />
                     </section>
                 </>

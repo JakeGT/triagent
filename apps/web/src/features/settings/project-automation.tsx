@@ -11,8 +11,8 @@ import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
 import { automationQuery, keys } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
-import type { Automation, ModelRef } from "@/lib/types";
-import { ProjectModels } from "./project-models";
+import type { Automation } from "@/lib/types";
+import { fromModelSets, type ModelSets, ProjectModels, toModelSets } from "./project-models";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
@@ -36,7 +36,7 @@ interface Form {
     stallCheck: boolean;
     stallMinutes: string;
     reviewPullRequestsFrom: Automation["reviewPullRequestsFrom"];
-    models: ModelRef[];
+    models: ModelSets;
 }
 
 const toForm = (a: Automation): Form => ({
@@ -53,7 +53,7 @@ const toForm = (a: Automation): Form => ({
     stallCheck: a.stallMinutes !== null,
     stallMinutes: String(a.stallMinutes ?? ""),
     reviewPullRequestsFrom: a.reviewPullRequestsFrom,
-    models: a.models ?? [],
+    models: toModelSets(a.models),
 });
 
 function fromForm(f: Form): Automation {
@@ -73,11 +73,7 @@ function fromForm(f: Form): Automation {
         fullScanTimeoutMinutes: f.fullScanLimit ? whole("Full scan time limit", f.fullScanTimeoutMinutes, 5, MAX_LIMIT) : null,
         stallMinutes: f.stallCheck ? whole("Minutes without output", f.stallMinutes, 1, MAX_STALL) : null,
         reviewPullRequestsFrom: f.reviewPullRequestsFrom,
-        models: f.models.map((m, i) => {
-            const model = m.model.trim();
-            if (!model) throw new Error(`Give model ${i + 1} a name, or remove it.`);
-            return { provider: m.provider, model };
-        }),
+        models: fromModelSets(f.models),
     };
 }
 
@@ -167,6 +163,8 @@ export function ProjectAutomation() {
         onSuccess: (a) => {
             form.saved(toForm(a));
             queryClient.setQueryData(keys.projectSettings(ws, slug, "automation"), a);
+            // What each kind of review uses (the Start a review picker, the Pull requests page).
+            void queryClient.invalidateQueries({ queryKey: keys.models(ws) });
             toast.success("Automation settings saved.");
         },
     });
@@ -189,7 +187,10 @@ export function ProjectAutomation() {
                 >
                     {!editable && <ReadOnlyNote />}
                     <ChangedElsewhere show={form.changedElsewhere} onReload={form.reload} what="These settings" />
-                    <SettingsSection title="Review models">
+                    <SettingsSection
+                        title="Review models"
+                        description="Which models review this project's code. Someone starting a review can choose others for that review."
+                    >
                         <ProjectModels ws={ws} value={d.models} disabled={!editable} onChange={(models) => set({ models })} />
                     </SettingsSection>
                     <SettingsSection title="Pull requests">

@@ -119,6 +119,14 @@ for (const theme of ["light", "dark"] as const)
             await page.goto(`${s.base}/start-review`);
             await expect(page.getByRole("heading", { level: 1, name: "Start a review" })).toBeVisible();
             await shot("start-review");
+            // The models, open: on Start a review, and a kind's own set in the project's settings.
+            await page.getByRole("button", { name: "Change the models" }).click();
+            await expect(page.getByRole("group", { name: "Models for this review" })).toBeVisible();
+            await shot("start-review-models");
+            await page.goto(`${s.base}/settings/automation`);
+            await page.getByRole("switch", { name: "Use different models for pull requests" }).click();
+            await expect(page.getByRole("group", { name: "Models for pull requests" })).toBeVisible();
+            await shot("settings-project-automation-models");
             await page.goto(`${s.base}/branches`);
             await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
             await dialog("dialog-history", () => page.getByRole("button", { name: "History of main" }).click());
