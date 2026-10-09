@@ -10,7 +10,7 @@ import type { Access } from "../services/accounts.ts";
 import type { Actor } from "../services/core.ts";
 import type { Services } from "../services/index.ts";
 import { publicProject } from "../services/projects.ts";
-import { AutomationSchema } from "../services/settings.ts";
+import { AutomationSchema, ModelIds } from "../services/settings.ts";
 import type { BranchRef } from "../services/triage.ts";
 import type { Project } from "../store/types.ts";
 import { analyticsTool } from "./analytics-tool.ts";
@@ -634,12 +634,50 @@ export const TOOLS: Tool[] = [
             number: z.number().int().positive().optional().describe("The pull request (kind pr)"),
             branch: z.string().max(200).optional(),
             base: z.string().max(200).optional(),
+            models: ModelIds.optional().describe(
+                "The models for this review only, as ids from list_models (up to three; each reviews it and their findings are merged). Default: the project's models for this kind of review.",
+            ),
         }),
         async run(ctx, args) {
             const p = await projectOf(ctx, args.project);
             const { project: _p, ...input } = args;
             const r = await ctx.services.runs.start(ctx.actor, p, input as never);
             return { text: `Queued run ${r.id}: ${r.title} (branch ${r.branch}). Use wait_for_run with this id to wait for it.`, data: r };
+        },
+    }),
+    tool({
+        name: "list_models",
+        title: "List models",
+        description:
+            "The models reviews can use: the workspace's favourite models (and the instance's model, when the workspace has an allowance), which is the default, and whether each is ready. With a project: what each kind of review of it uses unless start_review names its own models.",
+        permission: "read",
+        readOnly: true,
+        input: z.object({ project: project.describe("Also say what this project's reviews use") }),
+        async run(ctx, args) {
+            const p = typeof args.project === "string" && args.project ? await projectOf(ctx, args.project) : null;
+            const r = await ctx.services.models.list(ctx.access.workspace, p);
+            const all = [...r.favourites, ...(r.instance ? [r.instance] : [])];
+            const nameOf = (id: string) => {
+                const m = all.find((x) => x.id === id);
+                return m ? (m.name ?? m.model ?? id) : id;
+            };
+            const text = [
+                ...r.favourites.map(
+                    (f) =>
+                        `- ${f.id}: ${f.name ? `${f.name} (${f.model})` : f.model} via ${f.providerName}${f.isDefault ? " [default]" : ""}${f.ready ? "" : ` (not ready: add ${f.missing})`}`,
+                ),
+                ...(r.instance
+                    ? [
+                          `- ${r.instance.id}: the instance's model${r.instance.model ? ` (${r.instance.model})` : ""}, paid from this workspace's allowance${r.instance.ready ? "" : ` (not ready: ${r.instance.reason})`}`,
+                      ]
+                    : []),
+                ...(r.rules
+                    ? (["pr", "changes", "full"] as const).map(
+                          (k) => `${p?.slug} ${k} reviews use: ${r.rules?.[k].ids.map(nameOf).join(", ") || "nothing yet"}`,
+                      )
+                    : []),
+            ];
+            return { text: text.join("\n") || "No models yet: add one in Settings → Models.", data: r };
         },
     }),
     tool({

@@ -20,8 +20,8 @@ export interface ClaimedJob {
     maxTokensBudget: number | null;
     /** The protocol OCR speaks to the model, and this job's credentials for it: the first of `models`. */
     model: RunnerModel;
-    /** Every model to review with, in order, each with how people know it. */
-    models?: (RunnerModel & { label: string })[];
+    /** Every model to review with, in order, each with how people know it, and its own token budget if it has one (else the job's). */
+    models?: (RunnerModel & { label: string; maxTokensBudget?: number | null })[];
 }
 
 /** How one model's review went, in a job with several. */

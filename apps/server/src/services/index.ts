@@ -71,7 +71,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
     const catalogue = new Catalogue({ enabled: config.openrouterCatalogue, ...(options.fetch ? { fetch: options.fetch } : {}) });
     const prices = new Prices(core, catalogue);
     const allowances = new Allowances(core, clock, setup);
-    const models = new Models(core, history, allowances, setup);
+    const models = new Models(core, history, allowances, setup, settings);
     const modelLists = new ModelLists(setup, catalogue, options.fetch ? { fetch: options.fetch } : {});
     const webhooks = new Webhooks(core, settings);
     const github = new Github(core, settings, projects);

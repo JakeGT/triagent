@@ -42,6 +42,7 @@ export const job = (id: string, workspaceId = "w1", extra: Partial<Job> = {}): J
     baseSha: null,
     pr: { number: 1, title: "A change", url: null, headRef: "feature", author: "octo" },
     requestedBy: { name: "admin", userId: "u1", tokenId: null },
+    requestedModels: null,
     source: "person",
     status: "queued",
     queuedAt: at(),
@@ -88,6 +89,11 @@ for (const kind of kinds) {
                 ["j2", "j1"],
             );
             assert.deepEqual(await store.jobs.list({ statuses: [] }, 10), []);
+            // The models a run was asked to use come back as given, and who asked is unchanged by them.
+            const asked = job("j5", "w2", { status: "cancelled", requestedModels: ["fav-1", "instance"] });
+            await store.jobs.put(asked);
+            assert.deepEqual(await store.jobs.get("j5"), asked);
+            assert.deepEqual((await store.jobs.get("j1"))?.requestedModels, null);
             assert.deepEqual(
                 (await store.jobs.active()).map((j) => j.id),
                 ["j1", "j2", "j3"],

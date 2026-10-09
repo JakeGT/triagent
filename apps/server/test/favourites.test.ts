@@ -105,7 +105,8 @@ describe("settings saved before favourites", () => {
         assert.deepEqual(saved.favourites, [{ id: f?.id, provider: "openai", model: "gpt-5.5-pro", name: "Careful" }]);
         assert.deepEqual([saved.defaultId, saved.provider], [f?.id, "openai"]);
         assert.deepEqual(saved.models, { openai: "gpt-5.5-pro", mistral: "codestral-latest" });
-        assert.deepEqual(await forRun(w), before);
+        // Reviews run with the same thing; people now know it by its nickname.
+        assert.deepEqual(await forRun(w), { ...before, label: "Careful" });
     });
 
     test("a provider chosen without a key is still the default favourite, saying what it needs", async () => {

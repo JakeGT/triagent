@@ -897,4 +897,36 @@ describe("time limits and stalled reviews", () => {
         );
         assert.match(parts[0]?.error ?? "", /^Stalled: /);
     });
+
+    test("a model with a token budget of its own is given that; the others, the job's", async () => {
+        const model = (name: string, extra: object = {}) => ({
+            url: "https://llm.test/v1",
+            model: name,
+            apiKey: "k".repeat(20),
+            protocol: "openai" as const,
+            provider: "openrouter",
+            label: name,
+            ...extra,
+        });
+        await runner.execute({
+            id: "budgets",
+            kind: "full",
+            title: "t",
+            leaseSeconds: 60,
+            repository: { fullName: "acme/app", cloneUrl: `${fake.url}/acme/app.git` },
+            git: { username: "x-access-token", token },
+            pr: null,
+            gitRef: "main",
+            baseRef: null,
+            headSha: null,
+            maxTokensBudget: 30_000,
+            model: model("fake/model"),
+            models: [model("fake/model"), model("fake/a", { maxTokensBudget: 12_000 }), model("fake/b", { maxTokensBudget: null })],
+        });
+        assert.equal(outcomes.get("budgets")?.status, "done");
+        const args = (logs.get("budgets") ?? [])
+            .filter((l) => l.includes("[fake-ocr] args: "))
+            .map((l) => l.replace(/^.*--color never ?/, ""));
+        assert.deepEqual(args, ["--max-tokens-budget 30000", "--max-tokens-budget 12000", ""]);
+    });
 });

@@ -106,17 +106,22 @@ describe("merging several models' reports", () => {
         );
     });
 
-    test("labels: the model's name, with its provider when two share it", () => {
+    test("labels: the nickname or the model's name, with its provider when two share it, and never the same twice", () => {
         assert.deepEqual(
-            modelLabels(
-                [
-                    { provider: "openrouter", model: "gpt-5" },
-                    { provider: "openai", model: "gpt-5" },
-                    { provider: "anthropic", model: "claude" },
-                ],
-                (id) => ({ openrouter: "OpenRouter", openai: "OpenAI" })[id] ?? id,
-            ),
+            modelLabels([
+                { model: "gpt-5", providerName: "OpenRouter" },
+                { model: "gpt-5", providerName: "OpenAI" },
+                { model: "claude", providerName: "Anthropic" },
+            ]),
             ["gpt-5 (OpenRouter)", "gpt-5 (OpenAI)", "claude"],
+        );
+        assert.deepEqual(
+            modelLabels([
+                { name: "Fast", model: "gpt-5-mini", providerName: "OpenAI" },
+                { name: null, model: "Fast", providerName: "OpenAI" },
+                { name: "Careful", model: "gpt-5", providerName: "OpenAI" },
+            ]),
+            ["Fast (OpenAI)", "Fast (OpenAI) #2", "Careful"],
         );
     });
 });
@@ -124,8 +129,19 @@ describe("merging several models' reports", () => {
 describe("reviews with several models, end to end", () => {
     let env: ReviewEnv;
     const ws = "multi";
-    const models = (list: { provider: string; model: string }[]) =>
-        env.t.request(`/api/v1/w/${ws}/p/app/settings/automation`, { method: "PATCH", session: env.admin, body: { models: list } });
+    /** The id of the favourite that is this model, added to the workspace's favourites first if it isn't one. */
+    const favourite = async (model: string, provider = "openrouter"): Promise<string> => {
+        const url = `/api/v1/w/${ws}/settings/models/favourites`;
+        type Fav = { id: string; provider: string; model: string };
+        const is = (f: Fav) => f.provider === provider && f.model === model;
+        const have = (await env.t.request(url, { session: env.admin })).body.favourites.find(is);
+        if (have) return have.id;
+        const added = await env.t.request(url, { method: "POST", session: env.admin, body: { provider, model } });
+        assert.equal(added.status, 201, added.text);
+        return added.body.favourites.find(is).id;
+    };
+    const models = (ids: string[]) =>
+        env.t.request(`/api/v1/w/${ws}/p/app/settings/automation`, { method: "PATCH", session: env.admin, body: { models: { all: ids } } });
     const start = async (body: object) => {
         const r = await env.t.request(`/api/v1/w/${ws}/p/app/reviews`, { method: "POST", session: env.admin, body });
         assert.equal(r.status, 201, r.text);
@@ -140,24 +156,20 @@ describe("reviews with several models, end to end", () => {
     });
     after(() => env.close());
 
-    test("the project's settings take up to three models, each once, from known providers", async () => {
-        assert.equal((await models([{ provider: "nope", model: "x" }])).status, 400);
-        const twice = await models([
-            { provider: "openrouter", model: "fake/model" },
-            { provider: "openrouter", model: "fake/model" },
-        ]);
+    test("the project's settings take up to three models, each once, from the workspace's favourites", async () => {
+        const unknown = await models(["nope"]);
+        assert.equal(unknown.status, 400);
+        assert.match(unknown.text, /isn't one of this workspace's favourite models/);
+        const one = await favourite("fake/model");
+        const twice = await models([one, one]);
         assert.equal(twice.status, 400);
-        assert.match(twice.text, /only be listed once/);
-        const four = await models(["a", "b", "c", "d"].map((m) => ({ provider: "openrouter", model: `fake/${m}` })));
+        assert.match(twice.text, /only be chosen once/);
+        const four = await models([one, await favourite("fake/b"), await favourite("fake/c"), await favourite("fake/d")]);
         assert.equal(four.status, 400);
     });
 
     test("each model reviews; their findings are merged, and each model's own record is kept", async () => {
-        const set = await models([
-            { provider: "openrouter", model: "fake/model" },
-            { provider: "openrouter", model: "fake/wordy-extra" },
-            { provider: "openrouter", model: "fake/fail" },
-        ]);
+        const set = await models([await favourite("fake/model"), await favourite("fake/wordy-extra"), await favourite("fake/fail")]);
         assert.equal(set.status, 200, set.text);
         const run = await finished(env, ws, (await start({ kind: "full", branch: "main" })).id);
 
@@ -223,7 +235,7 @@ describe("reviews with several models, end to end", () => {
     });
 
     test("a listed model without a key keeps reviews waiting, saying which", async () => {
-        assert.equal((await models([{ provider: "anthropic", model: "claude-test" }])).status, 200);
+        assert.equal((await models([await favourite("claude-test", "anthropic")])).status, 200);
         const queued = await start({ kind: "full", branch: "main" });
         await new Promise((r) => setTimeout(r, 400));
         const list = (await env.t.request(`/api/v1/w/${ws}/runs?project=app`, { session: env.admin })).body;

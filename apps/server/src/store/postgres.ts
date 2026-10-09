@@ -280,7 +280,9 @@ const toJob = (r: Row): Job => ({
     headSha: r.head_sha,
     baseSha: r.base_sha,
     pr: r.pr,
-    requestedBy: r.requested_by,
+    // The models a run was asked to use are kept with who asked (see `put`).
+    requestedBy: (({ models: _m, ...by }) => by)(r.requested_by),
+    requestedModels: r.requested_by.models ?? null,
     source: r.source,
     status: r.status,
     queuedAt: iso(r.queued_at),
@@ -928,7 +930,8 @@ export class PostgresStore implements Store {
                     head_sha: j.headSha,
                     base_sha: j.baseSha,
                     pr: j.pr ? json(this.sql, j.pr) : null,
-                    requested_by: json(this.sql, j.requestedBy),
+                    // The models asked for go with who asked: there's no column of their own.
+                    requested_by: json(this.sql, { ...j.requestedBy, ...(j.requestedModels ? { models: j.requestedModels } : {}) }),
                     source: j.source,
                     status: j.status,
                     queued_at: j.queuedAt,

@@ -276,6 +276,7 @@ export class Tutorial {
             baseSha: null,
             pr: spec.pr,
             requestedBy: { name: EXAMPLE_PEOPLE.sam, userId: null, tokenId: null },
+            requestedModels: null,
             source: "person",
             status: spec.status,
             queuedAt,

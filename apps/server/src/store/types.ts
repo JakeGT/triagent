@@ -342,17 +342,34 @@ export interface Job {
     result: Record<string, unknown> | null;
     error: string | null;
     /**
+     * The models this run was asked to use (favourite models' ids, or "instance"), or null to use the
+     * project's for this kind of review. Postgres keeps it inside `requested_by`.
+     */
+    requestedModels: string[] | null;
+    /**
      * The model it ran with, set when a runner claims it, and the token budget it was given (with the
      * instance key, out of the workspace's allowance: set aside until it finishes, and charged in full
-     * if it ends without saying what it used).
+     * if it ends without saying what it used). What's recorded here is as it was then: renaming or
+     * removing a favourite later doesn't change it.
      */
     model: {
+        /** The favourite it was (or "instance"); absent before favourites could be chosen, null when it was none. */
+        id?: string | null;
         provider: string;
         model: string;
+        /** How people knew it: the favourite's nickname, or its name. */
+        label?: string;
         keySource: "workspace" | "instance";
         budget?: number | null;
-        /** Every model, in order, when it runs with several (the first is the one above). */
-        models?: { provider: string; model: string; label: string }[];
+        /** Every model, in order, when it runs with several (the first is the one above), each with whose key paid and its own budget. */
+        models?: {
+            id?: string | null;
+            provider: string;
+            model: string;
+            label: string;
+            keySource?: "workspace" | "instance";
+            budget?: number | null;
+        }[];
     } | null;
     /** The credentials handed to the runner, sealed, so log lines can be redacted; cleared when it ends. */
     credentials: string | null;

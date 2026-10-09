@@ -8,7 +8,7 @@ import type { RawComment, RawReport } from "./report.ts";
 
 /** Lines apart that still count as the same place: models point at the same code a line or two differently. */
 const LINE_SLACK = 3;
-/** At most this many models' reports are merged (projects list up to three). */
+/** At most this many models review a change, and have their reports merged. */
 export const MAX_MODELS = 3;
 
 export interface ModelReport {
@@ -125,7 +125,18 @@ export function mergeReports(parts: readonly ModelReport[]): RawReport {
     };
 }
 
-/** Names for a project's models: the model's own, with its provider when two in the list share it. */
-export function modelLabels(models: readonly { provider: string; model: string }[], providerName: (id: string) => string): string[] {
-    return models.map((m) => (models.filter((n) => n.model === m.model).length > 1 ? `${m.model} (${providerName(m.provider)})` : m.model));
+/**
+ * Names for a review's models: each one's nickname or name, with its provider when two in the review share
+ * that, and a number if they still do, so no two are known by the same label.
+ */
+export function modelLabels(models: readonly { name?: string | null; model: string; providerName: string }[]): string[] {
+    const plain = models.map((m) => m.name ?? m.model);
+    const seen = new Map<string, number>();
+    return plain
+        .map((p, i) => (plain.filter((x) => x === p).length > 1 ? `${p} (${models[i]?.providerName})` : p))
+        .map((label) => {
+            const n = (seen.get(label) ?? 0) + 1;
+            seen.set(label, n);
+            return n > 1 ? `${label} #${n}` : label;
+        });
 }

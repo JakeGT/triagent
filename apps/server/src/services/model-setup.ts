@@ -107,6 +107,8 @@ export type SecretKind = "key" | "accessKeyId";
 export const MODEL_NAME = /^[\w.:/@+-]{1,150}$/;
 export const MAX_FAVOURITES = 20;
 export const MAX_FAVOURITE_NAME = 40;
+/** How many are read back: more than people can add, since adopting projects' old lists may pass that. */
+const MAX_KEPT_FAVOURITES = 200;
 const FALLBACK = "openrouter";
 const INSTANCE: SecretScope = { workspaceId: null, projectId: null };
 const INSTANCE_KEY = "instance-model";
@@ -145,7 +147,7 @@ const same = (f: Favourite, provider: string, model: string) => f.provider === p
 
 function cleanFavourites(value: unknown): Favourite[] {
     const out: Favourite[] = [];
-    for (const raw of Array.isArray(value) ? value.slice(0, MAX_FAVOURITES) : []) {
+    for (const raw of Array.isArray(value) ? value.slice(0, MAX_KEPT_FAVOURITES) : []) {
         const f = (raw && typeof raw === "object" ? raw : {}) as Partial<Favourite>;
         if (typeof f.id !== "string" || !f.id || typeof f.provider !== "string" || typeof f.model !== "string") continue;
         if (!providerById(f.provider) || !MODEL_NAME.test(f.model)) continue;
@@ -362,6 +364,39 @@ export class ModelSetup {
     async favourites(repos: Repos, place: Place): Promise<FavouritesView> {
         const { favourites, defaultId } = await this.view(repos, place);
         return { favourites, defaultId };
+    }
+
+    /** The favourite reviews use when nothing else is chosen, if there is one. */
+    async defaultFavourite(repos: Repos, workspace: Workspace): Promise<Favourite | null> {
+        const stored = await this.stored(repos, { kind: "workspace", workspace });
+        return stored.favourites.find((f) => f.id === stored.defaultId) ?? null;
+    }
+
+    /**
+     * The ids of the favourites that are these providers' models, in order, adding those that aren't
+     * favourites yet (for projects' lists from before favourites: services/settings.ts). What isn't a
+     * provider's model at all is left out. The caller's transaction makes it happen once.
+     */
+    async adopt(repos: Repos, workspace: Workspace, refs: readonly unknown[]): Promise<string[]> {
+        const place: Place = { kind: "workspace", workspace };
+        const stored = await this.stored(repos, place);
+        const favourites = [...stored.favourites];
+        const ids: string[] = [];
+        for (const raw of refs) {
+            const ref = (raw && typeof raw === "object" ? raw : {}) as { provider?: unknown; model?: unknown };
+            if (typeof ref.provider !== "string" || typeof ref.model !== "string") continue;
+            const provider = ref.provider;
+            const model = ref.model.trim();
+            if (!providerById(provider) || !MODEL_NAME.test(model)) continue;
+            let f = favourites.find((x) => same(x, provider, model));
+            if (!f) {
+                f = { id: newId(), provider, model };
+                favourites.push(f);
+            }
+            if (!ids.includes(f.id)) ids.push(f.id);
+        }
+        if (favourites.length > stored.favourites.length) await this.save(repos, place, withDefault({ ...stored, favourites }));
+        return ids;
     }
 
     /**

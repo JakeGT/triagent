@@ -3,7 +3,7 @@
 //
 // Scheduling is fair between workspaces: the workspace whose last run started longest ago goes first,
 // oldest job first within it, under an instance-wide cap and a per-workspace cap. A job only starts
-// when its workspace's review model is ready (`models.forRun`). A runner that stops renewing its lease
+// when its models are ready (`models.forProject`). A runner that stops renewing its lease
 // loses the job, which is marked failed, saying so.
 
 import { setTimeout as sleep } from "node:timers/promises";
@@ -54,6 +54,8 @@ export interface StartInput {
     number?: number;
     branch?: string;
     base?: string;
+    /** The models for this run only: favourite models' ids, or "instance". Without any, the project's rule decides. */
+    models?: string[] | undefined;
 }
 
 export interface JobSpec {
@@ -120,8 +122,11 @@ export interface ClaimedJob {
     maxTokensBudget: number | null;
     /** The protocol OCR speaks to the model and this job's credentials for it: the first of `models`. */
     model: RunnerModel;
-    /** Every model to review with, in order, each with how people know it. One, unless the project lists several. */
-    models: (RunnerModel & { label: string })[];
+    /**
+     * Every model to review with, in order, each with how people know it. A model with a token budget of
+     * its own (the instance's, out of the workspace's allowance) says so; the others use `maxTokensBudget`.
+     */
+    models: (RunnerModel & { label: string; maxTokensBudget?: number | null })[];
 }
 
 type View = ReturnType<Runs["view"]>;
@@ -228,6 +233,10 @@ interface Part {
     provider: string;
     model: string;
     label: string;
+    keySource?: "workspace" | "instance";
+    budget?: number | null;
+    /** Its tokens are its whole budget, since it never said what it used (see `record`). */
+    estimated?: boolean;
     status: "done" | "partial" | "failed" | "cancelled";
     report: RawReport | null;
     metrics: ReturnType<typeof reportMetrics> | null;
@@ -334,6 +343,7 @@ export class Runs {
             result: job.result,
             error: job.error,
             model: job.model,
+            requestedModels: job.requestedModels,
             log: { lines: job.logLines, dropped: job.logDropped },
             ...(waiting !== undefined ? { waiting } : {}),
         };
@@ -348,10 +358,17 @@ export class Runs {
         return (await this.store.runners.list()).filter((r) => t - Date.parse(r.lastSeenAt) < RUNNER_GONE_MS);
     }
 
-    /** Whether reviews in the workspace (in one project, if given: it may list its own models) can start now, and if not, why. */
-    async readiness(workspace: Workspace, project?: Project): Promise<{ ready: boolean; reason: string | null }> {
+    /**
+     * Whether reviews in the workspace can start now, and if not, why: in one project, if given (its own
+     * models may be chosen), and for one review of it (its kind's models, or those it was asked to use).
+     */
+    async readiness(
+        workspace: Workspace,
+        project?: Project,
+        job?: Pick<Job, "kind" | "requestedModels">,
+    ): Promise<{ ready: boolean; reason: string | null }> {
         const model = project
-            ? await this.models.forProject(workspace, await this.settings.automation(this.store, project))
+            ? await this.models.forProject(workspace, project, job?.kind ?? null, job?.requestedModels ?? null)
             : await this.models.forRun(workspace);
         if (!model.ready) return { ready: false, reason: model.reason };
         if (!this.core.config.runnerSecret)
@@ -372,12 +389,13 @@ export class Runs {
         const active = everyActive.filter((j) => j.workspaceId === workspace.id);
         const only = filter.projectId ? projects.get(filter.projectId) : undefined;
         const readiness = await this.readiness(workspace, only);
-        // Each queued review waits on its own project's models.
+        // Each queued review waits on its own models: its project's for its kind, or those it was asked to use.
         const reasons = new Map<string, string | null>();
+        const waitsOn = (j: Job) => `${j.projectId} ${j.kind} ${j.requestedModels?.join(" ") ?? ""}`;
         for (const j of active) {
             const p = projects.get(j.projectId);
-            if (j.status !== "queued" || reasons.has(j.projectId) || !p) continue;
-            reasons.set(j.projectId, (await this.readiness(workspace, p)).reason);
+            if (j.status !== "queued" || reasons.has(waitsOn(j)) || !p) continue;
+            reasons.set(waitsOn(j), (await this.readiness(workspace, p, j)).reason);
         }
         const cfg = this.core.config;
         const allRunning = everyActive.filter((j) => j.status === "running").length;
@@ -411,7 +429,7 @@ export class Runs {
             running: active.filter((j) => j.status === "running" && mine(j)).map((j) => this.view(j, projects.get(j.projectId) ?? null)),
             queued: active
                 .filter((j) => j.status === "queued" && mine(j))
-                .map((j) => this.view(j, projects.get(j.projectId) ?? null, reasons.get(j.projectId) ?? busy)),
+                .map((j) => this.view(j, projects.get(j.projectId) ?? null, reasons.get(waitsOn(j)) ?? busy)),
             recent,
             counts: {
                 running: active.filter((j) => j.status === "running" && mine(j)).length,
@@ -495,15 +513,21 @@ export class Runs {
             await exists(gitRef);
             spec = specForBranch("full", gitRef, null);
         }
-        const job = await this.enqueue(actor, project, spec);
+        const models = input.models?.length ? input.models : null;
+        if (models) {
+            const workspace = await this.store.workspaces.get(project.workspaceId);
+            if (workspace) await this.settings.checkModelIds(this.store, workspace, models);
+        }
+        const job = await this.enqueue(actor, project, spec, models);
         return this.view(job, project);
     }
 
     /**
      * Queue a review. A queued job for the same thing is replaced; one already queued or running for the
-     * same commit is returned instead of queueing another.
+     * same commit is returned instead of queueing another (whichever models that one uses). `models` are
+     * this run's own (see `Models.forProject`); automatic reviews give none.
      */
-    async enqueue(actor: Actor, project: Project, spec: JobSpec): Promise<Job> {
+    async enqueue(actor: Actor, project: Project, spec: JobSpec, models: string[] | null = null): Promise<Job> {
         // The repository it's for, so it never starts on, or reports to, another if the project moves.
         const gh = await this.github.maybeFor(project).catch(() => null);
         const repository = gh ? { id: gh.repo.id, fullName: gh.repo.fullName } : null;
@@ -529,6 +553,7 @@ export class Runs {
                 projectId: project.id,
                 ...spec,
                 requestedBy: { name: actor.name, userId: actor.userId, tokenId: actor.tokenId ?? null },
+                requestedModels: models,
                 source: sourceOf(actor),
                 status: "queued",
                 queuedAt: now(),
@@ -554,7 +579,7 @@ export class Runs {
             const job = created.job;
             this.background(`Marking ${job.title} as queued on GitHub`, async () => {
                 const workspace = await this.store.workspaces.get(project.workspaceId);
-                const ready = workspace ? await this.readiness(workspace, project) : { ready: false, reason: null };
+                const ready = workspace ? await this.readiness(workspace, project, job) : { ready: false, reason: null };
                 await this.github.setStatus(
                     project,
                     job.headSha as string,
@@ -646,11 +671,14 @@ export class Runs {
                 for (const job of queuedIn.get(workspaceId) ?? []) {
                     const project = await tx.projects.get(job.projectId);
                     if (!project) continue;
-                    // Which models depends on the project; a job whose models aren't ready waits (the list says why).
+                    // Which models depends on the run, its kind and its project; a job whose models aren't ready
+                    // waits (the list says why), unless waiting can't help: then it fails, saying so.
                     const automation = await this.settings.automation(tx, project);
-                    const chosen = await this.models.forProject(workspace, automation, tx);
-                    if (!chosen.ready) continue;
-                    const model = chosen.models[0] as RunModel;
+                    const chosen = await this.models.forProject(workspace, project, job.kind, job.requestedModels, tx);
+                    if (!chosen.ready) {
+                        if (chosen.gone) await this.failQueued(tx, job, project, workspace, chosen.reason);
+                        continue;
+                    }
                     let notConnected: string | null = null;
                     try {
                         const access = await this.github.githubFor(project, tx);
@@ -665,8 +693,13 @@ export class Runs {
                         this.store.afterCommit(() => this.announce(failed, project, "finished"));
                         continue;
                     }
-                    // With the instance key, this comes out of what's left of the allowance until the run ends.
-                    const maxTokensBudget = budget(automation.maxTokensBudget, model.allowance?.remaining ?? null);
+                    // With the instance key, a model's budget comes out of what's left of the allowance until the
+                    // run ends. Each model has the project's budget to itself; only the instance's is capped.
+                    const budgets = chosen.models.map((m) => budget(automation.maxTokensBudget, m.allowance?.remaining ?? null));
+                    const model = chosen.models[0] as RunModel;
+                    // For a runner that gives every model the job's budget: the tightest, so none can overspend.
+                    const capped = budgets.filter((b): b is number => b !== null);
+                    const maxTokensBudget = chosen.models.some((m) => m.allowance) ? Math.min(...capped) : automation.maxTokensBudget;
                     const started: Job = {
                         ...job,
                         status: "running",
@@ -674,24 +707,35 @@ export class Runs {
                         runnerId: runner.id,
                         leaseExpiresAt: new Date(Date.now() + LEASE_SECONDS * 1000).toISOString(),
                         model: {
+                            id: model.id,
                             provider: model.provider,
                             model: model.model,
+                            label: model.label,
                             keySource: model.keySource,
-                            budget: maxTokensBudget,
+                            budget: budgets[0] ?? null,
                             ...(chosen.models.length > 1
-                                ? { models: chosen.models.map((m) => ({ provider: m.provider, model: m.model, label: m.label })) }
+                                ? {
+                                      models: chosen.models.map((m, i) => ({
+                                          id: m.id,
+                                          provider: m.provider,
+                                          model: m.model,
+                                          label: m.label,
+                                          keySource: m.keySource,
+                                          budget: budgets[i] ?? null,
+                                      })),
+                                  }
                                 : {}),
                         },
                         progress: { phase: "starting" },
                     };
                     await tx.jobs.put(started);
-                    return { job: started, project, workspace, models: chosen.models, automation, maxTokensBudget };
+                    return { job: started, project, workspace, models: chosen.models, budgets, automation, maxTokensBudget };
                 }
             }
             return null;
         });
         if (!picked) return null;
-        const { job, project, workspace, models, automation, maxTokensBudget } = picked;
+        const { job, project, workspace, models, budgets, automation, maxTokensBudget } = picked;
 
         // Credentials for this job only, minted now (outside the transaction: it calls GitHub).
         let token: string;
@@ -763,8 +807,33 @@ export class Runs {
             stallMinutes: automation.stallMinutes,
             maxTokensBudget,
             model: forRunner(models[0] as RunModel),
-            models: models.map((m) => ({ ...forRunner(m), label: m.label })),
+            models: models.map((m, i) => ({
+                ...forRunner(m),
+                label: m.label,
+                ...(m.allowance ? { maxTokensBudget: budgets[i] ?? null } : {}),
+            })),
         };
+    }
+
+    /** End a queued review that can never start, saying why (and telling its pull request, like a cancelled one). */
+    private async failQueued(tx: Repos, job: Job, project: Project, workspace: Workspace, error: string): Promise<void> {
+        const failed: Job = { ...job, status: "failed", finishedAt: now(), error };
+        await tx.jobs.put(failed);
+        this.store.afterCommit(() => {
+            this.announce(failed, project, "finished");
+            this.onFinished(failed, project);
+            if (failed.kind === "pr" && failed.headSha)
+                this.background(`Marking ${failed.title} as failed on GitHub`, () =>
+                    this.github.setStatus(
+                        project,
+                        failed.headSha as string,
+                        "error",
+                        "Review failed — see Triagent for details",
+                        this.runUrl(workspace, project, failed),
+                        failed.repository,
+                    ),
+                );
+        });
     }
 
     /** The job a runner says it's running, if it still is; otherwise 409 (stop working on it). */
@@ -935,12 +1004,18 @@ export class Runs {
                           ? "cancelled"
                           : "failed";
                     const time = Number(given?.seconds);
+                    // As for a run with one model: an instance-key model that never said what it used is charged
+                    // its whole budget, unless the runner reported and it never had its turn.
+                    const said = runTokens(partMetrics?.tokens ?? null, given?.tokens);
+                    const whole = m.keySource === "instance" && m.budget ? m.budget : 0;
+                    const estimated = !said && whole > 0 && (given !== undefined || !Array.isArray(input.parts));
                     return {
                         ...m,
                         status,
                         report: own,
                         metrics: partMetrics,
-                        tokens: runTokens(partMetrics?.tokens ?? null, given?.tokens),
+                        tokens: estimated ? { input: whole, output: 0, cacheRead: 0, total: whole } : said,
+                        estimated,
                         seconds: Number.isFinite(time) && time >= 0 ? Math.round(time) : null,
                         error: own ? null : (error ?? (given ? "It failed." : "It didn't run.")),
                     };
@@ -979,7 +1054,7 @@ export class Runs {
                 // or lost without a word from OCR), the whole budget it was given, marked as an estimate.
                 // Several models: what they used between them (the merged report's own figure is the first model's).
                 let tokens = parts ? sumTokens(parts.map((p) => p.tokens)) : runTokens(metrics?.tokens ?? null, held.progress.tokens);
-                const estimated = !tokens && held.model?.keySource === "instance" && Boolean(held.model.budget);
+                const estimated = !parts && !tokens && held.model?.keySource === "instance" && Boolean(held.model.budget);
                 if (estimated) {
                     const b = held.model?.budget as number;
                     tokens = { input: b, output: 0, cacheRead: 0, total: b };
@@ -1038,7 +1113,7 @@ export class Runs {
                     gaps: final === "partial" ? gaps : null,
                     counts: counts ?? null,
                     tokens,
-                    ...(estimated ? { estimatedTokens: true } : {}),
+                    ...(estimated || parts?.some((p) => p.estimated) ? { estimatedTokens: true } : {}),
                     filesReviewed: metrics?.files?.reviewed ?? null,
                     ocrVersion: metrics?.ocrVersion ?? null,
                     seconds: seconds(held.startedAt, finishedAt) ?? null,
@@ -1117,9 +1192,10 @@ export class Runs {
                             status: final === "cancelled" && p.status === "failed" ? "cancelled" : p.status,
                             model: p.model,
                             provider: p.provider,
-                            keySource: "workspace",
+                            keySource: p.keySource ?? "workspace",
                             tokens: p.tokens,
                             details: {
+                                ...(p.estimated ? { estimatedTokens: true } : {}),
                                 ...common,
                                 ocrVersion: p.metrics?.ocrVersion ?? null,
                                 runSeconds: p.seconds ?? 0,

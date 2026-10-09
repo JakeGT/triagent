@@ -128,7 +128,7 @@ class Stop extends Error {}
 const minutes = (n: number) => `${n} minute${n === 1 ? "" : "s"}`;
 
 /** The models a job reviews with, in order: those it lists, or its one model. */
-export function modelsOf(job: Pick<ClaimedJob, "model" | "models">): (RunnerModel & { label: string })[] {
+export function modelsOf(job: Pick<ClaimedJob, "model" | "models">): NonNullable<ClaimedJob["models"]> {
     return job.models?.length ? job.models : [{ ...job.model, label: job.model.model }];
 }
 
@@ -447,7 +447,6 @@ export class Runner {
                 run.say(`Reading .gitattributes from ${job.baseRef} (${fetched.base.slice(0, 7)}), not from the change.`);
             }
             run.check();
-            const args = ocrArgs(job, fetched.base, fetched.head);
             const models = modelsOf(job);
             const parts: FinishPart[] = [];
             const limit = job.timeoutMinutes ?? null;
@@ -457,6 +456,12 @@ export class Runner {
             for (const [i, model] of models.entries()) {
                 run.check();
                 const one = { ...job, model };
+                // A model with a token budget of its own (the instance's, out of an allowance) uses that, not the job's.
+                const args = ocrArgs(
+                    model.maxTokensBudget === undefined ? job : { ...job, maxTokensBudget: model.maxTokensBudget },
+                    fetched.base,
+                    fetched.head,
+                );
                 const several = models.length > 1;
                 const own = path.join(work, `home-${i}`);
                 mkdirSync(path.join(own, "tmp"), { recursive: true, mode: 0o700 });
