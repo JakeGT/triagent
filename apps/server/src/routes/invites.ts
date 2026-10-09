@@ -70,6 +70,8 @@ export const inviteRoutes: Route[] = [
         body: InviteBody.extend({ username: z.string().max(64).optional(), role: RoleSchema.optional() }),
         async handler({ services, access, body, actor }) {
             const a = access as Access;
+            if (body.username !== undefined && body.email !== undefined)
+                throw badRequest("Give either a username or an email address, not both.");
             if (body.username !== undefined) {
                 if (services.config.authMode !== "local")
                     throw badRequest("Accounts here have no usernames: invite people by email address instead.");

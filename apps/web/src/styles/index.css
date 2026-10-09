@@ -308,7 +308,9 @@
     .prose-md h1,
     .prose-md h2,
     .prose-md h3,
-    .prose-md h4 {
+    .prose-md h4,
+    .prose-md h5,
+    .prose-md h6 {
         @apply mt-4 mb-2 font-semibold;
     }
     .prose-md h1 {
@@ -341,9 +343,7 @@
     .prose-md blockquote {
         @apply border-s-4 ps-3 text-muted-foreground;
     }
-}
-
-/* Collapsible sidebar groups (from shadcn-admin). */
-.CollapsibleContent {
-    overflow: hidden;
+    .prose-md hr {
+        @apply my-4;
+    }
 }

@@ -120,6 +120,8 @@ test("ID tokens with the wrong audience, issuer or azp, expired, or badly signed
 test("the provider refusing, or being unreachable, ends on the sign-in page with a reason", async () => {
     const t = await oidcTestApp();
     assert.equal((await t.signIn(null)).location, "/sign-in?error=denied");
+    // A refusal with another sign-in's state isn't believed.
+    assert.equal((await t.signIn(null, { tamper: { state: "someone-elses-state" } })).location, "/sign-in?error=failed");
     const services = t.services;
     (services.oidc as NonNullable<typeof services.oidc>).fetch = async () => {
         throw new TypeError("fetch failed");

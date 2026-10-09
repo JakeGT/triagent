@@ -41,7 +41,7 @@ export function ChangedElsewhere({
                 <strong className="font-semibold">{message}</strong>{" "}
                 {keepsInput ? "Reload to see the latest version; what you've typed stays." : "Reloading discards your unsaved changes."}
             </p>
-            <Button size="sm" variant="outline" onClick={onReload}>
+            <Button type="button" size="sm" variant="outline" onClick={onReload}>
                 <RefreshCw /> {reloadLabel}
             </Button>
         </div>

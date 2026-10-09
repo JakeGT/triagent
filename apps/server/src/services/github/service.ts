@@ -142,7 +142,10 @@ export class Github {
                 throw new NotConnected(`The GitHub App installation on ${installation.accountLogin} is suspended. Unsuspend it on GitHub.`);
             if (!(await this.app.credentials()))
                 throw new NotConnected("The instance's GitHub App has been removed. An instance admin can set it up again.");
-            const repo = { ...(parseRepo(`https://x/${conn.fullName}`) as RepoTarget), id: conn.repositoryId };
+            const parsed = parseRepo(`https://x/${conn.fullName}`);
+            if (!parsed)
+                throw new NotConnected("This project's repository isn't recorded properly. Choose it again in its GitHub settings.");
+            const repo = { ...parsed, id: conn.repositoryId };
             return {
                 mode: "app",
                 client: this.app.clientFor(conn.installationId, conn.repositoryId, {
@@ -323,24 +326,26 @@ export class Github {
 
     async installations(workspace: Workspace) {
         const items = await this.store.githubInstallations.forWorkspace(workspace.id);
-        const out = [];
-        for (const i of items) {
-            let repositories: { id: number; fullName: string; private: boolean; defaultBranch: string }[] = [];
-            let error: string | null = null;
-            if (!i.suspended) {
-                try {
-                    repositories = (await this.app.repositories(i.id)).map((r) => ({
-                        id: r.id,
-                        fullName: r.full_name,
-                        private: r.private,
-                        defaultBranch: r.default_branch,
-                    }));
-                } catch (err) {
-                    error = (err as Error).message;
+        // Asked of GitHub side by side: one slow installation doesn't hold up the others.
+        const out = await Promise.all(
+            items.map(async (i) => {
+                let repositories: { id: number; fullName: string; private: boolean; defaultBranch: string }[] = [];
+                let error: string | null = null;
+                if (!i.suspended) {
+                    try {
+                        repositories = (await this.app.repositories(i.id)).map((r) => ({
+                            id: r.id,
+                            fullName: r.full_name,
+                            private: r.private,
+                            defaultBranch: r.default_branch,
+                        }));
+                    } catch (err) {
+                        error = (err as Error).message;
+                    }
                 }
-            }
-            out.push({ ...publicInstallation(i), repositories, error });
-        }
+                return { ...publicInstallation(i), repositories, error };
+            }),
+        );
         return { items: out };
     }
 
@@ -420,6 +425,10 @@ export class Github {
         }
         const actor: Actor = { name: user.displayName, userId: user.id, via: "web" };
         return this.core.write(actor, async (w) => {
+            // Again, as part of the link: their role may have changed while GitHub was being asked.
+            const still = await w.tx.memberships.get(workspace.id, user.id);
+            if (!still || !ROLE_PERMISSIONS[still.role].includes("secrets") || !(await w.tx.workspaces.get(workspace.id)))
+                return { redirect: back("not-allowed"), outcome: "refused" as const };
             const existing = await w.tx.githubInstallations.get(id);
             if (existing && existing.workspaceId !== workspace.id) return { redirect: back("taken"), outcome: "refused" as const };
             const record: GithubInstallation = {

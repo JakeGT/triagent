@@ -13,10 +13,10 @@ export const sha256 = (s: string) => createHash("sha256").update(s).digest("hex"
 export const randomId = (bytes = 9) => randomBytes(bytes).toString("base64url");
 export const now = () => new Date().toISOString();
 
+/** Compare in constant time, length included: digests of any two strings are the same size. */
 export function safeEqual(a: string, b: string): boolean {
-    const x = Buffer.from(a);
-    const y = Buffer.from(b);
-    return x.length === y.length && timingSafeEqual(x, y);
+    const digest = (s: string) => createHash("sha256").update(s).digest();
+    return timingSafeEqual(digest(a), digest(b));
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -51,7 +51,9 @@ export function checkNewPassword(password: unknown, username: string | null): st
     if (typeof password !== "string" || password.length < MIN_PASSWORD)
         throw new Error(`Passwords need at least ${MIN_PASSWORD} characters.`);
     if (password.length > 1024) throw new Error("Passwords can be at most 1024 characters.");
-    if (username && password.toLowerCase().includes(username.toLowerCase())) throw new Error("The password must not contain the username.");
+    // Compared as it's hashed (NFKC), so fullwidth or compatibility look-alikes of the username count too.
+    if (username && password.normalize("NFKC").toLowerCase().includes(username.normalize("NFKC").toLowerCase()))
+        throw new Error("The password must not contain the username.");
     return password;
 }
 
@@ -63,6 +65,7 @@ export class FailureLimiter {
     private readonly hits = new Map<string, { count: number; resetAt: number }>();
     private readonly limit: number;
     private readonly windowMs: number;
+    private swept = 0;
 
     constructor(limit: number, windowMs: number) {
         this.limit = limit;
@@ -81,7 +84,12 @@ export class FailureLimiter {
         const hit = this.hits.get(key);
         if (!hit || t > hit.resetAt) this.hits.set(key, { count: 1, resetAt: t + this.windowMs });
         else hit.count++;
-        if (this.hits.size > 50_000) this.sweep();
+        // Past 50k keys, drop expired ones, but at most once a minute: a spray of live keys mustn't make
+        // every failure scan the whole map. (Live keys stay counted; dropping them would undo the limit.)
+        if (this.hits.size > 50_000 && t - this.swept > 60_000) {
+            this.swept = t;
+            this.sweep();
+        }
     }
 
     clear(key: string): void {
@@ -91,7 +99,10 @@ export class FailureLimiter {
     /** Take back one counted failure (an attempt counted up front that turned out to succeed). */
     forgive(key: string): void {
         const hit = this.hits.get(key);
-        if (hit && hit.count > 0) hit.count--;
+        if (!hit) return;
+        // Nothing left to count (or the window has passed): drop the entry rather than keep a zero.
+        if (hit.count <= 1 || Date.now() > hit.resetAt) this.hits.delete(key);
+        else hit.count--;
     }
 
     sweep(): void {
@@ -116,7 +127,8 @@ export class RequestLimiter {
     allow(key: string): boolean {
         const t = Date.now();
         const b = this.buckets.get(key) ?? { tokens: this.perMinute, at: t };
-        b.tokens = Math.min(this.perMinute, b.tokens + ((t - b.at) / 60_000) * this.perMinute);
+        // max(0, …): a clock stepped backwards mustn't take tokens away.
+        b.tokens = Math.min(this.perMinute, b.tokens + (Math.max(0, t - b.at) / 60_000) * this.perMinute);
         b.at = t;
         this.buckets.set(key, b);
         if (b.tokens < 1) return false;

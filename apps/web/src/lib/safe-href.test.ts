@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeHref } from "./safe-href";
+import { localPath, safeHref } from "./safe-href";
 
 describe("safeHref", () => {
     it("allows http and https links", () => {
@@ -24,5 +24,17 @@ describe("safeHref", () => {
             undefined,
         ])
             expect(safeHref(bad), String(bad)).toBeUndefined();
+    });
+});
+
+describe("localPath", () => {
+    it("allows paths on this site", () => {
+        expect(localPath("/")).toBe("/");
+        expect(localPath("/w/acme/p/app/issues?branch=main#x")).toBe("/w/acme/p/app/issues?branch=main#x");
+    });
+
+    it("refuses anything a browser could read as another origin", () => {
+        for (const bad of ["//evil.example", "/\\evil.example", "/\tevil", "https://evil.example", "evil", "", null, undefined])
+            expect(localPath(bad), String(bad)).toBeNull();
     });
 });

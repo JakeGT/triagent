@@ -309,8 +309,8 @@ export function azureBaseUrl(endpoint: string): string {
 /** Map a provider's own model id to OpenRouter catalogue ids that could be the same model, best first. */
 export function catalogueCandidates(model: string): string[] {
     let m = model.trim().replace(/^models\//, "");
-    // Bedrock: regional inference profiles (us., eu., apac., global.) and versioned ids.
-    const bedrock = /^(?:(?:us|eu|apac|global|us-gov|ca|jp|au)\.)?anthropic\.(.+?)(?:-v\d+(?::\d+)?)?$/.exec(m);
+    // Bedrock: inference profiles (us., eu., apac., global., and any added later) and versioned ids.
+    const bedrock = /^(?:[a-z][a-z-]*\.)?anthropic\.(.+?)(?:-v\d+(?::\d+)?)?$/.exec(m);
     if (bedrock) m = bedrock[1] as string;
     if (m.includes("/")) return [];
     const maker = (

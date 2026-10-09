@@ -9,7 +9,9 @@ export function SeverityMark({ severity, was, className }: { severity: Severity;
             {/* One text node after the shape, so the flex gap doesn't open up before ", was …". */}
             <span>
                 {SEVERITY_LABEL[severity]}
-                {was && <span className="font-normal text-muted-foreground">, was {SEVERITY_LABEL[was].toLowerCase()}</span>}
+                {was && was !== severity && (
+                    <span className="font-normal text-muted-foreground">, was {SEVERITY_LABEL[was].toLowerCase()}</span>
+                )}
             </span>
         </span>
     );
@@ -23,7 +25,7 @@ export function CategoryMark({ category, was, className }: { category: Category;
     return (
         <span className={cn("text-muted-foreground", className)}>
             {CATEGORY_LABEL[category]}
-            {was && <span>, was {CATEGORY_LABEL[was].toLowerCase()}</span>}
+            {was && was !== category && <span>, was {CATEGORY_LABEL[was].toLowerCase()}</span>}
         </span>
     );
 }

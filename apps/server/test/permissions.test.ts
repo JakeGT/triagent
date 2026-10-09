@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BROWSER_ONLY, PERMISSIONS, ROLE_PERMISSIONS, SCOPE_PERMISSIONS, TOKEN_SCOPES } from "@triagent/shared";
+import { z } from "zod";
 import { needsBrowser } from "../src/http/route.ts";
 import { TOOLS } from "../src/mcp/tools.ts";
 import { testApp } from "./helpers.ts";
@@ -68,5 +69,7 @@ test("the OpenAPI document lists every route with its permission", async () => {
         const op = doc.paths[r.path]?.[r.method.toLowerCase()];
         assert.ok(op, `${r.method} ${r.path} missing from OpenAPI`);
         if (r.permission) assert.equal(op["x-permission"], r.permission);
+        // Only an object schema's fields can be listed as query parameters.
+        if (r.query) assert.ok(r.query instanceof z.ZodObject, `${r.method} ${r.path}: query isn't a z.object, so it isn't documented`);
     }
 });

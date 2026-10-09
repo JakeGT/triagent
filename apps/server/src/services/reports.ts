@@ -215,9 +215,11 @@ export class Reports {
     /** Delete a branch's report and triage (both kept in its archive). Unresolved issues need `confirm`. */
     async deleteBranch(actor: Actor, project: Project, input: { branch: unknown; confirm?: unknown }) {
         const branch = checkBranch(input.branch, "");
-        if (branch === project.defaultBranch)
-            throw badRequest(`"${branch}" is the default branch, so it can't be deleted. Upload a new report to replace it.`);
         return this.core.write(actor, async (w) => {
+            // The project as it is now: its default branch may have changed since this request loaded it.
+            const current = (await w.tx.projects.get(project.id)) ?? project;
+            if (branch === current.defaultBranch)
+                throw badRequest(`"${branch}" is the default branch, so it can't be deleted. Upload a new report to replace it.`);
             const stored = await w.tx.reports.get(project.id, branch);
             if (!stored) throw notFound(`No report for branch "${branch}".`);
             const view = await this.build(w.tx, project, branch, stored);

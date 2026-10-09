@@ -136,7 +136,9 @@ export async function oidcTestApp(env: Record<string, string> = {}, store?: Stor
         const authorizeUrl = new URL(start.location);
         options.editAuthorize?.(authorizeUrl);
         const authorize = await provider.fetch(authorizeUrl);
-        const callback = new URL(authorize.headers.get("location") ?? "");
+        const back = authorize.headers.get("location");
+        if (!back) throw new Error(`the provider answered ${authorize.status}: ${await authorize.text()}`);
+        const callback = new URL(back);
         options.editCallback?.(callback);
         const done = await request(`${callback.pathname}${callback.search}`, { cookies: { ...fromCookies, triagent_oidc: state } });
         const authorization = provider.authorizations.at(-1) as URLSearchParams;
@@ -145,6 +147,7 @@ export async function oidcTestApp(env: Record<string, string> = {}, store?: Stor
         if (!sid) return { location: done.location, session: null, authorization };
         const cookie = `triagent_sid=${sid}`;
         const me = await request("/api/v1/me", { session: { cookie, csrf: "" } });
+        if (me.status !== 200 || typeof me.body?.csrf !== "string") throw new Error(`/api/v1/me answered ${me.status}: ${me.text}`);
         return { location: done.location, session: { cookie, csrf: me.body.csrf }, authorization };
     };
 

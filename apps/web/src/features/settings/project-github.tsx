@@ -53,10 +53,11 @@ export function ProjectGithub() {
             ) : (
                 <>
                     {!canSecrets && <ReadOnlyNote>Only admins can set or clear secrets.</ReadOnlyNote>}
-                    <GithubAppConnection data={data} />
-                    <TestConnection data={data} />
-                    <GithubTokenSection data={data} />
-                    <WebhookSection data={data} />
+                    {/* Keyed by project, so a one-time secret or a pending result never shows on another project's page. */}
+                    <GithubAppConnection key={`app-${slug}`} data={data} />
+                    <TestConnection key={`test-${slug}`} data={data} />
+                    <GithubTokenSection key={`token-${slug}`} data={data} />
+                    <WebhookSection key={`webhook-${slug}`} data={data} />
                 </>
             )}
         </SettingsPage>

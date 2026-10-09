@@ -59,7 +59,7 @@ export function reviewGaps(report: unknown): ReviewGaps | null {
     return { groups: n, files, reasons, models, note };
 }
 
-const ZWSP = "​";
+const ZWSP = "\u200B"; // zero-width space
 const ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
 
 /**
@@ -69,8 +69,8 @@ const ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;
  */
 export function plain(s: string, max = 140): string {
     const flat = s.replace(/[\r\n]+/g, " ").trim();
-    // Cut before escaping, so an escape is never cut in half.
-    const short = flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+    // Cut before escaping, so an escape is never cut in half (and never between the halves of an emoji).
+    const short = flat.length > max ? `${flat.slice(0, max - 1).replace(/[\uD800-\uDBFF]$/, "")}…` : flat;
     return (
         short
             // One pass, so nothing is escaped twice: entities for &, < and >, a backslash before other punctuation.
@@ -88,6 +88,9 @@ const code = (s: string) =>
         .replace(/`/g, "'")
         .replace(/[\r\n]/g, " ")
         .slice(0, 200)}\``;
+
+/** A link target that can't end the Markdown link early: parentheses and spaces encoded (encodeURIComponent leaves parentheses). */
+const href = (url: string) => url.replace(/[()\s]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
 
 export interface CommentInput {
     marker: string;
@@ -120,7 +123,7 @@ export function commentBody(c: CommentInput): string {
             lines.push("**Most urgent:**", "");
             for (const x of top) {
                 const where = `${x.path}${x.startLine ? `:${x.startLine}` : ""}`;
-                lines.push(`- **${x.severity}** ${code(where)} [${plain(x.title)}](${c.issueUrl(x.id)})`);
+                lines.push(`- **${x.severity}** ${code(where)} [${plain(x.title)}](${href(c.issueUrl(x.id))})`);
             }
             if (c.urgent.length > top.length) lines.push(`- …and ${c.urgent.length - top.length} more`);
             lines.push("");
@@ -139,7 +142,7 @@ export function commentBody(c: CommentInput): string {
             "",
         );
     lines.push(
-        `[Triage these in Triagent](${c.issuesUrl}). Reviewed commit ${code(c.commit.slice(0, 10))}. This comment is updated on every review.`,
+        `[Triage these in Triagent](${href(c.issuesUrl)}). Reviewed commit ${code(c.commit.slice(0, 10))}. This comment is updated on every review.`,
     );
     return lines.join("\n");
 }

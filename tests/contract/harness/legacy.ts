@@ -113,7 +113,10 @@ export class LegacyTarget implements Target {
             const exited = new Promise((r) => this.child.once("exit", r));
             this.child.kill("SIGTERM");
             await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
-            if (this.child.exitCode === null) this.child.kill("SIGKILL");
+            if (this.child.exitCode === null) {
+                this.child.kill("SIGKILL");
+                await exited;
+            }
         }
         await rm(this.dataDir, { recursive: true, force: true });
     }

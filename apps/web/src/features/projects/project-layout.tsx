@@ -37,7 +37,8 @@ export function ProjectLayout() {
         );
     return (
         <ProjectContext value={value}>
-            <Outlet />
+            {/* Keyed by project: switching to one already cached mustn't keep the last one's unsaved edits. */}
+            <Outlet key={`${ws}/${slug}`} />
         </ProjectContext>
     );
 }

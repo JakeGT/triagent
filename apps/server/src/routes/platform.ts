@@ -31,6 +31,7 @@ Everything lives in a workspace. An API token belongs to one workspace; send it 
 
 export function platformRoutes(services: Services, all: () => Route[]): Route[] {
     const mcp = createMcp(services);
+    let document: ReturnType<typeof openapi> | null = null;
     return [
         route({
             method: "GET",
@@ -54,7 +55,9 @@ export function platformRoutes(services: Services, all: () => Route[]): Route[] 
             tag: "Platform",
             summary: "This API, as OpenAPI 3.1",
             async handler() {
-                return json(openapi(all(), services.config.publicOrigin));
+                // The routes are fixed once the server is up, so the document is built once.
+                document ??= openapi(all(), services.config.publicOrigin);
+                return json(document);
             },
         }),
         route({

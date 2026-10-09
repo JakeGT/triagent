@@ -251,7 +251,9 @@ export function LineChart({
     series: Series[];
     format?(v: number): string;
 }) {
-    const [hover, setHover] = useState<number | null>(null);
+    const [hovered, setHover] = useState<number | null>(null);
+    // A column from before the data shrank (a shorter range) points at nothing.
+    const hover = hovered !== null && hovered < points.length ? hovered : null;
     const max = niceMax(Math.max(0, ...points.flatMap((p) => series.map((s) => p.values[s.key] ?? 0))));
     const x = (i: number) => ((i + 0.5) / points.length) * 100;
     const y = (v: number) => 100 - (v / max) * 100;
@@ -331,7 +333,7 @@ export function BarList({ rows, max, label }: { rows: BarRow[]; max?: number; la
                     <span className="h-2 rounded-full bg-muted" aria-hidden="true">
                         <span
                             className={cn("block h-full rounded-full", r.barClass ?? "bg-chart-1")}
-                            style={{ width: `${(r.value / top) * 100}%` }}
+                            style={{ width: `${Math.min(100, Math.max(0, (r.value / top) * 100))}%` }}
                         />
                     </span>
                     <span className="text-end tabular-nums">{r.display ?? r.value.toLocaleString("en-GB")}</span>

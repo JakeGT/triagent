@@ -105,19 +105,20 @@ export const test = base.extend<Fixtures>({
         await use(api);
         await api.ctx.dispose();
     },
-    // Runs for every test: any CSP violation, from any page the test visits, fails it.
+    // Runs for every test: any CSP violation, from any page in the test's browser context (popups
+    // included), fails it. Contexts a test opens itself are not watched.
     cspViolations: [
-        async ({ page }, use) => {
+        async ({ context }, use) => {
             const violations: string[] = [];
-            await page.exposeFunction("__reportCspViolation", (text: string) => violations.push(text));
-            await page.addInitScript(() => {
+            await context.exposeBinding("__reportCspViolation", (_source, text: string) => violations.push(text));
+            await context.addInitScript(() => {
                 document.addEventListener("securitypolicyviolation", (e) => {
                     (window as unknown as { __reportCspViolation(t: string): void }).__reportCspViolation(
                         `${e.violatedDirective} blocked ${e.blockedURI || "inline"} (${e.sourceFile}:${e.lineNumber})`,
                     );
                 });
             });
-            page.on("console", (msg) => {
+            context.on("console", (msg) => {
                 if (msg.type() === "error" && /Content Security Policy|Refused to (apply|load|execute)/i.test(msg.text()))
                     violations.push(msg.text());
             });

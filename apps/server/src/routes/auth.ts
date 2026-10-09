@@ -115,7 +115,7 @@ export const authRoutes: Route[] = [
                     return c.redirect("/invite-required", 302);
                 }
                 setSessionCookie(c, services, result.cookie);
-                return c.redirect(next, 302);
+                return c.redirect(safeNext(next), 302);
             } catch (err) {
                 if (err instanceof OidcError) return toSignIn(c, err.code);
                 console.error("Signing in through the identity provider failed:", err instanceof Error ? err.message : err);

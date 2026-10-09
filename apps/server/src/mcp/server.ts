@@ -11,6 +11,9 @@ import { TOOLS, type Tool, type ToolContext, toolSchema } from "./tools.ts";
 
 export const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
+/** The most JSON-RPC messages one POST may carry. */
+export const MAX_BATCH = 50;
+
 const INSTRUCTIONS = `Triagent holds Open Code Review findings for the projects in one workspace (your token's).
 
 - Call list_projects and pass "project" to the other tools, matching the repository you're working in by its git remote. Most tools also take "branch" (default: the project's default branch).
@@ -103,10 +106,12 @@ export function createMcp(services: Services) {
                 });
             case "tools/call": {
                 const r = await call(ctx, msg.params);
-                return "error" in r && r.error ? rpcError(msg.id, r.error[0], r.error[1]) : reply((r as { result: unknown }).result);
+                if ("error" in r && r.error) return notification ? null : rpcError(msg.id, r.error[0], r.error[1]);
+                return reply((r as { result: unknown }).result);
             }
             default:
-                if (msg.method.startsWith("notifications/")) return null;
+                // A notification never gets a reply, not even an error.
+                if (notification || msg.method.startsWith("notifications/")) return null;
                 return rpcError(msg.id, -32601, `Method not found: ${msg.method}`);
         }
     }
@@ -122,7 +127,13 @@ export function createMcp(services: Services) {
         };
         if (Array.isArray(body)) {
             if (!body.length) return [400, rpcError(null, -32600, "Empty batch")];
-            const out = (await Promise.all(body.map((m) => dispatch(m as RpcMessage, ctx)))).filter(Boolean);
+            if (body.length > MAX_BATCH) return [400, rpcError(null, -32600, `Too many messages in one batch: send at most ${MAX_BATCH}.`)];
+            // One after another, in the order sent, so a batch can't fan out into many tool calls at once.
+            const out = [];
+            for (const m of body) {
+                const reply = await dispatch(m as RpcMessage, ctx);
+                if (reply) out.push(reply);
+            }
             return out.length ? [200, out] : [202, null];
         }
         const out = await dispatch(body as RpcMessage, ctx);

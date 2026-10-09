@@ -51,6 +51,16 @@ function freeze<T>(value: T): T {
 }
 
 const own = <T>(value: T): T => freeze(structuredClone(value));
+
+function runHooks(hooks: (() => void)[]): void {
+    for (const hook of hooks) {
+        try {
+            hook();
+        } catch (err) {
+            console.error("A hook run after a saved change failed:", err);
+        }
+    }
+}
 const key = (...parts: string[]) => parts.join("\0");
 
 /** A keyed table whose changes can be undone. */
@@ -193,20 +203,14 @@ export class MemoryStore implements Store {
         const result = this.queue.then(run, run);
         this.queue = result.catch(() => {});
         const value = await result;
-        for (const hook of tx.after) {
-            try {
-                hook();
-            } catch (err) {
-                console.error("A hook run after a saved change failed:", err);
-            }
-        }
+        runHooks(tx.after);
         return value;
     }
 
     afterCommit(fn: () => void): void {
         const tx = this.context.getStore();
         if (tx) tx.after.push(fn);
-        else fn();
+        else runHooks([fn]);
     }
 
     /** Run one write as its own transaction, unless it's already part of one. */
@@ -239,14 +243,12 @@ export class MemoryStore implements Store {
         listForUser: async (userId) => this.t.sessions.values().filter((s) => s.userId === userId),
         put: (session) => this.write(() => this.t.sessions.set(session.idHash, session)),
         delete: (idHash) => this.write(() => this.t.sessions.delete(idHash)),
-        sweep: async (idleBefore, createdBefore) => {
-            const stale = this.t.sessions.values().filter((s) => s.lastSeenAt < idleBefore || s.createdAt < createdBefore);
-            if (stale.length)
-                await this.write(() => {
-                    for (const s of stale) this.t.sessions.delete(s.idHash);
-                });
-            return stale.length;
-        },
+        sweep: (idleBefore, createdBefore) =>
+            this.transaction(async () => {
+                const stale = this.t.sessions.values().filter((s) => s.lastSeenAt < idleBefore || s.createdAt < createdBefore);
+                for (const s of stale) this.t.sessions.delete(s.idHash);
+                return stale.length;
+            }),
     };
 
     workspaces: Repos["workspaces"] = {
@@ -320,9 +322,13 @@ export class MemoryStore implements Store {
         get: async (projectId, branch) => this.t.reports.get(key(projectId, branch)),
         branches: async (projectId) => this.t.reports.values().filter((r) => r.projectId === projectId),
         put: async (report) => {
-            const stored: StoredReport = { ...report, version: ++this.version };
-            await this.write(() => this.t.reports.set(key(report.projectId, report.branch), stored));
-            return this.t.reports.get(key(report.projectId, report.branch)) as StoredReport;
+            const k = key(report.projectId, report.branch);
+            let stored!: StoredReport;
+            await this.write(() => {
+                this.t.reports.set(k, { ...report, version: ++this.version });
+                stored = this.t.reports.get(k) as StoredReport;
+            });
+            return stored;
         },
         delete: (projectId, branch) => this.write(() => this.t.reports.delete(key(projectId, branch))),
         archive: (entry, keep) =>
@@ -334,7 +340,7 @@ export class MemoryStore implements Store {
         renameArchive: (projectId, from, to) =>
             this.write(() => {
                 const moving = this.t.archive.get(key(projectId, from));
-                if (!moving) return;
+                if (!moving || from === to) return;
                 const existing = this.t.archive.get(key(projectId, to)) ?? [];
                 const merged = [...existing, ...moving.map((a) => ({ ...a, branch: to }))].sort((a, b) =>
                     a.archivedAt.localeCompare(b.archivedAt),
@@ -429,13 +435,10 @@ export class MemoryStore implements Store {
             return taken.link;
         },
         count: async () => this.t.uploadLinks.rows.size,
-        sweep: async (now) => {
-            const expired = this.t.uploadLinks.values().filter((l) => l.expiresAt <= now);
-            if (expired.length)
-                await this.write(() => {
-                    for (const l of expired) this.t.uploadLinks.delete(l.hash);
-                });
-        },
+        sweep: (now) =>
+            this.write(() => {
+                for (const l of this.t.uploadLinks.values()) if (l.expiresAt <= now) this.t.uploadLinks.delete(l.hash);
+            }),
     };
 
     secrets: Repos["secrets"] = {

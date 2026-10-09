@@ -36,6 +36,7 @@ export function BulkBar({ ids, onClear, refs }: { ids: string[]; onClear(): void
                 onSuccess: (r) => {
                     toast.success(`${what}: ${plural(r.changed, "issue")} changed.`);
                     setAssignOpen(false);
+                    setAssignee("");
                 },
             },
         );
@@ -77,18 +78,25 @@ export function BulkBar({ ids, onClear, refs }: { ids: string[]; onClear(): void
                         <Label htmlFor={assigneeId}>Assign to</Label>
                         <Input id={assigneeId} value={assignee} onChange={(e) => setAssignee(e.target.value)} maxLength={64} />
                         <div className="flex flex-wrap gap-2">
-                            <Button type="submit" size="sm" disabled={!assignee.trim()}>
+                            <Button type="submit" size="sm" disabled={!assignee.trim() || bulk.isPending}>
                                 Assign
                             </Button>
                             <Button
                                 type="button"
                                 size="sm"
                                 variant="outline"
+                                disabled={bulk.isPending}
                                 onClick={() => apply({ assignee: me.user.displayName }, "Assigned to you")}
                             >
                                 Assign to me
                             </Button>
-                            <Button type="button" size="sm" variant="ghost" onClick={() => apply({ assignee: null }, "Unassigned")}>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={bulk.isPending}
+                                onClick={() => apply({ assignee: null }, "Unassigned")}
+                            >
                                 Unassign
                             </Button>
                         </div>

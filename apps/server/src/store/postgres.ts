@@ -345,10 +345,13 @@ export class PostgresStore implements Store {
     readonly schema: string | undefined;
     private readonly maxAttempts: number;
     private readonly context = new AsyncLocalStorage<Tx>();
-    /** Connections holding instance-wide advisory locks (see holdLock), by lock name. */
-    private readonly locks = new Map<string, postgres.ReservedSql>();
+    private readonly url: string;
+    /** The connection holding instance-wide advisory locks (see holdLock), and the names this process took. */
+    private lockSql: Sql | null = null;
+    private readonly locks = new Set<string>();
 
     constructor(url: string, options: PostgresOptions = {}) {
+        this.url = url;
         this.sql = connect(url, options);
         this.schema = options.schema;
         this.maxAttempts = options.maxAttempts ?? 10;
@@ -440,28 +443,34 @@ export class PostgresStore implements Store {
 
     async holdLock(name: string): Promise<boolean> {
         const key = `triagent:${this.schema ?? "public"}:${name}`;
-        const held = this.locks.get(name);
-        if (held) {
-            // Still ours while its connection is alive.
-            try {
-                await held`select 1`;
-                return true;
-            } catch {
+        // One connection of its own holds every lock. If it drops, the pool behind it reconnects as a new
+        // session, which doesn't hold them, so ask Postgres rather than trusting what this process took.
+        this.lockSql ??= postgres(this.url, {
+            max: 1,
+            max_lifetime: null,
+            onnotice: () => {},
+            connection: { application_name: "triagent" },
+        });
+        const sql = this.lockSql;
+        try {
+            if (this.locks.has(name)) {
+                const [row] = await sql`
+                    select exists (
+                        select 1 from pg_locks
+                        where locktype = 'advisory' and pid = pg_backend_pid() and granted and objsubid = 1
+                            and ((classid::bigint << 32) | objid::bigint) = hashtextextended(${key}, 0)
+                    ) as ok`;
+                if (row?.ok) return true;
                 this.locks.delete(name);
             }
-        }
-        const conn = await this.sql.reserve();
-        try {
-            const [row] = await conn`select pg_try_advisory_lock(hashtextextended(${key}, 0)) as ok`;
-            if (row?.ok) {
-                this.locks.set(name, conn);
-                return true;
-            }
+            const [row] = await sql`select pg_try_advisory_lock(hashtextextended(${key}, 0)) as ok`;
+            if (!row?.ok) return false;
+            this.locks.add(name);
+            return true;
         } catch {
             // the database is unreachable: someone else may have it
+            return false;
         }
-        conn.release();
-        return false;
     }
 
     async ping(): Promise<void> {
@@ -469,9 +478,8 @@ export class PostgresStore implements Store {
     }
 
     async close(): Promise<void> {
-        for (const conn of this.locks.values()) conn.release();
         this.locks.clear();
-        await this.sql.end({ timeout: 5 });
+        await Promise.all([this.sql.end({ timeout: 5 }), this.lockSql?.end({ timeout: 5 })]);
     }
 
     // ---- repositories ------------------------------------------------------------------
@@ -942,7 +950,7 @@ export class PostgresStore implements Store {
                         where true
                         ${f.workspaceId ? sql`and workspace_id = ${f.workspaceId}` : sql``}
                         ${f.projectId ? sql`and project_id = ${f.projectId}` : sql``}
-                        ${f.statuses ? sql`and status in ${sql(f.statuses as string[])}` : sql``}
+                        ${f.statuses ? (f.statuses.length ? sql`and status in ${sql(f.statuses as string[])}` : sql`and false`) : sql``}
                         order by queued_at desc, seq desc
                         limit ${limit}`,
                 )

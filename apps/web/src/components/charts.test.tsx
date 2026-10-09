@@ -161,3 +161,14 @@ describe("analytics helpers", () => {
         expect(searchModels(models, "gpt")).toEqual([]);
     });
 });
+
+describe("LineChart hover", () => {
+    it("drops a hovered column that no longer exists once the data shrinks", () => {
+        const { container, rerender } = render(<LineChart points={POINTS} series={SERIES} />);
+        const surface = container.querySelector(".absolute.inset-0:not(svg)") as HTMLElement;
+        fireEvent.pointerMove(surface, { clientX: 10_000 });
+        expect(container.querySelectorAll(".w-px.bg-border")).toHaveLength(1);
+        rerender(<LineChart points={POINTS.slice(0, 1)} series={SERIES} />);
+        expect(container.querySelectorAll(".w-px.bg-border")).toHaveLength(0);
+    });
+});

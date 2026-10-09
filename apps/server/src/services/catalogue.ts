@@ -40,7 +40,8 @@ export interface CatalogueOptions {
 
 /** OpenRouter's prices are US$ per token, as strings; negative means "varies" (routers). */
 function perMillion(v: unknown): number | null {
-    const n = typeof v === "string" || typeof v === "number" ? Number(v) : Number.NaN;
+    // An empty string is a missing price, not a free one (Number("") is 0).
+    const n = (typeof v === "string" && v.trim()) || typeof v === "number" ? Number(v) : Number.NaN;
     return Number.isFinite(n) && n >= 0 ? Math.round(n * 1e6 * 1e6) / 1e6 : null;
 }
 
@@ -102,8 +103,8 @@ export class Catalogue {
             if (!res.ok) throw new Error(`OpenRouter answered ${res.status}.`);
             if (Number(res.headers.get("content-length") ?? 0) > MAX_BYTES)
                 throw new Error("OpenRouter's model list is unexpectedly large.");
-            const text = await res.text();
-            if (text.length > MAX_BYTES) throw new Error("OpenRouter's model list is unexpectedly large.");
+            const text = await readCapped(res, MAX_BYTES);
+            if (text === null) throw new Error("OpenRouter's model list is unexpectedly large.");
             const models = parseCatalogue(JSON.parse(text));
             this.models = models;
             this.byId = new Map(models.map((m) => [m.id, m]));
@@ -113,7 +114,7 @@ export class Catalogue {
         } catch (err) {
             // Keep any older copy; just say it couldn't be refreshed.
             this.failedAt = this.options.now();
-            const e = err as Error;
+            const e = err instanceof Error ? err : new Error(String(err));
             this.error =
                 e.name === "TimeoutError" || e.name === "AbortError"
                     ? "OpenRouter didn't answer in time."
@@ -149,4 +150,23 @@ export class Catalogue {
         await this.refresh();
         return this.byId;
     }
+}
+
+/** A response's body as text, or null once it's more than `max` bytes (read no further than that, whatever its length header says). */
+export async function readCapped(res: Response, max: number): Promise<string | null> {
+    if (!res.body) return "";
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > max) {
+            await reader.cancel().catch(() => {});
+            return null;
+        }
+        chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString("utf8");
 }

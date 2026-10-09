@@ -75,8 +75,8 @@ export function loadConfig(env: Env = process.env): RunnerConfig {
         throw new ConfigError(
             "Set TRIAGENT_RUNNER_SECRET_FILE (or TRIAGENT_RUNNER_SECRET): the secret shared with the server, at least 32 characters.",
         );
-    const llmTimeout = env.OCR_LLM_TIMEOUT || null;
-    if (llmTimeout && !/^\d{1,5}$/.test(llmTimeout)) throw new ConfigError("OCR_LLM_TIMEOUT must be a number of seconds.");
+    // Seconds; 0 would time out every model call at once.
+    const llmTimeout = env.OCR_LLM_TIMEOUT ? String(whole(env, "OCR_LLM_TIMEOUT", 0, 1, 86_400)) : null;
     const port = env.RUNNER_HEALTH_PORT ? whole(env, "RUNNER_HEALTH_PORT", 0, 1, 65535) : null;
     return {
         serverUrl,

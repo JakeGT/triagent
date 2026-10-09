@@ -32,6 +32,12 @@ export function ActivityPage() {
     const navigate = useNavigate();
     const filter = search.branch ?? "";
     const [choice, setChoice] = useState(filter);
+    // Follow the address when it changes under the form (back/forward, a link).
+    const [shown, setShown] = useState(filter);
+    if (shown !== filter) {
+        setShown(filter);
+        setChoice(filter);
+    }
     const branches = useQuery(branchesQuery(ws, slug));
 
     const activity = useInfiniteQuery({

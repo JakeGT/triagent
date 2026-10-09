@@ -43,9 +43,9 @@ export function ReadOnlyNote({ children = "Only admins of this workspace can cha
 }
 
 /** What a page's settings add up to ("Ready: …"), shown first. */
-export function StatusNote({ children, ...props }: { children: ReactNode } & React.ComponentProps<"p">) {
+export function StatusNote({ children, className, ...props }: { children: ReactNode } & React.ComponentProps<"p">) {
     return (
-        <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm" {...props}>
+        <p className={cn("rounded-md border bg-muted/40 px-3 py-2 text-sm", className)} {...props}>
             {children}
         </p>
     );

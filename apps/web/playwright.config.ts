@@ -10,25 +10,31 @@ import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { ADMIN_PASSWORD, ADMIN_USER, OIDC_CLIENT_SECRET } from "./e2e/constants";
 
-function freePort(): Promise<number> {
-    return new Promise((resolve, reject) => {
-        const server = net.createServer();
-        server.unref();
-        server.on("error", reject);
-        server.listen(0, "127.0.0.1", () => {
-            const { port } = server.address() as net.AddressInfo;
-            server.close(() => resolve(port));
-        });
-    });
+/** Ports free right now, all different: each is held until every one has been chosen. */
+async function freePorts(count: number): Promise<number[]> {
+    const servers = await Promise.all(
+        Array.from(
+            { length: count },
+            () =>
+                new Promise<net.Server>((resolve, reject) => {
+                    const server = net.createServer();
+                    server.on("error", reject);
+                    server.listen(0, "127.0.0.1", () => resolve(server));
+                }),
+        ),
+    );
+    const ports = servers.map((server) => (server.address() as net.AddressInfo).port);
+    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+    return ports;
 }
 
-// Workers load this file again: they inherit the port chosen by the runner through the environment.
-process.env.E2E_PORT ??= String(await freePort());
-process.env.E2E_OIDC_PORT ??= String(await freePort());
-process.env.E2E_PROVIDER_PORT ??= String(await freePort());
-process.env.E2E_GITHUB_PORT ??= String(await freePort());
-process.env.E2E_RUNNER_PORT ??= String(await freePort());
-process.env.E2E_TUTORIAL_PORT ??= String(await freePort());
+// Workers load this file again: they inherit the ports chosen by the runner through the environment.
+const PORT_VARS = ["E2E_PORT", "E2E_OIDC_PORT", "E2E_PROVIDER_PORT", "E2E_GITHUB_PORT", "E2E_RUNNER_PORT", "E2E_TUTORIAL_PORT"];
+const unset = PORT_VARS.filter((name) => !process.env[name]);
+const ports = await freePorts(unset.length);
+unset.forEach((name, i) => {
+    process.env[name] = String(ports[i]);
+});
 // Made up for each run: shared by the end-to-end server and its runner.
 process.env.E2E_RUNNER_SECRET ??= randomBytes(32).toString("base64url");
 const RUNNER_SECRET = process.env.E2E_RUNNER_SECRET;

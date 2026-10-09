@@ -31,12 +31,11 @@ export function requestTour(): void {
     for (const l of listeners) l();
 }
 
+const subscribe = (l: () => void) => {
+    listeners.add(l);
+    return () => listeners.delete(l);
+};
+
 export function useTourRequests(): number {
-    return useSyncExternalStore(
-        (l) => {
-            listeners.add(l);
-            return () => listeners.delete(l);
-        },
-        () => requested,
-    );
+    return useSyncExternalStore(subscribe, () => requested);
 }

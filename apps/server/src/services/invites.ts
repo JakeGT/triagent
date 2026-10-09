@@ -16,7 +16,8 @@ const EMAIL = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
 
 export function inviteStatus(i: Invite, at = Date.now()): "pending" | "expired" | "accepted" {
     if (i.acceptedAt) return "accepted";
-    return Date.parse(i.expiresAt) < at ? "expired" : "pending";
+    // Written this way round so an unreadable date counts as expired.
+    return Date.parse(i.expiresAt) >= at ? "pending" : "expired";
 }
 
 export class Invites {

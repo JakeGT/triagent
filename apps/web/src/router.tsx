@@ -21,6 +21,7 @@ import { parseIssueSearch } from "@/features/issues/search";
 import { isApiError, setCsrfToken } from "@/lib/api";
 import { PREF, prefs } from "@/lib/prefs";
 import { meQuery } from "@/lib/queries";
+import { localPath } from "@/lib/safe-href";
 import { parseSearch, stringifySearch } from "@/lib/search-params";
 import type { Me } from "@/lib/types";
 
@@ -37,7 +38,12 @@ declare module "@tanstack/react-router" {
 
 const SIGN_IN_ERRORS: readonly SignInError[] = ["expired", "denied", "failed", "unavailable"];
 
-const str = (v: unknown, max = 200) => (typeof v === "string" || typeof v === "number" ? String(v).slice(0, max) || undefined : undefined);
+/** A search value as text, or undefined if it's missing, empty or too long (never cut short: that could name something else). */
+const str = (v: unknown, max = 200) => {
+    if (typeof v !== "string" && typeof v !== "number") return undefined;
+    const text = String(v);
+    return text && text.length <= max ? text : undefined;
+};
 
 async function loadMe(queryClient: QueryClient, href: string): Promise<Me> {
     try {
@@ -64,7 +70,8 @@ const signInRoute = createRoute({
         const r = str(s.redirect, 2000);
         const error = SIGN_IN_ERRORS.find((e) => e === s.error);
         // Only paths on this site: never an absolute URL someone put in a link.
-        return { ...(r?.startsWith("/") && !r.startsWith("//") ? { redirect: r } : {}), ...(error ? { error } : {}) };
+        const redirect = localPath(r);
+        return { ...(redirect ? { redirect } : {}), ...(error ? { error } : {}) };
     },
     component: lazyRouteComponent(() => import("@/features/auth/sign-in-page"), "SignInPage"),
 });
@@ -120,10 +127,11 @@ const homeRoute = createRoute({
 const wsRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: "/w/$ws",
-    beforeLoad: ({ context, params }) => {
+    beforeLoad: ({ context, params, preload }) => {
         const workspace = context.me.workspaces.find((w) => w.slug === params.ws);
         if (!workspace) throw notFound();
-        prefs.set(PREF.lastWorkspace, workspace.slug);
+        // Only on a real visit: hovering a link to another workspace preloads it.
+        if (!preload) prefs.set(PREF.lastWorkspace, workspace.slug);
         return { workspace };
     },
     component: lazyRouteComponent(() => import("@/components/layout/app-shell"), "AppShell"),

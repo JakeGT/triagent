@@ -141,8 +141,10 @@ export class BranchView {
     sourceUrl(x: Issue): string | null {
         const repo = this.context.project.repoUrl;
         if (!repo) return null;
-        const ref = encodeURIComponent(this.context.commit ?? this.branch).replace(/%2F/g, "/");
-        const file = x.path.split("/").map(encodeURIComponent).join("/");
+        // encodeURIComponent leaves ( and ) alone; encoded too, the URL can sit inside a Markdown link.
+        const enc = (s: string) => encodeURIComponent(s).replace(/[()]/g, (c) => (c === "(" ? "%28" : "%29"));
+        const ref = enc(this.context.commit ?? this.branch).replace(/%2F/g, "/");
+        const file = x.path.split("/").map(enc).join("/");
         const lines = x.startLine ? `#L${x.startLine}${x.endLine && x.endLine !== x.startLine ? `-L${x.endLine}` : ""}` : "";
         return `${repo}/blob/${ref}/${file}${lines}`;
     }
@@ -229,7 +231,7 @@ export class BranchView {
             if (f.foundBy !== null && (x.foundBy?.length ?? 1) < f.foundBy) return false;
             if (f.assignee) {
                 const a = r?.assignee ?? null;
-                if (f.assignee === "none" ? a !== null : (a ?? "").toLowerCase() !== f.assignee.toLowerCase()) return false;
+                if (f.assignee.toLowerCase() === "none" ? a !== null : (a ?? "").toLowerCase() !== f.assignee.toLowerCase()) return false;
             }
             if (terms.length) {
                 const hay = this.searchText.get(x.id) ?? "";

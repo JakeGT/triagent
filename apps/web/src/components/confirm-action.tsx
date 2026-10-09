@@ -49,6 +49,8 @@ export function ConfirmAction({
     const matches = !typeToConfirm || typed === typeToConfirm;
 
     const reset = (next: boolean) => {
+        // Not while it's working: closing wouldn't stop it, and its outcome would land on a closed dialog.
+        if (!next && busy) return;
         setOpen(next);
         if (!next) {
             setTyped("");
@@ -62,7 +64,8 @@ export function ConfirmAction({
         setError(null);
         try {
             await onConfirm();
-            reset(false);
+            setOpen(false);
+            setTyped("");
         } catch (err) {
             setError(errorMessage(err));
         } finally {
@@ -103,7 +106,9 @@ export function ConfirmAction({
                     )}
                     <FieldError message={error} />
                     <AlertDialogFooter>
-                        <AlertDialogCancel type="button">Cancel</AlertDialogCancel>
+                        <AlertDialogCancel type="button" disabled={busy}>
+                            Cancel
+                        </AlertDialogCancel>
                         <Button type="submit" variant={destructive ? "destructive" : "default"} disabled={!matches || busy}>
                             {busy ? "Working…" : confirmLabel}
                         </Button>

@@ -126,7 +126,8 @@ export class V1Target implements Target {
             }
             await new Promise((r) => setTimeout(r, 100));
         }
-        await this.close();
+        // Keep the server's output as the error even if cleaning up fails too.
+        await this.close().catch((err: Error) => this.output.push(`\nCleaning up failed too: ${err.message}`));
         throw new Error(`The server didn't start.\n${this.output.join("")}`);
     }
 
@@ -135,7 +136,10 @@ export class V1Target implements Target {
             const exited = new Promise((r) => this.child.once("exit", r));
             this.child.kill("SIGTERM");
             await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
-            if (this.child.exitCode === null) this.child.kill("SIGKILL");
+            if (this.child.exitCode === null) {
+                this.child.kill("SIGKILL");
+                await exited;
+            }
         }
         if (DATABASE_URL && this.schema) await dropSchema(DATABASE_URL, this.schema);
     }
@@ -189,7 +193,11 @@ export class V1Target implements Target {
         if (res.status !== 200) throw new Error(`Sign-in as ${username} failed: ${res.status} ${await res.text()}`);
         const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
         const caller: SessionCaller = { kind: "session", name: username, cookie, csrf: null, origin: this.base };
-        caller.csrf = (await this.request(caller, "GET", "/api/v1/me")).body?.csrf ?? null;
+        // Without a CSRF token every write fails with 403, which could pass a permission test for the wrong reason.
+        const me = await this.request(caller, "GET", "/api/v1/me");
+        if (me.status !== 200 || typeof me.body?.csrf !== "string")
+            throw new Error(`No session for ${username} after sign-in: ${me.status} ${JSON.stringify(me.body)}`);
+        caller.csrf = me.body.csrf;
         return caller;
     }
 

@@ -42,7 +42,8 @@ export function testStore(): Promise<Store> {
 
 after(async () => {
     if (!TEST_DATABASE_URL || !opened.length) return;
-    await Promise.all(opened.map((s) => s.close()));
+    // Drop every schema even if a pool fails to close, so the test database doesn't collect them.
+    await Promise.allSettled(opened.map((s) => s.close()));
     const sql = connect(TEST_DATABASE_URL, { max: 1 });
     try {
         for (const s of opened) await sql`drop schema if exists ${sql(s.schema as string)} cascade`;
@@ -125,7 +126,9 @@ export async function testApp(store?: Store, options: ServiceOptions & { env?: R
         });
         if (res.status !== 200) throw new Error(`sign-in failed: ${res.status} ${await res.text()}`);
         const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+        if (!cookie) throw new Error("sign-in set no session cookie");
         const me = await request("/api/v1/me", { session: { cookie, csrf: "" } });
+        if (me.status !== 200 || typeof me.body?.csrf !== "string") throw new Error(`/api/v1/me answered ${me.status}: ${me.text}`);
         return { cookie, csrf: me.body.csrf };
     };
 

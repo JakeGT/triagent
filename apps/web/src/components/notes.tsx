@@ -3,7 +3,7 @@
 // clear it.
 
 import { Pencil, Trash2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
 import { FieldError } from "@/components/field";
 import { Button } from "@/components/ui/button";
@@ -33,11 +33,17 @@ export function NoteList({
     onEditingChange?(editing: boolean): void;
 }) {
     const [editing, setEditing] = useState<string | null>(null);
-    if (!notes.length) return <p className="text-sm text-muted-foreground">No notes yet.</p>;
     const setEdit = (id: string | null) => {
         setEditing(id);
         onEditingChange?.(id !== null);
     };
+    // The note being edited was deleted (shown after a reload): stop editing, so the page stops holding still.
+    const editedGone = editing !== null && !notes.some((n) => n.id === editing);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: only when the edited note goes; setEdit is recreated each render
+    useEffect(() => {
+        if (editedGone) setEdit(null);
+    }, [editedGone]);
+    if (!notes.length) return <p className="text-sm text-muted-foreground">No notes yet.</p>;
     return (
         <ol className="grid gap-3">
             {notes.map((n) => {
@@ -52,14 +58,14 @@ export function NoteList({
                             {n.editedAt && <span title={formatDateTime(n.editedAt)}>(edited)</span>}
                             <span className="ms-auto flex gap-1">
                                 {mine && canEditOwn && editing !== n.id && (
-                                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEdit(n.id)}>
+                                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEdit(n.id)}>
                                         <Pencil /> Edit<span className="sr-only"> your note from {timeAgo(n.at)}</span>
                                     </Button>
                                 )}
                                 {((mine && canEditOwn) || canModerate) && editing !== n.id && (
                                     <ConfirmAction
                                         trigger={
-                                            <Button variant="ghost" size="sm" className="h-7 px-2">
+                                            <Button type="button" variant="ghost" size="sm" className="h-7 px-2">
                                                 <Trash2 /> Delete
                                                 <span className="sr-only">
                                                     {" "}

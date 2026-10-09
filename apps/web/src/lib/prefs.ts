@@ -17,6 +17,8 @@ function write(key: string, value: string | null): void {
     try {
         if (value === null) localStorage.removeItem(key);
         else localStorage.setItem(key, value);
+        // Stored after all: an earlier fallback copy mustn't hide it.
+        memory.delete(key);
     } catch {
         // storage blocked: the preference lasts until the page reloads
         memory.set(key, value);

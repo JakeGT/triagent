@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
 import { ControlGroup, FieldError, NativeSelect } from "@/components/field";
 import { FormActions } from "@/components/form";
-import { LoadingRows } from "@/components/load-state";
+import { LoadError, LoadingRows } from "@/components/load-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -161,6 +161,12 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
                     <Label htmlFor={selectId}>Repository</Label>
                     {installations.isPending ? (
                         <LoadingRows rows={1} />
+                    ) : installations.isError ? (
+                        <LoadError
+                            error={installations.error}
+                            onRetry={() => installations.refetch()}
+                            title="Couldn't load the repositories"
+                        />
                     ) : (
                         <ControlGroup>
                             <NativeSelect id={selectId} value={choice} onChange={(e) => setChoice(e.target.value)}>

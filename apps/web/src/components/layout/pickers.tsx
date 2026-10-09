@@ -236,7 +236,7 @@ export function BranchPicker({ project }: { project: string }) {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent className="max-h-96 min-w-64 overflow-y-auto" align="start" side={isMobile ? "bottom" : "right"}>
                         <DropdownMenuLabel className="text-xs text-muted-foreground">Branches with a report</DropdownMenuLabel>
-                        {items.length === 0 && (
+                        {data && items.length === 0 && (
                             <p className="px-2 py-1.5 text-sm text-muted-foreground">
                                 None yet. Upload a report on Branches &amp; reports.
                             </p>

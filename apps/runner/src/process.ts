@@ -51,9 +51,11 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
     const child = spawn(cmd, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let timedOut = false;
     let killed = false;
+    /** Once it has exited, its pid may belong to something else: never signal it again. */
+    let exited = false;
     let hardKill: ReturnType<typeof setTimeout> | null = null;
     const stop = () => {
-        if (killed) return;
+        if (killed || exited) return;
         killed = true;
         signalGroup(child.pid, "SIGTERM");
         hardKill = setTimeout(() => signalGroup(child.pid, "SIGKILL"), 5000);
@@ -63,6 +65,8 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
     else options.signal?.addEventListener("abort", stop, { once: true });
     const timer = options.timeoutMs
         ? setTimeout(() => {
+              // Already being stopped (cancelled): that's why it ends, not the time limit.
+              if (killed) return;
               timedOut = true;
               stop();
           }, options.timeoutMs)
@@ -72,12 +76,13 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
     let outSize = 0;
     let errTail = "";
     let partial = "";
+    // Decoded as a stream, so a character split across chunks arrives whole.
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (d: Buffer) => {
         outSize += d.length;
         if (outSize <= MAX_STDOUT) out.push(d);
     });
-    child.stderr.on("data", (d: Buffer) => {
-        const text = d.toString("utf8");
+    child.stderr.on("data", (text: string) => {
         errTail = (errTail + text).slice(-STDERR_TAIL);
         if (!options.onLine) return;
         const lines = (partial + text).split(/\r?\n/);
@@ -86,12 +91,15 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
     });
     const done = new Promise<Exit>((resolve) => {
         const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+            // A failure to start can be followed by "close" too.
+            if (exited) return;
             if (timer) clearTimeout(timer);
             options.signal?.removeEventListener("abort", stop);
             if (partial.trim()) options.onLine?.(partial);
             partial = "";
             // Anything the child left behind in its group goes too.
             signalGroup(child.pid, "SIGKILL");
+            exited = true;
             if (hardKill) clearTimeout(hardKill);
             resolve({ code, signal, stdout: Buffer.concat(out).toString("utf8"), stderr: errTail, timedOut, killed });
         };

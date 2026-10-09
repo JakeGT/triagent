@@ -129,7 +129,7 @@ export function reauthRequired(services: Services): ApiError {
 
 export function errorResponse(c: Context, err: unknown): Response {
     if (err instanceof ApiError) {
-        return c.json({ error: err.message, ...(err.code ? { code: err.code } : {}), ...err.details }, err.status as 400);
+        return c.json({ ...err.details, error: err.message, ...(err.code ? { code: err.code } : {}) }, err.status as 400);
     }
     if (err instanceof ZodError) {
         return c.json({ error: err.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ") }, 400);

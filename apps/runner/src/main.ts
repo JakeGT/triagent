@@ -46,7 +46,12 @@ if (config.healthPort) {
         const ok = req.url === "/healthz";
         res.writeHead(ok ? 200 : 404, { "content-type": "application/json" });
         res.end(JSON.stringify(ok ? { status: "ok", running: runner.running } : { error: "Not found" }));
-    }).listen(config.healthPort, "127.0.0.1");
+    })
+        .on("error", (err) => {
+            console.error(`Not starting: can't answer health checks on port ${config.healthPort} (${err.message}).`);
+            process.exit(1);
+        })
+        .listen(config.healthPort, "127.0.0.1");
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

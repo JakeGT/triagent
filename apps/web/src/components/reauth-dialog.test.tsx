@@ -76,5 +76,7 @@ describe("ReauthDialog", () => {
         );
         expect(reauthHref("https://evil.example/auth/login", "/w/acme")).toBe("/auth/login?prompt=login&max_age=60&next=%2Fw%2Facme");
         expect(reauthHref("/auth/login?prompt=login&max_age=60", "//evil.example")).toBe("/auth/login?prompt=login&max_age=60&next=%2F");
+        expect(reauthHref("/auth/login?prompt=login&max_age=60", "/\\evil.example")).toBe("/auth/login?prompt=login&max_age=60&next=%2F");
+        expect(reauthHref("/auth/login-phish?x=1", "/w/acme")).toBe("/auth/login?prompt=login&max_age=60&next=%2Fw%2Facme");
     });
 });

@@ -64,6 +64,10 @@ const WORKSPACE_KEY = "review-model";
 export const modelKeyName = (provider: string) => `model-key:${provider}`;
 export const accessKeyIdName = (provider: string) => `model-key:${provider}:access-key-id`;
 
+/** The protocol a provider is used with: the one chosen, if it still offers it, or its default. */
+const protocolOf = (spec: ProviderSpec, opts: ProviderOptions): ModelProtocol =>
+    opts.protocol && spec.protocols.includes(opts.protocol) ? opts.protocol : (spec.protocols[0] as ModelProtocol);
+
 /** What a provider still needs, as "Add …" would finish it, or null when it has everything. */
 function missingOf(spec: ProviderSpec, opts: ProviderOptions, model: string, key: boolean, accessKeyId: boolean): string | null {
     if (spec.fields.includes("url") && !opts.url) return spec.id === "custom" ? "your server's base URL" : `the ${spec.name} endpoint`;
@@ -147,13 +151,12 @@ export class ModelSetup {
     async view(repos: Repos, place: Place) {
         const stored = await this.stored(repos, place);
         const scope = this.scope(place);
+        const secret = await this.core.secrets.views(repos, scope);
         const providers = [];
         for (const spec of PROVIDER_IDS.map((id) => providerById(id) as ProviderSpec)) {
             const opts = stored.options?.[spec.id] ?? {};
-            const key: SecretView = await this.core.secrets.view(repos, scope, modelKeyName(spec.id));
-            const accessKeyId = spec.fields.includes("accessKeyId")
-                ? await this.core.secrets.view(repos, scope, accessKeyIdName(spec.id))
-                : null;
+            const key: SecretView = secret(modelKeyName(spec.id));
+            const accessKeyId = spec.fields.includes("accessKeyId") ? secret(accessKeyIdName(spec.id)) : null;
             const model = stored.models[spec.id] ?? defaultModel(spec);
             const missing = missingOf(spec, opts, model, key.set, Boolean(accessKeyId?.set));
             providers.push({
@@ -161,7 +164,7 @@ export class ModelSetup {
                 name: spec.name,
                 group: spec.group,
                 protocols: spec.protocols,
-                protocol: opts.protocol && spec.protocols.includes(opts.protocol) ? opts.protocol : (spec.protocols[0] as ModelProtocol),
+                protocol: protocolOf(spec, opts),
                 /** Where requests go: the fixed base URL, or the one given (null until it is; Bedrock's is the region's). */
                 url: spec.id === "azure" && opts.url ? azureBaseUrl(opts.url) : (spec.url ?? opts.url ?? null),
                 endpoint: spec.fields.includes("url") ? (opts.url ?? null) : null,
@@ -208,7 +211,7 @@ export class ModelSetup {
         // Listing a provider's models doesn't need one chosen yet.
         const missing = missingOf(spec, opts, model || (listing ? "-" : ""), Boolean(apiKey), Boolean(accessKeyId));
         if (missing || !apiKey) return { ready: false, missing: missing ?? "", spec };
-        const protocol = opts.protocol && spec.protocols.includes(opts.protocol) ? opts.protocol : (spec.protocols[0] as ModelProtocol);
+        const protocol = protocolOf(spec, opts);
         const url = spec.id === "azure" ? azureBaseUrl(opts.url as string) : (spec.url ?? opts.url ?? "");
         return {
             ready: true,

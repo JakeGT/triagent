@@ -52,7 +52,8 @@ export class Core {
      * Run `fn` in one transaction; its live updates go out only once everything is saved. The store may run
      * `fn` again if it collides with another change, so its announcements are held by the store's
      * transaction (`afterCommit`), not here: a retried attempt's are dropped, and a write joined to an
-     * outer transaction waits for that one to be saved.
+     * outer transaction waits for that one to be saved. So `fn` must be safe to run again: it reads and
+     * writes through `w.tx`, and anything else (network calls, in-memory state) goes in `w.afterCommit`.
      */
     async write<T>(actor: Actor, fn: (w: Write) => Promise<T>): Promise<T> {
         return this.store.transaction((tx) =>

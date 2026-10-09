@@ -204,7 +204,13 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                     note={
                         r.cost.total === null
                             ? "Set model prices to see costs"
-                            : `${usd(r.cost.perReview)} a review · ${usd(r.cost.perPr)} a pull request · ${usd(r.cost.perFinding)} a finding`
+                            : [
+                                  r.cost.perReview !== null && `${usd(r.cost.perReview)} a review`,
+                                  r.cost.perPr !== null && `${usd(r.cost.perPr)} a pull request`,
+                                  r.cost.perFinding !== null && `${usd(r.cost.perFinding)} a finding`,
+                              ]
+                                  .filter(Boolean)
+                                  .join(" · ")
                     }
                 />
             </Stats>
@@ -511,7 +517,9 @@ export function TriageSection({ a }: { a: Analytics }) {
                             <span key="w">
                                 {p.actor}
                                 <span className="block text-xs text-muted-foreground">
-                                    {p.agent ? "Agent" : "Person"} · {p.via.map((v) => VIA_LABEL[v] ?? v).join(", ")}
+                                    {[p.agent ? "Agent" : "Person", p.via.map((v) => VIA_LABEL[v] ?? v).join(", ")]
+                                        .filter(Boolean)
+                                        .join(" · ")}
                                 </span>
                             </span>,
                             count(p.resolved),

@@ -12,7 +12,8 @@ export function count(n: number): string {
 export function compactCount(n: number): string {
     const a = Math.abs(n);
     if (a < 10_000) return whole.format(Math.round(n));
-    const [div, unit] = a >= 1e9 ? [1e9, "B"] : a >= 1e6 ? [1e6, "M"] : [1e3, "K"];
+    // Pick the unit after rounding to one place, so 999,950 reads "1M", not "1,000K".
+    const [div, unit] = a >= 999_950_000 ? [1e9, "B"] : a >= 999_950 ? [1e6, "M"] : [1e3, "K"];
     return `${(n / div).toLocaleString("en-GB", { maximumFractionDigits: 1 })}${unit}`;
 }
 
@@ -41,14 +42,16 @@ export function seconds(s: number | null | undefined): string {
     const v = Math.round(s);
     if (v < 60) return `${v} s`;
     if (v < 3600) return `${Math.floor(v / 60)} min${v % 60 ? ` ${v % 60} s` : ""}`;
-    const m = Math.round((v % 3600) / 60);
-    return `${Math.floor(v / 3600)} h${m ? ` ${m} min` : ""}`;
+    // Round to whole minutes first, so 1 h 59.5 min carries to "2 h", not "1 h 60 min".
+    const minutes = Math.round(v / 60);
+    const m = minutes % 60;
+    return `${Math.floor(minutes / 60)} h${m ? ` ${m} min` : ""}`;
 }
 
 /** 5.5 hours, 3.2 days. */
 export function hours(h: number | null | undefined): string {
     if (h === null || h === undefined) return NOT_RECORDED;
-    if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`;
+    if (Math.round(h * 60) < 60) return `${Math.max(1, Math.round(h * 60))} min`;
     if (h < 48) return `${h.toLocaleString("en-GB", { maximumFractionDigits: 1 })} hours`;
     return `${(h / 24).toLocaleString("en-GB", { maximumFractionDigits: 1 })} days`;
 }

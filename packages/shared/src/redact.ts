@@ -72,6 +72,8 @@ const GENERIC: [RegExp, string][] = [
 /** Characters Postgres text and jsonb can't hold. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: removing NUL is the point
 const UNSTORABLE = /\u0000/g;
+/** Half a surrogate pair: jsonb refuses it, so it becomes U+FFFD (as invalid UTF-8 does when decoded). */
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 
 /** One pattern for all of a job's secrets, in all their forms. */
 function patternFor(secrets: readonly string[]): RegExp | null {
@@ -86,7 +88,7 @@ export function redact(text: string, secrets: readonly string[]): string {
 
 function redactWith(pattern: RegExp | null): (text: string) => string {
     return (text) => {
-        let out = text.replace(UNSTORABLE, "");
+        let out = text.replace(UNSTORABLE, "").replace(LONE_SURROGATE, "\ufffd");
         if (pattern) out = out.replace(pattern, REDACTED);
         for (const [re, to] of GENERIC) out = out.replace(re, to);
         return out;
@@ -98,10 +100,14 @@ export function redactor(secrets: readonly string[]): (text: string) => string {
     return redactWith(patternFor(secrets));
 }
 
-/** A copy of `value` with every string in it (object keys too) passed through `clean`. */
+/**
+ * A copy of `value` with every string in it (object keys too) passed through `clean`. Anything nested
+ * deeper than it's sensible to look is replaced whole, rather than kept unread.
+ */
 export function redactDeep(value: unknown, clean: (text: string) => string, depth = 0): unknown {
     if (typeof value === "string") return clean(value);
-    if (!value || typeof value !== "object" || depth > 64) return value;
+    if (!value || typeof value !== "object") return value;
+    if (depth > 64) return REDACTED;
     if (Array.isArray(value)) return value.map((v) => redactDeep(v, clean, depth + 1));
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) out[clean(k)] = redactDeep(v, clean, depth + 1);

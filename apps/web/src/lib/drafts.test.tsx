@@ -23,6 +23,18 @@ describe("useDraft: a form's working copy of server data", () => {
         expect(result.current.changedElsewhere).toBe(false);
     });
 
+    it("starts fresh when the server's copy goes away (another entity loading)", () => {
+        const { result, rerender } = renderHook(({ server }) => useDraft<{ name: string }>(server), {
+            initialProps: { server: { name: "App" } as { name: string } | undefined },
+        });
+        act(() => result.current.setDraft({ name: "My edit" }));
+        rerender({ server: undefined });
+        expect(result.current.draft).toBeUndefined();
+        rerender({ server: { name: "Other" } });
+        expect(result.current.draft).toEqual({ name: "Other" });
+        expect(result.current.changedElsewhere).toBe(false);
+    });
+
     it("treats a refetch of the same data as no change", () => {
         const { result, rerender } = renderHook(({ server }) => useDraft(server), { initialProps: { server: { name: "App" } } });
         act(() => result.current.setDraft({ name: "My edit" }));

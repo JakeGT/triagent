@@ -91,7 +91,9 @@ function ConflictAlert({ conflict, onRetry, onDismiss }: { conflict: IssueConfli
 
 export function IssuePanel() {
     const { issueId } = useParams({ from: ROUTE });
-    return <IssueView key={issueId} id={issueId} />;
+    const { branch } = useProject();
+    // A fresh panel for each issue on each branch: drafts and conflicts belong to that one.
+    return <IssueView key={`${branch}\0${issueId}`} id={issueId} />;
 }
 
 function IssueView({ id }: { id: string }) {
@@ -239,7 +241,8 @@ function IssueView({ id }: { id: string }) {
                     onRetry={() => {
                         const attempted = conflict.attempted;
                         void change(attempted).then((ok) => {
-                            if (ok && attempted.note) setNote("");
+                            // Clear the box only if it still holds the note that was just added.
+                            if (ok && attempted.note) setNote((n) => (n.trim() === attempted.note ? "" : n));
                         });
                     }}
                 />
@@ -468,7 +471,7 @@ function IssueView({ id }: { id: string }) {
 
                 <CodeView existing={issue.existingCode} suggestion={issue.suggestionCode} startLine={issue.startLine} />
 
-                {issue.foundBy && (
+                {issue.foundBy && issue.foundBy.length > 0 && (
                     <section aria-labelledby="found-by-heading" className="grid gap-1.5" data-testid="found-by">
                         <h3 id="found-by-heading" className="text-sm font-medium">
                             Found by {issue.foundBy.length === 1 ? "one model" : `${issue.foundBy.length} models`}

@@ -179,7 +179,7 @@ export function TourCard(props: TourCardProps) {
                     showCloseButton={false}
                     aria-labelledby={labelledBy}
                     aria-describedby={bodyId}
-                    className="max-w-md outline-none"
+                    className="max-w-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                     data-tour-dialog=""
                     onInteractOutside={(e) => e.preventDefault()}
                     onOpenAutoFocus={(e) => e.preventDefault()}

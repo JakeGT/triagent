@@ -112,11 +112,14 @@ export function RunsPage() {
                                             {progressText(r)}
                                         </p>
                                         <p className="text-xs text-muted-foreground">
-                                            {kindText(r)} ·{" "}
-                                            {r.model
-                                                ? `${r.model.model} (${r.model.keySource === "instance" ? "instance key" : r.model.provider})`
-                                                : ""}{" "}
-                                            · requested by {r.source === "automation" ? "automatic reviews" : r.requestedBy.name}
+                                            {[
+                                                kindText(r),
+                                                r.model &&
+                                                    `${r.model.model} (${r.model.keySource === "instance" ? "instance key" : r.model.provider})`,
+                                                `requested by ${r.source === "automation" ? "automatic reviews" : r.requestedBy.name}`,
+                                            ]
+                                                .filter(Boolean)
+                                                .join(" · ")}
                                         </p>
                                     </li>
                                 ))}

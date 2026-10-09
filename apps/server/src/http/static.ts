@@ -83,7 +83,9 @@ function send(c: Context, file: WebFile): Response {
     c.header("Cache-Control", file.immutable ? "public, max-age=31536000, immutable" : "no-cache");
     c.header("ETag", file.etag);
     c.header("Content-Type", file.type);
-    if (c.req.header("if-none-match") === file.etag) return c.body(null, 304);
+    // A compressing proxy may have weakened the ETag (W/"…"), and a cache may send several.
+    const known = (c.req.header("if-none-match") ?? "").split(",").map((t) => t.trim().replace(/^W\//, ""));
+    if (known.includes(file.etag) || known.includes("*")) return c.body(null, 304);
     return c.body(file.body as Uint8Array<ArrayBuffer>, 200);
 }
 

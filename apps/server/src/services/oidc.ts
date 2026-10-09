@@ -143,9 +143,11 @@ export class Oidc {
      */
     async finish(search: string, cookie: string | undefined): Promise<{ identity: Identity; idToken: string; next: string }> {
         const state = cookie ? this.open(cookie) : null;
-        if (!state || state.expires < Date.now())
+        if (!state || !(state.expires >= Date.now()))
             throw new OidcError("expired", "The sign-in took too long or started in another browser.");
         const params = new URLSearchParams(search);
+        // A refusal is only believed with this sign-in's own state: another site can't end it for you.
+        if (params.get("error") && params.get("state") !== state.state) throw new OidcError("failed", "The sign-in couldn't be verified.");
         if (params.get("error")) {
             // Shown in the log only: the provider's own words, trimmed, never the request.
             console.warn(`The identity provider refused a sign-in: ${String(params.get("error")).slice(0, 80)}`);
@@ -188,7 +190,8 @@ export class Oidc {
                 preferredUsername: str(claims.preferred_username),
                 groups,
                 // With max_age asked for, openid-client has checked auth_time is there and recent enough.
-                authTime: typeof claims.auth_time === "number" ? claims.auth_time * 1000 : state.maxAge !== null ? Date.now() : null,
+                // Without one, there's no proof of a recent sign-in (never assume one).
+                authTime: typeof claims.auth_time === "number" ? claims.auth_time * 1000 : null,
             },
             idToken,
             next: state.next,

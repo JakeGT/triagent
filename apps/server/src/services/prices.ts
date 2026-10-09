@@ -90,11 +90,11 @@ export class Prices {
     /** What a model costs in this workspace, and where that price comes from. */
     async resolver(workspaceId: string): Promise<(model: string) => PricedModel | null> {
         const repos = this.core.store;
-        const [own, instance, listed] = [
-            await this.workspacePrices(repos, workspaceId),
-            await this.instancePrices(repos),
-            await this.catalogue.prices(),
-        ];
+        const [own, instance, listed] = await Promise.all([
+            this.workspacePrices(repos, workspaceId),
+            this.instancePrices(repos),
+            this.catalogue.prices(),
+        ]);
         return (model) => {
             const w = Object.hasOwn(own, model) ? own[model] : undefined;
             if (w) return { input: w.input, output: w.output, cacheRead: w.cacheRead, source: "workspace" };

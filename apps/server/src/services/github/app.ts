@@ -243,6 +243,10 @@ export class GithubApp {
         });
         const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         if (!res.ok) throw new GitHubError(res.status, `GitHub didn't create the app (${res.status}: ${String(data.message ?? "")}).`);
+        // Nothing is kept unless every credential the app needs came back.
+        const strings = ["slug", "name", "client_id", "client_secret", "webhook_secret", "pem", "html_url"];
+        if (!Number.isSafeInteger(data.id) || strings.some((k) => typeof data[k] !== "string" || !data[k]))
+            throw new GitHubError(502, "GitHub's answer when creating the app was missing some of its details. Try again.");
         return data as {
             id: number;
             slug: string;
@@ -322,8 +326,9 @@ export class GithubApp {
     /** The payload of a state this server signed, if it's genuine, unexpired and for `purpose`. */
     readState<T extends Record<string, unknown>>(state: unknown, purpose: string): T | null {
         if (typeof state !== "string" || state.length > 2000) return null;
-        const [body, mac] = state.split(".");
-        if (!body || !mac) return null;
+        const parts = state.split(".");
+        const [body, mac] = parts;
+        if (parts.length !== 2 || !body || !mac) return null;
         const expected = Buffer.from(createHmac("sha256", this.stateKey).update(body).digest("base64url"));
         const given = Buffer.from(mac);
         if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;

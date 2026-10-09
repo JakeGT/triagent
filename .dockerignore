@@ -15,3 +15,9 @@ secrets
 data
 **/.env
 **/.env.*
+**/coverage
+**/*.log
+# OCR reports list security weaknesses; local agent/editor state.
+code_review.json
+.opencode
+.claude

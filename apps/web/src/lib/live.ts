@@ -12,6 +12,9 @@ import type { LiveEvent } from "./types";
 
 export type LiveStatus = "connecting" | "live" | "reconnecting" | "paused";
 
+/** While the server refuses the stream (too many tabs open), how often to ask again. */
+const PAUSED_RETRY_MS = 60_000;
+
 /** Mark stale (and refetch, if on screen) everything a change could affect. */
 export function invalidateFor(queryClient: QueryClient, ws: string, event: Pick<LiveEvent, "kind" | "project" | "fields">): void {
     // A review's progress arrives up to once a second: refresh what shows runs, and nothing else until it ends.
@@ -84,7 +87,11 @@ export function useLiveUpdates(
                 // An `error` event with data is the server refusing the stream (too many tabs).
                 if ((e as MessageEvent).data) {
                     source?.close();
+                    source = null;
                     setStatus("paused");
+                    // Try again now and then: closing another tab frees a place.
+                    clearTimeout(retry);
+                    retry = setTimeout(connect, PAUSED_RETRY_MS);
                     return;
                 }
                 if (source?.readyState === EventSource.CLOSED) drop();
@@ -100,12 +107,15 @@ export function useLiveUpdates(
             setStatus("reconnecting");
             try {
                 const me = await queryClient.fetchQuery({ ...meQuery, staleTime: 0 });
+                // Left the workspace (or the page) while checking: nothing more to do here.
+                if (stopped) return;
                 if (!me.workspaces.some((w) => w.slug === ws)) {
                     announce("You no longer have access to this workspace.");
                     onLostAccess();
                     return;
                 }
             } catch (err) {
+                if (stopped) return;
                 if (isApiError(err, 401)) {
                     onSessionEnded();
                     return;

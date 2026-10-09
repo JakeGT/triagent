@@ -27,7 +27,7 @@ export function LoadError({
             <AlertDescription>
                 <p>{errorMessage(error)}</p>
                 {onRetry && (
-                    <Button variant="outline" size="sm" className="mt-1" onClick={() => onRetry()}>
+                    <Button type="button" variant="outline" size="sm" className="mt-1" onClick={() => onRetry()}>
                         <RotateCw /> Try again
                     </Button>
                 )}

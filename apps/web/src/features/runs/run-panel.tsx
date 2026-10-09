@@ -39,18 +39,21 @@ function RunDetailView({ runId }: { runId: string }) {
                 { after: cursor.current },
                 { signal },
             );
-            if (r.logLines.length) {
-                lines.current = [...lines.current, ...r.logLines].slice(-KEEP_LINES);
-                cursor.current = r.logLines.at(-1)?.seq ?? cursor.current;
-            }
+            // Only lines past the cursor, in case two fetches from the same cursor both answered.
+            const fresh = r.logLines.filter((l) => l.seq > cursor.current);
+            if (fresh.length) lines.current = [...lines.current, ...fresh].slice(-KEEP_LINES);
+            // `next` also moves past lines the server no longer keeps.
+            cursor.current = Math.max(cursor.current, r.next, fresh.at(-1)?.seq ?? 0);
             return { ...r, all: lines.current };
         },
         staleTime: 0,
     });
 
+    // Focus the heading once it's there (the first render shows the loading rows).
+    const loaded = run.data !== undefined;
     useEffect(() => {
-        heading.current?.focus();
-    }, []);
+        if (loaded) heading.current?.focus();
+    }, [loaded]);
     // Follow the end of the log, unless the person has scrolled up to read.
     useLayoutEffect(() => {
         const box = logBox.current;

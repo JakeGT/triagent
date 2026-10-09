@@ -89,7 +89,9 @@ export class GitHubClient {
     }
 
     async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-        const url = path.startsWith("http") ? path : `${this.apiUrl}${path}`;
+        // Only ever the API's own paths: the credential must never go anywhere else.
+        if (!path.startsWith("/")) throw new GitHubError(0, "GitHub API paths start with /.");
+        const url = `${this.apiUrl}${path}`;
         let res: Response;
         try {
             res = await fetch(url, {
@@ -109,7 +111,8 @@ export class GitHubClient {
             throw new GitHubError(0, `Couldn't reach GitHub (${(err as Error).message}).`);
         }
         if (res.status === 204) return null as T;
-        const data = (await res.json().catch(() => ({}))) as { message?: string };
+        const data = (await res.json().catch(() => null)) as { message?: string } | null;
+        if (res.ok && (data === null || typeof data !== "object")) throw new GitHubError(502, "GitHub sent something other than JSON.");
         if (!res.ok) {
             const message = typeof data?.message === "string" ? data.message.slice(0, 300) : res.statusText;
             throw new GitHubError(res.status, `GitHub said ${res.status}: ${message}. ${this.hint(res.status)}`.trim());
@@ -189,7 +192,8 @@ export class GitHubClient {
                 if (err instanceof GitHubError && err.status === 404) return null;
                 throw err;
             });
-            if (ours(known)) mine = known;
+            // Fetched by id, so it must say which pull request it's on: never another's.
+            if (ours(known) && known.issue_url?.endsWith(`/issues/${number}`)) mine = known;
         }
         for (let page = 1; page <= 30 && !mine; page++) {
             const comments = await this.request<Comment[]>("GET", `${this.r(t)}/issues/${number}/comments?per_page=100&page=${page}`);

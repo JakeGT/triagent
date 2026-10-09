@@ -3,8 +3,9 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { test } from "node:test";
+import { ConfigError, loadConfig } from "../src/config.ts";
 import { hashPassword } from "../src/security.ts";
-import { ADMIN_PASSWORD, report, testApp } from "./helpers.ts";
+import { ADMIN_PASSWORD, ORIGIN, report, testApp } from "./helpers.ts";
 
 async function withMember(role: "editor" | "admin") {
     const t = await testApp();
@@ -163,6 +164,22 @@ test("a deleted branch's triage is archived with its report", async () => {
     assert.equal(archived[0]?.triage?.[0]?.status, "wont_fix");
 });
 
+test("a branch that became the default while the request was on its way isn't deleted", async () => {
+    const { t, admin } = await withMember("editor");
+    await t.request("/api/v1/w/org/p/app/reports", {
+        method: "POST",
+        session: admin,
+        body: { branch: "next", report: report("src/a.ts") },
+    });
+    const store = t.services.store;
+    const stale = await store.projects.bySlug((await store.workspaces.bySlug("org"))?.id as string, "app");
+    assert.ok(stale);
+    await store.transaction((tx) => tx.projects.put({ ...stale, defaultBranch: "next" }));
+    const actor = { name: "admin", userId: null, via: "web" } as const;
+    await assert.rejects(t.services.reports.deleteBranch(actor, stale, { branch: "next", confirm: true }), /default branch/);
+    assert.ok(await store.reports.get(stale.id, "next"));
+});
+
 test("guessing someone's password from elsewhere doesn't lock them out of where they usually sign in", async () => {
     const t = await testApp();
     const { accounts } = t.services;
@@ -189,4 +206,49 @@ test("read-only access sees whether model keys are set, not their hints", async 
     assert.equal(key.set, true);
     assert.equal(key.hint, null);
     assert.equal(key.setBy, null);
+});
+
+test("a bulk change judges each issue on the triage as it is by then, including what earlier ones changed", async () => {
+    const { t, admin } = await withMember("editor");
+    await t.request("/api/v1/w/org/p/app/reports", {
+        method: "POST",
+        session: admin,
+        body: { branch: "main", report: report("src/a.ts", "src/b.ts", "src/c.ts") },
+    });
+    const items = (await t.request("/api/v1/w/org/p/app/issues?branch=main&sort=path", { session: admin })).body.items;
+    const [a, b, c] = items.map((x: { id: string }) => x.id) as [string, string, string];
+    // c already duplicates b; making b a duplicate of a moves c to a too, before c's own turn comes.
+    await t.request(`/api/v1/w/org/p/app/issues/${c}?branch=main`, { method: "PATCH", session: admin, body: { duplicateOf: b } });
+    const bulk = await t.request("/api/v1/w/org/p/app/issues/bulk?branch=main", {
+        method: "POST",
+        session: admin,
+        body: { ids: [b, c], duplicateOf: a },
+    });
+    assert.equal(bulk.status, 200, bulk.text);
+    for (const id of [b, c]) {
+        const issue = (await t.request(`/api/v1/w/org/p/app/issues/${id}?branch=main`, { session: admin })).body;
+        assert.equal(issue.duplicateOf, a, id);
+    }
+});
+
+test("too many requests are refused with a Retry-After, and health checks never are", async () => {
+    const t = await testApp(undefined, { env: { REQUESTS_PER_MINUTE: "10" } });
+    const get = (path: string) => t.app.request(`${ORIGIN}${path}`);
+    let last = await get("/api/v1/openapi.json");
+    for (let i = 0; i < 20 && last.status !== 429; i++) last = await get("/api/v1/openapi.json");
+    assert.equal(last.status, 429);
+    assert.equal(last.headers.get("retry-after"), "60");
+    assert.equal((await get("/healthz")).status, 200);
+});
+
+test("production refuses a plain-http address while sign-in cookies are Secure", () => {
+    const base = {
+        NODE_ENV: "production",
+        TRIAGENT_SECRETS_KEY: randomBytes(32).toString("base64"),
+        DATABASE_URL: "postgres://x@db/x",
+    };
+    assert.throws(() => loadConfig({ ...base, PUBLIC_ORIGIN: "http://review.example.com" }), ConfigError);
+    assert.equal(loadConfig({ ...base, PUBLIC_ORIGIN: "http://review.example.com", COOKIE_SECURE: "false" }).cookieSecure, false);
+    assert.equal(loadConfig({ ...base, PUBLIC_ORIGIN: "https://review.example.com" }).cookieSecure, true);
+    assert.equal(loadConfig({ ...base, PUBLIC_ORIGIN: "http://localhost:8080" }).cookieSecure, true);
 });

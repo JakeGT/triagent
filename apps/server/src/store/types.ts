@@ -68,6 +68,7 @@ export interface Session {
     csrf: string;
     /** Fingerprint of the password the session signed in with: changing it ends other sessions. */
     credential: string | null;
+    /** Times here are milliseconds since the epoch (Date.now()), unlike the ISO strings elsewhere. */
     createdAt: number;
     lastSeenAt: number;
     /** When the person last proved who they are (signed in, or confirmed it): setting secrets needs a recent one. */
@@ -300,6 +301,7 @@ export interface SettingRecord {
 
 export interface Page {
     limit: number;
+    /** The id of the last row of the previous page: rows older than it come next. */
     before?: string;
 }
 
@@ -452,7 +454,7 @@ export interface Repos {
         byWebhookId(webhookId: string): Promise<Project | null>;
         forWorkspace(workspaceId: string): Promise<Project[]>;
         put(project: Project): Promise<void>;
-        /** Delete the project and everything stored for it. */
+        /** Delete the project and everything stored for it, except its review history (kept for analytics). */
         delete(id: string): Promise<void>;
     };
     reports: {

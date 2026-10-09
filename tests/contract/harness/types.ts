@@ -12,7 +12,7 @@ export interface Reply {
 export type Role = "viewer" | "editor" | "admin";
 export type TokenScope = "read" | "write" | "upload" | "full" | "manage";
 
-/** A person signed in through the browser. `csrf` and `origin` can be removed or changed to test request forgery. */
+/** A person signed in through the browser. Set `csrf` or `origin` to null (the header is then left out) or change it to test request forgery. */
 export interface SessionCaller {
     kind: "session";
     name: string;

@@ -87,6 +87,7 @@ for (const kind of kinds) {
                 (await store.jobs.list({ statuses: ["queued"] }, 10)).map((j) => j.id),
                 ["j2", "j1"],
             );
+            assert.deepEqual(await store.jobs.list({ statuses: [] }, 10), []);
             assert.deepEqual(
                 (await store.jobs.active()).map((j) => j.id),
                 ["j1", "j2", "j3"],
@@ -234,5 +235,19 @@ describe("postgres locks", { skip: TEST_DATABASE_URL ? false : "set TRIAGENT_TES
         assert.equal(await a.holdLock("poller"), true);
         assert.equal(await b.holdLock("poller"), false);
         assert.equal(await b.holdLock("other"), true);
+    });
+
+    test("a holder whose session ended no longer has the lock", async () => {
+        const { sameDatabase } = await import("./helpers.ts");
+        const a = await postgresStore();
+        const b = sameDatabase(a);
+        assert.equal(await a.holdLock("poller"), true);
+        await b.sql`
+            select pg_terminate_backend(pid) from pg_locks
+            where locktype = 'advisory' and pid <> pg_backend_pid()
+                and ((classid::bigint << 32) | objid::bigint) = hashtextextended(${`triagent:${a.schema}:poller`}, 0)`;
+        await new Promise((r) => setTimeout(r, 200)); // let a notice its connection closing
+        assert.equal(await b.holdLock("poller"), true);
+        assert.equal(await a.holdLock("poller"), false);
     });
 });

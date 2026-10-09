@@ -70,9 +70,11 @@ export class Allowances {
     /** A workspace's grant and this month's use of it. */
     async usage(workspace: Workspace, repos: Repos = this.core.store) {
         const now = this.clock();
-        const grant = await repos.modelGrants.get(workspace.id);
-        const used = await repos.reviewHistory.tokensSince(workspace.id, monthStart(now), "instance");
-        const view = await this.setup.view(repos, INSTANCE);
+        const [grant, used, view] = await Promise.all([
+            repos.modelGrants.get(workspace.id),
+            repos.reviewHistory.tokensSince(workspace.id, monthStart(now), "instance"),
+            this.setup.view(repos, INSTANCE),
+        ]);
         const chosen = view.providers.find((p) => p.id === view.provider);
         return {
             granted: Boolean(grant),
@@ -87,20 +89,21 @@ export class Allowances {
     }
 
     /** Why the instance key can't pay for a review now, or null if it can. */
-    exhausted(monthlyTokens: number, used: number): string | null {
+    exhausted(monthlyTokens: number, used: number, now: Date = this.clock()): string | null {
         if (used < monthlyTokens) return null;
-        return `This month's allowance of ${tokens(monthlyTokens)} tokens is used up; it resets on ${resetDay(this.clock())}.`;
+        return `This month's allowance of ${tokens(monthlyTokens)} tokens is used up; it resets on ${resetDay(now)}.`;
     }
 
     /** Every workspace, with its grant and this month's instance-key tokens, for the instance page. */
     async workspaces() {
         const repos = this.core.store;
         const now = this.clock();
-        const [workspaces, grants, used] = [
-            await repos.workspaces.list(),
-            new Map((await repos.modelGrants.list()).map((g) => [g.workspaceId, g])),
-            await repos.reviewHistory.tokensByWorkspace(monthStart(now), "instance"),
-        ];
+        const [workspaces, grantList, used] = await Promise.all([
+            repos.workspaces.list(),
+            repos.modelGrants.list(),
+            repos.reviewHistory.tokensByWorkspace(monthStart(now), "instance"),
+        ]);
+        const grants = new Map(grantList.map((g) => [g.workspaceId, g]));
         return {
             resetsAt: nextMonthStart(now).toISOString(),
             items: workspaces
@@ -129,6 +132,8 @@ export class Allowances {
             const workspace = await w.tx.workspaces.get(workspaceId);
             if (!workspace) throw notFound("No such workspace.");
             const before = await w.tx.modelGrants.get(workspaceId);
+            // The same allowance again changes nothing, and isn't recorded as a change.
+            if (before?.monthlyTokens === n) return { workspaceId, monthlyTokens: n };
             await w.tx.modelGrants.put({ workspaceId, monthlyTokens: n, grantedBy: actor.name, grantedAt: before?.grantedAt ?? nowIso() });
             const changes = { monthlyTokens: { from: before?.monthlyTokens ?? null, to: n } };
             await w.audit({ workspaceId: null, kind: "settings", target: `workspace:${workspace.slug}:model-grant`, changes });

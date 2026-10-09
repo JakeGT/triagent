@@ -26,10 +26,13 @@ export const USERNAME = /^[a-zA-Z0-9._@-]{1,64}$/;
 /** A git commit SHA, abbreviated or full. */
 export const COMMIT = /^[0-9a-f]{7,40}$/i;
 
-/** Remove control characters (except tab and newlines) from text people or agents send. */
+/**
+ * Remove control characters (except tab and newlines) from text people or agents send, and the bidirectional
+ * overrides and isolates that can make text display differently from what it says.
+ */
 export function cleanText(value: string): string {
     // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
-    return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+    return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "");
 }
 
 /**

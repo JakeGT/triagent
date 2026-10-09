@@ -127,8 +127,11 @@ export class Accounts {
     /** First start: the admin named in the environment, if there are no accounts yet. */
     async bootstrap(): Promise<User | null> {
         const admin = this.core.config.bootstrapAdmin;
-        if (!admin || (await this.repos.users.count()) > 0) return null;
-        return this.core.store.transaction((tx) => this.createLocalUser(tx, { ...admin, isInstanceAdmin: true }));
+        if (!admin) return null;
+        // Counted inside the transaction: two server processes starting together make one admin.
+        return this.core.store.transaction(async (tx) =>
+            (await tx.users.count()) > 0 ? null : this.createLocalUser(tx, { ...admin, isInstanceAdmin: true }),
+        );
     }
 
     private async createPersonalWorkspace(tx: Repos, user: User, name?: string | null): Promise<Workspace> {
@@ -353,10 +356,14 @@ export class Accounts {
         await this.repos.sessions.delete(idHash);
     }
 
-    /** End a person's sessions, except one. Returns how many ended. */
-    async signOutUser(tx: Repos, userId: string, except?: string): Promise<number> {
-        const sessions = (await tx.sessions.listForUser(userId)).filter((s) => s.idHash !== except);
-        for (const s of sessions) await tx.sessions.delete(s.idHash);
+    /**
+     * End a person's sessions, except one, and close their live connections (the one kept reconnects).
+     * Returns how many ended.
+     */
+    async signOutUser(w: Write, userId: string, except?: string): Promise<number> {
+        const sessions = (await w.tx.sessions.listForUser(userId)).filter((s) => s.idHash !== except);
+        for (const s of sessions) await w.tx.sessions.delete(s.idHash);
+        if (sessions.length) w.afterCommit(() => this.core.events.disconnect(`user:${userId}`));
         return sessions.length;
     }
 
@@ -391,7 +398,7 @@ export class Accounts {
             const current = await w.tx.sessions.get(session.idHash);
             if (current) await w.tx.sessions.put({ ...current, credential: sha256(hash) });
             await w.tx.users.put({ ...fresh, passwordHash: hash, mustChangePassword: false });
-            const n = await this.signOutUser(w.tx, user.id, session.idHash);
+            const n = await this.signOutUser(w, user.id, session.idHash);
             await w.audit({ workspaceId: null, kind: "user", target: user.id, changes: { password: "changed", signedOutSessions: n } });
             return { signedOutSessions: n };
         });
@@ -445,7 +452,7 @@ export class Accounts {
             const fresh = await w.tx.users.get(user.id);
             if (!fresh) throw notFound("No local account with that id.");
             await w.tx.users.put({ ...fresh, passwordHash: hash, mustChangePassword: true });
-            const n = await this.signOutUser(w.tx, user.id);
+            const n = await this.signOutUser(w, user.id);
             await w.audit({ workspaceId: null, kind: "user", target: user.id, changes: { password: "reset", signedOutSessions: n } });
             return { password: generated ? value : null, signedOutSessions: n };
         });
@@ -472,7 +479,7 @@ export class Accounts {
                 await this.revokeTokensOf(w, m.workspaceId, userId);
             }
             w.afterCommit(() => this.core.events.disconnect(`user:${userId}`));
-            await this.signOutUser(w.tx, userId);
+            await this.signOutUser(w, userId);
             await w.tx.users.delete(userId);
             await w.audit({ workspaceId: null, kind: "user", target: userId, changes: { removed: { username: user.username } } });
             return { removed: true };
@@ -481,7 +488,7 @@ export class Accounts {
 
     async adminSignOutUser(actor: Actor, userId: string) {
         return this.core.write(actor, async (w) => {
-            const n = await this.signOutUser(w.tx, userId);
+            const n = await this.signOutUser(w, userId);
             await w.audit({ workspaceId: null, kind: "user", target: userId, changes: { signedOutSessions: n } });
             return { signedOutSessions: n };
         });

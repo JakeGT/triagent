@@ -119,8 +119,9 @@ export class Settings {
     async github(project: Project) {
         const repos = this.core.store;
         const scope = this.projectScope(project);
-        const token = await this.core.secrets.view(repos, scope, GITHUB_TOKEN);
-        const webhook = await this.core.secrets.view(repos, scope, WEBHOOK_SECRET);
+        const secret = await this.core.secrets.views(repos, scope);
+        const token = secret(GITHUB_TOKEN);
+        const webhook = secret(WEBHOOK_SECRET);
         return {
             repoUrl: project.repoUrl,
             defaultBranch: project.defaultBranch,
@@ -129,7 +130,7 @@ export class Settings {
                 secretSet: webhook.set,
                 setBy: webhook.setBy,
                 setAt: webhook.setAt,
-                url: `${this.core.config.publicOrigin}/api/v1/github/webhook/${project.webhookId}`,
+                url: this.webhookUrl(project),
             },
         };
     }
@@ -162,7 +163,7 @@ export class Settings {
                 target: `project:${project.slug}:${WEBHOOK_SECRET}`,
                 changes: { [WEBHOOK_SECRET]: "generated" },
             });
-            return { webhookSecret: secret, url: `${this.core.config.publicOrigin}/api/v1/github/webhook/${project.webhookId}` };
+            return { webhookSecret: secret, url: this.webhookUrl(project) };
         });
     }
 
@@ -182,6 +183,11 @@ export class Settings {
     /** The project's GitHub token, for the code that uses it. Never put it in a response or a log. */
     githubToken(repos: Repos, project: Project): Promise<string | null> {
         return this.core.secrets.reveal(repos, this.projectScope(project), GITHUB_TOKEN);
+    }
+
+    /** Where GitHub sends this project's webhooks (PUBLIC_ORIGIN has no trailing slash: config.ts). */
+    private webhookUrl(project: Project): string {
+        return `${this.core.config.publicOrigin}/api/v1/github/webhook/${project.webhookId}`;
     }
 
     webhookSecret(project: Project): Promise<string | null> {

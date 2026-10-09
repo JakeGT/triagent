@@ -19,12 +19,13 @@ export interface AnalyticsSearch {
 
 export function parseAnalyticsSearch(s: Record<string, unknown>): AnalyticsSearch {
     const text = (v: unknown, max: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
-    const days = Number(s.days);
+    // Number("") and Number(" ") are 0 (All time), so only a non-blank value counts.
+    const days = typeof s.days === "number" || (typeof s.days === "string" && s.days.trim()) ? Number(s.days) : Number.NaN;
     const out: AnalyticsSearch = {};
     const project = text(s.project, 40);
     const branch = text(s.branch, 200);
     if (project) out.project = project;
     if (project && branch) out.branch = branch;
-    if (s.days !== undefined && RANGES.some((r) => r.days === days)) out.days = days as Days;
+    if (RANGES.some((r) => r.days === days)) out.days = days as Days;
     return out;
 }

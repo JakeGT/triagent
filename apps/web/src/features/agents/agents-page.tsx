@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import { SCOPE_INFO } from "@triagent/shared";
 import { ExternalLink } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { CopyButton } from "@/components/copy-button";
 import { Field, NativeSelect } from "@/components/field";
 import { FormSection } from "@/components/form";
@@ -19,10 +19,9 @@ import { AGENTS, type AgentSetup, skillInstall } from "./agent-setup";
 const TOKEN = "tri_…";
 
 function Snippet({ code, label }: { code: string; label: string }) {
-    const id = useId();
     return (
         <figure className="grid gap-1.5">
-            <figcaption id={id} className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+            <figcaption className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
                 {label}
                 <CopyButton value={code} label="Copy" className="h-7" />
             </figcaption>
@@ -214,10 +213,10 @@ export function AgentsPage() {
                             the step that sends it shouldn't hold the token.
                         </p>
                         <Snippet
-                            label="Shell"
-                            code={`URL=$(curl -fsS -X POST "${base}/upload-links" \\
-  -H "Authorization: Bearer $TRIAGENT_TOKEN" -H "Content-Type: application/json" \\
-  -d "{\\"branch\\": \\"$BRANCH\\", \\"commit\\": \\"$COMMIT\\", \\"confirm\\": true}" | jq -r .url)
+                            label="Shell (with TRIAGENT_TOKEN, BRANCH and COMMIT set, as in the step above)"
+                            code={`URL=$(jq -n --arg branch "$BRANCH" --arg commit "$COMMIT" '{branch: $branch, commit: $commit, confirm: true}' |
+  curl -fsS -X POST "${base}/upload-links" \\
+  -H "Authorization: Bearer $TRIAGENT_TOKEN" -H "Content-Type: application/json" --data-binary @- | jq -r .url)
 curl -fsS -X POST "$URL" --data-binary @code_review.json`}
                         />
                     </TabsContent>

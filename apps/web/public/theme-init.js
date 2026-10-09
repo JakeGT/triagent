@@ -3,7 +3,9 @@
 (() => {
     let theme = "system";
     try {
-        theme = localStorage.getItem("triagent-theme") || "system";
+        const stored = localStorage.getItem("triagent-theme");
+        // Anything but "dark" or "light" means follow the system, as in the theme provider.
+        if (stored === "dark" || stored === "light") theme = stored;
     } catch {
         // storage blocked: follow the system
     }

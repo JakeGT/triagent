@@ -364,7 +364,9 @@ export class Runs {
      */
     async list(workspace: Workspace, filter: { projectId?: string; limit?: number; runnerDetails?: boolean } = {}) {
         const projects = await this.slugs(workspace.id);
-        const active = (await this.store.jobs.active()).filter((j) => j.workspaceId === workspace.id);
+        // One snapshot of the queue for everything below, so the counts agree with each other.
+        const everyActive = await this.store.jobs.active();
+        const active = everyActive.filter((j) => j.workspaceId === workspace.id);
         const only = filter.projectId ? projects.get(filter.projectId) : undefined;
         const readiness = await this.readiness(workspace, only);
         // Each queued review waits on its own project's models.
@@ -375,7 +377,7 @@ export class Runs {
             reasons.set(j.projectId, (await this.readiness(workspace, p)).reason);
         }
         const cfg = this.core.config;
-        const allRunning = (await this.store.jobs.active()).filter((j) => j.status === "running").length;
+        const allRunning = everyActive.filter((j) => j.status === "running").length;
         const wsRunning = active.filter((j) => j.status === "running").length;
         const busy =
             wsRunning >= cfg.reviewConcurrencyPerWorkspace
@@ -1199,10 +1201,12 @@ export class Runs {
                 };
                 await tx.jobs.put(next);
                 const revoke = this.credentialsOf(held)?.revoke ?? null;
+                const project = await tx.projects.get(held.projectId);
+                const workspace = await tx.workspaces.get(held.workspaceId);
+                // Finished like any other run (so its pull request isn't left pending); failOnCritical only matters for a review that's done.
                 this.store.afterCommit(() => {
                     this.revoke(next, revoke);
-                    this.redactions.delete(next.id);
-                    this.announce(next, null, "finished");
+                    this.afterFinish(next, project, workspace, true);
                 });
                 return next;
             });

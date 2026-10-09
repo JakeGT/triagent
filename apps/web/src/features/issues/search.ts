@@ -15,6 +15,7 @@ export const FLAG_LABEL: Record<Flag, { yes: string; no: string }> = {
 };
 
 export const PAGE_SIZE = 100;
+const MAX_OFFSET = 1_000_000;
 
 export interface IssueSearch {
     branch?: string;
@@ -68,7 +69,8 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
     const status = listOf(raw.status, STATUSES);
     if (status) out.status = status;
     for (const k of ["path", "q", "assignee", "task"] as const) {
-        const v = text(raw[k], k === "assignee" ? 64 : k === "q" ? 200 : 500);
+        // The server's limits (parseFilters): longer values would be refused.
+        const v = text(raw[k], k === "assignee" ? 64 : k === "q" ? 200 : k === "task" ? 100 : 500);
         if (v) out[k] = v;
     }
     for (const k of FLAGS) {
@@ -80,7 +82,8 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
     const sort = text(raw.sort);
     if (sort && (ISSUE_SORTS as readonly string[]).includes(sort) && sort !== "priority") out.sort = sort as IssueSort;
     const page = Number(raw.page);
-    if (Number.isInteger(page) && page > 1 && page < 100_000) out.page = page;
+    // The server takes offsets up to 1,000,000.
+    if (Number.isInteger(page) && page > 1 && page <= MAX_OFFSET / PAGE_SIZE + 1) out.page = page;
     return out;
 }
 
@@ -133,6 +136,7 @@ export function withoutFilters(s: IssueSearch): IssueSearch {
 export function withFilter(s: IssueSearch, patch: Partial<IssueSearch>): IssueSearch {
     const next: IssueSearch = { ...s, ...patch };
     delete next.page;
-    for (const [k, v] of Object.entries(next)) if (v === undefined || v === "") delete next[k as keyof IssueSearch];
+    for (const [k, v] of Object.entries(next))
+        if (v === undefined || v === "" || (Array.isArray(v) && !v.length)) delete next[k as keyof IssueSearch];
     return next;
 }

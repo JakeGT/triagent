@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -15,7 +17,7 @@ import { loadConfig, secretFileWarning } from "../src/config.ts";
 import { checkBranch, Git, gitVersionProblem, mirrorPath } from "../src/git.ts";
 import { start } from "../src/process.ts";
 import { readProgress } from "../src/progress.ts";
-import { JobRun, ocrArgs, ocrEnv } from "../src/runner.ts";
+import { JobRun, ocrArgs, ocrEnv, Runner } from "../src/runner.ts";
 
 describe("progress from OCR's stderr", () => {
     test("files, groups, rounds, tool calls and phases", () => {
@@ -44,6 +46,9 @@ describe("progress from OCR's stderr", () => {
             toolFailures: 1,
             phase: "summarising",
         });
+        // A failed round that says how many rounds there are counts as failed too.
+        const q = readProgress({}, '[ocr] Round 2/3 failed for group "src/db": timeout', new Set());
+        assert.deepEqual([q.round, q.roundsFailed], ["2/3", 1]);
     });
 });
 
@@ -127,6 +132,9 @@ describe("the runner's secret file", () => {
             config = loadConfig(env);
             assert.deepEqual(config.warnings, []);
             assert.equal(secretFileWarning(undefined), null);
+            // OCR's model timeout: whole seconds, and never 0 (every call would time out at once).
+            assert.equal(loadConfig({ ...env, OCR_LLM_TIMEOUT: "300" }).llmTimeout, "300");
+            assert.throws(() => loadConfig({ ...env, OCR_LLM_TIMEOUT: "0" }), /OCR_LLM_TIMEOUT must be a whole number from 1/);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
@@ -240,6 +248,29 @@ describe("process groups", () => {
     test("a time limit stops it", async () => {
         const exit = await start("sleep", ["30"], { env: { PATH: process.env.PATH ?? "" }, timeoutMs: 200 }).done;
         assert.equal(exit.timedOut, true);
+    });
+
+    test("stopped, then the time limit passing while it ends: it was stopped, not timed out", async () => {
+        const stop = new AbortController();
+        // Ignores SIGTERM, so it's still there when the time limit comes.
+        const p = start("sh", ["-c", "trap '' TERM; sleep 30"], {
+            env: { PATH: process.env.PATH ?? "" },
+            timeoutMs: 300,
+            signal: stop.signal,
+        });
+        setTimeout(() => stop.abort(), 50);
+        const exit = await p.done;
+        assert.equal(exit.killed, true);
+        assert.equal(exit.timedOut, false);
+    });
+
+    test("a character split across stderr chunks arrives whole", async () => {
+        const lines: string[] = [];
+        await start("sh", ["-c", "printf '\\303' >&2; sleep 0.2; printf '\\251 done\\n' >&2"], {
+            env: { PATH: process.env.PATH ?? "" },
+            onLine: (l) => lines.push(l),
+        }).done;
+        assert.deepEqual(lines, ["\u00e9 done"]);
     });
 });
 
@@ -557,5 +588,118 @@ describe("git against a fake GitHub", () => {
         const mirror = mirrorPath(path.join(work, "cache"), job().cloneUrl);
         await assert.rejects(git.fetch(mirror, job({ kind: "full", pr: null, gitRef: "--upload-pack=evil" })), /unusable branch/);
         await assert.rejects(git.fetch(mirror, job({ kind: "changes", pr: null, gitRef: "a", baseRef: "../x" })), /unusable/);
+    });
+
+    test("only an http(s) clone URL is fetched: never a protocol that runs commands", async () => {
+        const mirror = mirrorPath(path.join(work, "cache"), job().cloneUrl);
+        await assert.rejects(git.fetch(mirror, job({ cloneUrl: "ext::sh -c touch% /tmp/pwned" })), /isn't http/);
+        await assert.rejects(git.fetch(mirror, job({ cloneUrl: "file:///etc" })), /isn't http/);
+    });
+
+    test("a branch with no history in common with its base says so", async () => {
+        const mirror = mirrorPath(path.join(work, "cache"), job().cloneUrl);
+        await fake.commit("acme/app", "orphan", { "o.ts": "o\n" }, "Unrelated");
+        await assert.rejects(
+            git.fetch(mirror, job({ kind: "changes", pr: null, gitRef: "orphan", baseRef: "main" })),
+            /orphan has no history in common with main/,
+        );
+    });
+
+    test("however many .gitignore files a change touches, every one is put back", async () => {
+        const mirror = mirrorPath(path.join(work, "cache"), job().cloneUrl);
+        await fake.commit("acme/app", "many-base", {}, "Base", "main");
+        // Names that sort before the root's, to push it past any limit on how many are looked at.
+        const files: Record<string, string> = { ".gitignore": "backdoor.ts\n", "backdoor.ts": "x\n" };
+        for (let i = 0; i < 250; i++) files[`-pad${String(i).padStart(3, "0")}/.gitignore`] = "x\n";
+        await fake.commit("acme/app", "many", files, "Lots of ignores", "many-base");
+        const got = await git.fetch(mirror, job({ kind: "changes", pr: null, gitRef: "many", baseRef: "many-base" }));
+        const tree = path.join(work, "tree-many");
+        await git.addWorktree(mirror, tree, got.head, got.base);
+        const changed = await git.useBaseIgnoreFiles(mirror, tree, got.base as string, got.head);
+        assert.equal(changed.length, 251);
+        assert.equal(existsSync(path.join(tree, ".gitignore")), false);
+        await git.removeWorktree(mirror, tree);
+    });
+});
+
+describe("a job's life", () => {
+    test("every log line left at the end is sent, not just the last batch", async () => {
+        let sent = 0;
+        let away = true;
+        const run = new JobRun(
+            {
+                id: "j",
+                git: { username: "x", token: "t".repeat(10) },
+                model: { url: "u", model: "m", apiKey: "k".repeat(10), protocol: "openai", provider: "p" },
+            },
+            {
+                events: async (_id: string, lines: unknown[]) => {
+                    if (away) throw new ServerError(503, "away");
+                    sent += lines.length;
+                    return { cancel: false };
+                },
+                heartbeat: async () => ({ cancel: false }),
+            },
+        );
+        // The server is away while 1,200 lines come in, then back for the end.
+        for (let i = 0; i < 1200; i++) run.log(`line ${i}`);
+        await run.flush();
+        assert.equal(run.pending, 1200);
+        away = false;
+        await run.end();
+        assert.equal(run.pending, 0);
+        assert.equal(sent, 1200);
+    });
+
+    test("a job that can't even start is reported once (a refusal isn't retried) and frees its slot", async () => {
+        const finishes: string[] = [];
+        const http = createServer((req, res) => {
+            if (req.url?.endsWith("/finish")) finishes.push(req.url);
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "No." }));
+        });
+        await new Promise<void>((r) => http.listen(0, "127.0.0.1", () => r()));
+        const dir = mkdtempSync(path.join(tmpdir(), "runner-life-"));
+        try {
+            const runner = new Runner({
+                serverUrl: `http://127.0.0.1:${(http.address() as AddressInfo).port}`,
+                secret: "s".repeat(40),
+                name: "test",
+                concurrency: 1,
+                cacheDir: path.join(dir, "cache"),
+                workDir: path.join(dir, "work"),
+                pollMs: 1000,
+                healthPort: null,
+                ocrBin: "ocr",
+                gitBin: "git",
+                llmTimeout: null,
+                path: process.env.PATH ?? "",
+                warnings: [],
+            });
+            // The work directory has gone, so not even the job's own directory can be made.
+            rmSync(path.join(dir, "work"), { recursive: true, force: true });
+            const t0 = Date.now();
+            await runner.execute({
+                id: "job-x",
+                kind: "full",
+                title: "t",
+                leaseSeconds: 60,
+                repository: { fullName: "acme/app", cloneUrl: "https://github.example/acme/app.git" },
+                git: { username: "x", token: "t".repeat(10) },
+                pr: null,
+                gitRef: "main",
+                baseRef: null,
+                headSha: null,
+                timeoutMinutes: 1,
+                maxTokensBudget: null,
+                model: { url: "u", model: "m", apiKey: "k".repeat(10), protocol: "openai", provider: "p" },
+            });
+            assert.equal(runner.running, 0);
+            assert.deepEqual(finishes, ["/internal/runner/jobs/job-x/finish"]);
+            assert.ok(Date.now() - t0 < 1500, `took ${Date.now() - t0}ms`);
+        } finally {
+            http.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

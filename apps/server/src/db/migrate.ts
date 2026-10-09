@@ -28,7 +28,9 @@ export function readMigrations(dir = MIGRATIONS_DIR): Migration[] {
         const match = FILE.exec(name);
         if (!match) throw new Error(`Migration file names look like 0001_name.sql, got "${name}".`);
         const sql = readFileSync(path.join(dir, name), "utf8");
-        out.push({ version: match[1] as string, name, sql, checksum: createHash("sha256").update(sql).digest("hex") });
+        // Hashed with LF line endings, so a checkout that converts them (Windows) doesn't look like an edit.
+        const checksum = createHash("sha256").update(sql.replace(/\r\n/g, "\n")).digest("hex");
+        out.push({ version: match[1] as string, name, sql, checksum });
     }
     const versions = out.map((m) => m.version);
     if (new Set(versions).size !== versions.length) throw new Error("Two migrations share a number.");

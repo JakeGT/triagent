@@ -50,7 +50,7 @@ export function BranchesPage() {
                 description="Each branch has its own report and its own triage."
                 actions={<NewReviewButton />}
             />
-            {can("upload") && <UploadReport />}
+            {can("upload") && <UploadReport key={slug} />}
 
             <section aria-labelledby="branches-heading" className="grid gap-2" data-tour="branches-table">
                 <h2 id="branches-heading" className="section-title">

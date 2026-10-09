@@ -2,6 +2,7 @@
 // carries this tab's client id (so the live stream can skip our own changes), and errors come back as
 // ApiError with the server's message, code and, on a 409, the current version.
 
+import { localPath } from "./safe-href";
 import type { ApiErrorBody } from "./types";
 
 export class ApiError extends Error {
@@ -137,11 +138,16 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (options.text) return (await res.text()) as T;
     if (res.status === 204) return undefined as T;
     const text = await res.text();
-    return (text ? JSON.parse(text) : undefined) as T;
+    try {
+        return (text ? JSON.parse(text) : undefined) as T;
+    } catch {
+        // Something between here and the server (a proxy, a cached page) answered with something else.
+        throw new ApiError(res.status, { error: "The server's answer couldn't be read. Try again in a moment." });
+    }
 }
 
 export const api = {
-    get: <T>(path: string, query?: Query, options: Omit<RequestOptions, "method" | "query"> = {}) =>
+    get: <T>(path: string, query?: Query, options: Omit<RequestOptions, "method" | "query" | "body"> = {}) =>
         request<T>(path, { ...options, query }),
     post: <T>(path: string, body?: unknown, query?: Query) => request<T>(path, { method: "POST", body: body ?? {}, query }),
     put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: body ?? {} }),
@@ -165,6 +171,6 @@ export const paths = {
 /** The address that starts signing in through the identity provider, coming back to `next` (a path here). */
 export function providerSignInUrl(next: string, extra: Record<string, string> = {}): string {
     const params = new URLSearchParams(extra);
-    params.set("next", next.startsWith("/") && !next.startsWith("//") ? next : "/");
+    params.set("next", localPath(next) ?? "/");
     return `/auth/login?${params.toString()}`;
 }

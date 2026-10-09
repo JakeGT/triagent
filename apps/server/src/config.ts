@@ -108,6 +108,12 @@ export function loadConfig(env: Env = process.env): Config {
     if (publicOrigin && !/^https?:\/\/[^/\s]+$/.test(publicOrigin))
         throw new ConfigError(`PUBLIC_ORIGIN must be a scheme and host, like https://code-review.example.com, got "${publicOrigin}".`);
     if (!publicOrigin && production) throw new ConfigError("Set PUBLIC_ORIGIN, the address people use to reach Triagent.");
+    const cookieSecure = flag(env, "COOKIE_SECURE", true);
+    // Secure cookies never travel over plain http (localhost aside), so nobody could stay signed in.
+    if (production && cookieSecure && publicOrigin.startsWith("http://") && !LOOPBACK.test(new URL(publicOrigin).hostname))
+        throw new ConfigError(
+            "PUBLIC_ORIGIN is a plain http:// address, but sign-in cookies are Secure: serve Triagent over https, or for a private network set COOKIE_SECURE=false.",
+        );
 
     const authMode = env.AUTH_MODE || "local";
     if (authMode !== "local" && authMode !== "oidc") throw new ConfigError(`AUTH_MODE must be "local" or "oidc", got "${authMode}".`);
@@ -161,7 +167,7 @@ export function loadConfig(env: Env = process.env): Config {
         port,
         publicOrigin: publicOrigin || `http://localhost:${port}`,
         proxyHops: whole(env, "PROXY_HOPS", 0, 0, 10),
-        cookieSecure: flag(env, "COOKIE_SECURE", true),
+        cookieSecure,
         authMode,
         oidc,
         signupMode,
@@ -216,7 +222,7 @@ function oidcConfig(env: Env, publicOriginSet: boolean): OidcConfig {
     if (!scopes.includes("openid")) throw new ConfigError(`OIDC_SCOPES must include "openid", got "${scopes.join(" ")}".`);
     if (!scopes.every((s) => /^[\x21\x23-\x5b\x5d-\x7e]+$/.test(s)))
         throw new ConfigError("OIDC_SCOPES must be scope names separated by spaces.");
-    const providerName = (env.OIDC_PROVIDER_NAME || "your identity provider").trim();
+    const providerName = (env.OIDC_PROVIDER_NAME ?? "").trim() || "your identity provider";
     if (providerName.length > 60) throw new ConfigError("Keep OIDC_PROVIDER_NAME under 60 characters.");
     const adminGroup = (env.OIDC_ADMIN_GROUP ?? "platform-admin").trim();
     if (!adminGroup) throw new ConfigError("OIDC_ADMIN_GROUP can't be empty: name the group whose members are instance admins.");

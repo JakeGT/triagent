@@ -67,7 +67,9 @@ export function mergeReports(parts: readonly ModelReport[]): RawReport {
     const clusters: Cluster[] = [];
     const byPath = new Map<string, Cluster[]>();
     for (const part of done) {
-        for (const c of part.report.comments ?? []) {
+        for (const c of Array.isArray(part.report.comments) ? part.report.comments : []) {
+            // Something in the list that isn't a finding at all can't spoil the other models' findings.
+            if (!c || typeof c !== "object" || typeof c.path !== "string") continue;
             let best: Cluster | null = null;
             let bestGap = Number.POSITIVE_INFINITY;
             for (const k of byPath.get(c.path) ?? []) {
@@ -93,7 +95,9 @@ export function mergeReports(parts: readonly ModelReport[]): RawReport {
             }
             const k: Cluster = { lead: c, models: [part.label], others: [] };
             clusters.push(k);
-            byPath.set(c.path, [...(byPath.get(c.path) ?? []), k]);
+            const same = byPath.get(c.path);
+            if (same) same.push(k);
+            else byPath.set(c.path, [k]);
         }
     }
 

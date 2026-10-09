@@ -49,7 +49,11 @@ function groups(providers: Provider[]): [string, Provider[]][] {
 /** Where requests for a provider go, for people. */
 function destination(p: Provider, d: Draft): string {
     if (p.fields.includes("region")) return d.region ? `Bedrock in ${d.region}` : "Bedrock, in the region you give";
-    if (p.fields.includes("url")) return d.url ? (p.url ?? d.url) : "the address you give";
+    if (p.fields.includes("url")) {
+        if (!d.url.trim()) return "the address you give";
+        // The saved address as requests use it (Azure's is rewritten), or the one being typed.
+        return d.url.trim() === (p.endpoint ?? "") ? (p.url ?? d.url.trim()) : d.url.trim();
+    }
     return p.url ?? "the provider";
 }
 

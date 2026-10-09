@@ -192,6 +192,7 @@ export function InstanceWorkspacesSettings() {
                             </TableBody>
                         </Table>
                     </TableFrame>
+                    {items.length === 0 && q.trim() && <p className="text-sm text-muted-foreground">No workspace matches “{q.trim()}”.</p>}
                     {items.length > SHOWN && (
                         <p className="text-sm text-muted-foreground">
                             Showing {SHOWN} of {count(items.length)}. Search to find the others.

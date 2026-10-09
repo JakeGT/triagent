@@ -62,12 +62,12 @@ export function readProgress(before: Progress, line: string, seen: Set<string>, 
         p.current = group[1] as string;
     }
     const round = /\bRound (\d+)\/(\d+)/.exec(line);
-    const failed = /\bRound (\d+) failed for group/.exec(line);
-    if (round) p.round = `${round[1]}/${round[2]}`;
-    else if (failed) {
-        p.round = `${failed[1]}${p.round?.includes("/") ? p.round.slice(p.round.indexOf("/")) : ""}`;
+    // "Round 2 failed …" or "Round 2/3 failed …": a failure either way.
+    const failed = /\bRound (\d+)(\/\d+)? failed for group/.exec(line);
+    if (failed) {
+        p.round = `${failed[1]}${failed[2] ?? (p.round?.includes("/") ? p.round.slice(p.round.indexOf("/")) : "")}`;
         p.roundsFailed = (p.roundsFailed ?? 0) + 1;
-    }
+    } else if (round) p.round = `${round[1]}/${round[2]}`;
     const said = tokensSaid(line);
     if (said !== null) p.tokens = Math.max(p.tokens ?? 0, base + said);
     if (/^\s*\[ocr\]\s+▶/.test(line)) p.toolCalls = (p.toolCalls ?? 0) + 1;

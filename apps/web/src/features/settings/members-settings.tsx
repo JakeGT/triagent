@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { ROLES, type Role } from "@triagent/shared";
 import { useId, useState } from "react";
 import { toast } from "sonner";
@@ -31,6 +32,7 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
     const me = useMe();
     const { ws, role: myRole } = useWorkspace();
     const queryClient = useQueryClient();
+    const navigate = useNavigate();
     const selectId = useId();
     const [role, setRole] = useState<Role>(member.role);
     const isMe = member.user.id === me.user.id;
@@ -40,7 +42,7 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
         mutationFn: () => api.patch(url, { role }),
         onSuccess: async () => {
             await refresh();
-            toast.success(`${member.user.displayName} is now ${role === "admin" || role === "editor" ? "an" : "a"} ${role}.`);
+            toast.success(`${member.user.displayName} is now ${/^[aeiou]/.test(role) ? "an" : "a"} ${role}.`);
         },
     });
     const canChange = manage && !isMe && (member.role !== "owner" || myRole === "owner");
@@ -108,6 +110,8 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
                             await refresh();
                             if (isMe) await queryClient.invalidateQueries({ queryKey: keys.me });
                             toast.success(isMe ? "You left the workspace." : `${member.user.displayName} removed.`);
+                            // This workspace's pages are no longer yours to see.
+                            if (isMe) await navigate({ to: "/" });
                         }}
                     />
                 )}

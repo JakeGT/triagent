@@ -17,6 +17,7 @@ const LISTING = {
         { id: "openai/gpt-5", name: "OpenAI: GPT-5", pricing: { prompt: "0.00000125", completion: "0.00001" } },
         { id: "openrouter/auto", name: "Auto", pricing: { prompt: "-1", completion: "-1" } },
         { id: "bad id with spaces", pricing: { prompt: "0", completion: "0" } },
+        { id: "openai/unpriced", name: "No price given", pricing: { prompt: "", completion: " " } },
         "not a model",
     ],
 };

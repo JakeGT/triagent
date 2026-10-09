@@ -40,7 +40,15 @@ if (config.databaseUrl) {
 }
 const services = createServices(config, store);
 // Live updates reach subscribers on every server process sharing the database.
-if (store instanceof PostgresStore) await services.events.connect(store.relay());
+if (store instanceof PostgresStore) {
+    try {
+        await services.events.connect(store.relay());
+    } catch (err) {
+        console.error(`Couldn't listen for live updates from other server processes: ${(err as Error).message}`);
+        await store.close().catch(() => {});
+        process.exit(1);
+    }
+}
 if (!config.secretsKey)
     console.warn(
         "No TRIAGENT_SECRETS_KEY: secrets are encrypted with a throwaway key, so they can't be read after a restart. Fine for development only.",
@@ -62,20 +70,34 @@ if ((await store.users.count()) === 0)
 const { app } = createApp(services);
 // Automatic reviews (one process polls GitHub at a time), and reviews whose runner stopped responding.
 services.automation.start();
-const sweeper = setInterval(
-    () => void services.runs.sweep().catch((err: Error) => console.error(`Checking review leases: ${err.message}`)),
-    15_000,
-);
+// One sweep at a time: a slow one isn't joined by the next.
+let sweeping = false;
+const sweep = () => {
+    if (sweeping) return;
+    sweeping = true;
+    void services.runs
+        .sweep()
+        .catch((err: Error) => console.error(`Checking review leases: ${err.message}`))
+        .finally(() => {
+            sweeping = false;
+        });
+};
+const sweeper = setInterval(sweep, 15_000);
 sweeper.unref();
-void services.runs.sweep().catch(() => {});
+sweep();
 if (!config.runnerSecret) console.warn("No TRIAGENT_RUNNER_SECRET: no runner can connect, so reviews stay queued.");
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
     const host = info.address.includes(":") ? `[${info.address}]` : info.address;
     console.log(`Triagent listening on http://${host}:${info.port} (public address ${config.publicOrigin})`);
 });
 
+let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
+        // Once: a second signal mustn't close the server and store again.
+        if (stopping) return;
+        stopping = true;
+        clearInterval(sweeper);
         services.automation.stop();
         server.close(() => {
             store.close().finally(() => process.exit(0));

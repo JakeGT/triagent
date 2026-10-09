@@ -292,9 +292,13 @@ export class Triage {
             const unknown = ids.filter((id) => !view.review.byId.has(id));
             if (unknown.length) throw notFound(`Unknown issue ids: ${unknown.slice(0, 10).join(", ")}${unknown.length > 10 ? ", …" : ""}`);
             let changed = 0;
+            // The report itself doesn't change here, so it's read once; only the triage is read again.
+            const stored = await w.tx.reports.get(ref.project.id, ref.branch);
             for (const id of ids) {
                 // Each issue is judged on the latest state, since an earlier one in the list may have changed it.
-                const fresh = await this.reports.view(w.tx, ref.project, ref.branch);
+                const fresh = stored
+                    ? await this.reports.viewStored(w.tx, ref.project, stored)
+                    : await this.reports.view(w.tx, ref.project, ref.branch);
                 if (await this.issueChange(w, ref, fresh, id, patch, actor)) changed++;
             }
             return { matched: ids.length, changed };
@@ -402,7 +406,7 @@ export class Triage {
             if (value === before.text) return { note: before, changed: false };
             const after: Note | null = value === null ? null : { ...before, text: value, editedAt: now(), editedBy: actor.name };
             const notes = after ? record.notes.map((n, k) => (k === i ? after : n)) : record.notes.filter((_, k) => k !== i);
-            await w.tx.triage.put({ ...record, notes, rev: record.rev + 1 });
+            await w.tx.triage.put({ ...record, notes, rev: record.rev + 1, updatedAt: now(), updatedBy: actor.name });
             const changes = after
                 ? { noteEdited: { id: noteId, from: before.text, to: value } }
                 : { noteDeleted: { id: noteId, by: before.by, text: before.text } };

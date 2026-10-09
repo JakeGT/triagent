@@ -21,7 +21,7 @@ export function timeAgo(iso: string | null | undefined, now = Date.now()): strin
     if (!iso) return "";
     const t = new Date(iso).getTime();
     if (Number.isNaN(t)) return "";
-    const seconds = Math.round((t - now) / 1000);
+    const seconds = (t - now) / 1000;
     const steps: [Intl.RelativeTimeFormatUnit, number][] = [
         ["second", 60],
         ["minute", 60],
@@ -30,10 +30,13 @@ export function timeAgo(iso: string | null | undefined, now = Date.now()): strin
         ["month", 12],
         ["year", Number.POSITIVE_INFINITY],
     ];
+    // Rounded once, at the unit shown: rounding at every step would make 1 h 29 min "2 hours ago".
     let value = seconds;
     for (const [unit, size] of steps) {
-        if (Math.abs(value) < size) return unit === "second" && Math.abs(value) < 30 ? "just now" : relative.format(value, unit);
-        value = Math.round(value / size);
+        // Half away from zero, so the past rounds like the future (Math.round(-1.5) is -1).
+        const shown = Math.sign(value) * Math.round(Math.abs(value));
+        if (Math.abs(shown) < size) return unit === "second" && Math.abs(shown) < 30 ? "just now" : relative.format(shown, unit);
+        value /= size;
     }
     return "";
 }

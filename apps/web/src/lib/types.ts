@@ -669,7 +669,7 @@ export interface LiveEvent {
     kind: string;
     id: string;
     actor: string;
-    via: string;
+    via: Via;
     fields: string[];
     clientId?: string;
 }

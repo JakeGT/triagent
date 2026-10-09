@@ -26,6 +26,8 @@ export function Markdown({ children, className }: { children: string; className?
                     h1: ({ children: t }) => <h3>{t}</h3>,
                     h2: ({ children: t }) => <h4>{t}</h4>,
                     h3: ({ children: t }) => <h5>{t}</h5>,
+                    h4: ({ children: t }) => <h6>{t}</h6>,
+                    h5: ({ children: t }) => <h6>{t}</h6>,
                 }}
             >
                 {children}

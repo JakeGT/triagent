@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { MODEL_PROTOCOLS } from "@triagent/shared/model";
-import { parseModelList } from "../src/services/model-lists.ts";
+import { ModelLists, parseModelList } from "../src/services/model-lists.ts";
 import { checkModelUrl, defaultLookup, isPrivateAddress, type Lookup, UnsafeUrl } from "../src/services/model-urls.ts";
 import {
     AWS_ACCESS_KEY_ID,
@@ -100,6 +100,7 @@ describe("the provider registry", () => {
         ]);
         assert.ok(catalogueCandidates("us.anthropic.claude-sonnet-4-5-20250929-v1:0").includes("anthropic/claude-sonnet-4.5"));
         assert.ok(catalogueCandidates("global.anthropic.claude-opus-4-6-v1").includes("anthropic/claude-opus-4.6"));
+        assert.ok(catalogueCandidates("mx.anthropic.claude-opus-4-6-v1").includes("anthropic/claude-opus-4.6"));
         assert.ok(catalogueCandidates("claude-3-5-sonnet-20241022").includes("anthropic/claude-3.5-sonnet"));
         assert.deepEqual(catalogueCandidates("gpt-5.5"), ["openai/gpt-5.5"]);
         assert.deepEqual(catalogueCandidates("models/gemini-3.8-flash"), ["google/gemini-3.8-flash"]);
@@ -171,6 +172,13 @@ describe("model URLs people give", () => {
         await refused("not a url", strict, /isn't a valid address/);
     });
 
+    test("plain http only to addresses that really are private, whatever form they're written in", async () => {
+        assert.equal(await checkModelUrl("http://ollama.internal:11434/v1", relaxed), "http://ollama.internal:11434/v1");
+        assert.equal(await checkModelUrl("http://[::ffff:192.168.5.10]/v1", relaxed), "http://[::ffff:c0a8:50a]/v1");
+        await refused("http://[::ffff:8.8.8.8]/v1", relaxed, /must use https/);
+        await refused("http://[64:ff9b::808:808]/v1", relaxed, /must use https/);
+    });
+
     test("a name that really resolves to loopback is refused (the system resolver)", async () => {
         await assert.rejects(checkModelUrl("https://localhost:11434/v1", { allowPrivate: false, lookup: defaultLookup }), UnsafeUrl);
     });
@@ -203,5 +211,24 @@ describe("providers' model lists", () => {
     test("ids that aren't model names are left out; something that isn't a list is an error", () => {
         assert.deepEqual(parseModelList({ data: [{ id: "<script>" }, { id: 5 }, null, { id: "ok" }] }), [{ id: "ok", name: null }]);
         assert.throws(() => parseModelList({ error: "nope" }), SyntaxError);
+    });
+
+    test("a list too large is refused without reading it all, even with no length given", async () => {
+        const spec = providerById("openai");
+        const model = { url: "https://api.openai.com/v1", apiKey: "sk-test", protocol: "openai", userUrl: false };
+        const setup = { resolve: async () => ({ ready: true, spec, model }) };
+        let sent = 0;
+        const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                // 1 MB at a time, without end: only a cap stops it.
+                sent++;
+                controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+            },
+        });
+        const fetch = async () => new Response(body, { headers: { "content-type": "application/json" } });
+        const lists = new ModelLists(setup as never, {} as never, { fetch: fetch as typeof globalThis.fetch });
+        const view = await lists.list({} as never, { kind: "instance" }, "openai");
+        assert.match(view?.error ?? "", /unexpectedly large/);
+        assert.ok(sent <= 8, `read ${sent} MB`);
     });
 });

@@ -57,7 +57,7 @@ export const projectRoutes: Route[] = [
         permission: "configure",
         tag: "Projects",
         summary: "Delete a project and everything stored for it",
-        description: 'Send `{"confirm": "<project id>"}`.',
+        description: 'Send `{"confirm": "<project slug>"}` (the slug in its address, /p/{project}).',
         body: z.object({ confirm: z.string().max(40) }),
         async handler({ services, project: p, body, actor }) {
             return json(await services.projects.delete(actor, project(p), body.confirm));

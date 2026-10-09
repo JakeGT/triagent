@@ -95,6 +95,8 @@ export function gitEnv(ctx: GitContext, extra: [string, string][] = []): Record<
 /** Environment for fetching from `cloneUrl` with `token`: the header applies to that host only. */
 export function fetchEnv(ctx: GitContext, cloneUrl: string, username: string, token: string): Record<string, string> {
     const url = new URL(cloneUrl);
+    // Only over HTTP(S): the protocol allowed below must never be one that runs commands (ext::) or the like.
+    if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("The server sent a clone URL that isn't http(s).");
     const basic = Buffer.from(`${username}:${token}`).toString("base64");
     return {
         ...gitEnv(ctx, [
@@ -203,9 +205,19 @@ export class Git {
         if (!SHA.test(head)) throw new Error("Couldn't tell which commit to review.");
         let base: string | null = null;
         if (baseRef) {
-            base = await this.git(["--git-dir", mirror, "merge-base", `${baseRef}^{commit}`, head]).catch(() => {
+            const exit = await start(this.ctx.gitBin, ["--git-dir", mirror, "merge-base", `${baseRef}^{commit}`, head], {
+                env: gitEnv(this.ctx),
+                timeoutMs: 60_000,
+                ...(signal ? { signal } : {}),
+            }).done;
+            // Exit 1 with nothing said is git's "no merge base"; anything else (a timeout, a cancel, a broken mirror) is its own error.
+            if (exit.code === 1 && !exit.killed && !exit.stderr.trim())
                 throw new Error(`${job.kind === "pr" ? "The pull request" : job.gitRef} has no history in common with ${job.baseRef}.`);
-            });
+            if (exit.code !== 0)
+                throw new Error(
+                    `git merge-base ${exit.timedOut ? "took too long and was stopped" : exit.killed ? "was stopped" : `failed (exit ${exit.code ?? exit.signal})`}: ${exit.stderr.trim().split("\n").slice(-3).join(" ")}`,
+                );
+            base = exit.stdout.trim();
         }
         return { head, base };
     }
@@ -266,9 +278,12 @@ export class Git {
         const out: { path: string; now: "base" | "none" }[] = [];
         const queue = paths.map(safeRelative).filter((p): p is string => p !== null);
         const seen = new Set<string>();
-        while (queue.length && seen.size < 200) {
+        // Every path asked for, and up to 200 more reached through links; past that, fail rather than leave any behind.
+        const limit = queue.length + 200;
+        while (queue.length) {
             const rel = queue.shift() as string;
             if (seen.has(rel)) continue;
+            if (seen.size >= limit) throw new Error("Too many files to put back as they are in the base commit.");
             seen.add(rel);
             const parts = rel.split("/");
             for (let i = 1; i < parts.length; i++) {
@@ -289,7 +304,11 @@ export class Git {
             out.push({ path: rel, now: "base" });
             if (m[1] === "120000") {
                 // A link in the base: what it points to must be the base's too.
-                const to = await this.git(["--git-dir", mirror, "cat-file", "blob", m[3] as string]);
+                // Not trimmed: a link's target is exactly its blob's content.
+                const to = await run(this.ctx.gitBin, ["--git-dir", mirror, "cat-file", "blob", m[3] as string], {
+                    env: gitEnv(this.ctx),
+                    timeoutMs: 60_000,
+                });
                 const next = safeRelative(path.posix.join(path.posix.dirname(rel), to));
                 if (next) queue.push(next);
             }

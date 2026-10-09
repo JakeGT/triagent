@@ -48,6 +48,11 @@ test("an unchanged file is a 304", async () => {
     assert.ok(etag);
     const again = await app.request("/assets/index-abc123.js", { headers: { "if-none-match": etag } });
     assert.equal(again.status, 304);
+    // As sent back through a compressing proxy, or by a cache holding more than one version.
+    const weak = await app.request("/assets/index-abc123.js", { headers: { "if-none-match": `"old", W/${etag}` } });
+    assert.equal(weak.status, 304);
+    const other = await app.request("/assets/index-abc123.js", { headers: { "if-none-match": `"old"` } });
+    assert.equal(other.status, 200);
 });
 
 test("app routes get the page; API paths, missing assets and files outside the build don't", async () => {

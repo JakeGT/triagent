@@ -77,7 +77,7 @@ export class Models {
         const now = this.allowances.now();
         const used = await this.history.tokensThisMonth(workspace.id, "instance", now);
         const ownKey = `To keep reviewing before then, add ${own.missing.replace(/^an? /, "your own ")} in Settings → Review model & keys.`;
-        const exhausted = this.allowances.exhausted(grant.monthlyTokens, used);
+        const exhausted = this.allowances.exhausted(grant.monthlyTokens, used, now);
         if (exhausted) return { ready: false, reason: `${exhausted} ${ownKey}` };
         const reserved = (await repos.jobs.active())
             .filter((j) => j.workspaceId === workspace.id && j.status === "running" && j.model?.keySource === "instance")

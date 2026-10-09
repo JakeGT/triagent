@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 import type { Repos } from "../store/types.ts";
-import type { Catalogue } from "./catalogue.ts";
+import { type Catalogue, readCapped } from "./catalogue.ts";
 import type { ModelSetup, Place } from "./model-setup.ts";
 import { UnsafeUrl } from "./model-urls.ts";
 import { type ProviderSpec, providerById } from "./providers.ts";
@@ -140,12 +140,12 @@ export class ModelLists {
             if (!res.ok) throw new Error(`${spec.name} answered ${res.status} when asked for its models.`);
             if (Number(res.headers.get("content-length") ?? 0) > MAX_BYTES)
                 throw new Error(`${spec.name}'s model list is unexpectedly large.`);
-            const text = await res.text();
-            if (text.length > MAX_BYTES) throw new Error(`${spec.name}'s model list is unexpectedly large.`);
+            const text = await readCapped(res, MAX_BYTES);
+            if (text === null) throw new Error(`${spec.name}'s model list is unexpectedly large.`);
             const models = parseModelList(JSON.parse(text));
             return { ...base, models, fetchedAt: new Date(this.options.now()).toISOString(), error: null };
         } catch (err) {
-            const e = err as Error;
+            const e = err instanceof Error ? err : new Error(String(err));
             const error =
                 e.name === "TimeoutError" || e.name === "AbortError"
                     ? `${spec.name} didn't answer in time.`

@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, before, describe, test } from "node:test";
+import { sha256 } from "../src/security.ts";
 import type { Actor } from "../src/services/core.ts";
 import type { Lookup } from "../src/services/model-urls.ts";
 import type { RunModel } from "../src/services/models.ts";
@@ -168,6 +169,40 @@ describe("forRun, by protocol", () => {
         // Clearing the URL makes it wait again.
         assert.equal((await patch(w, { url: null })).status, 200);
         assert.equal(await reason(w), "Add your server's base URL in Settings → Review model & keys.");
+    });
+
+    test("moving the address a stored key is sent to takes the secrets permission and a recent sign-in", async () => {
+        const w = await newWorkspace();
+        await patch(w, { provider: "custom", url: "https://llm.example.com/v1", model: "qwen3:32b" });
+        await putKey(w, "custom", fakeKey());
+        const token = await t.request(`/api/v1/w/${w.slug}/settings/tokens`, {
+            method: "POST",
+            session: admin,
+            body: { name: "m", scope: "manage" },
+        });
+        assert.equal(token.status, 201);
+        const asToken = (body: object) =>
+            t.request(`/api/v1/w/${w.slug}/settings/review-model`, { method: "PATCH", token: token.body.token, body });
+        // A token can configure the model, but not send the key somewhere else.
+        assert.equal((await asToken({ model: "qwen3:8b", url: "https://llm.example.com/v1" })).status, 200);
+        const moved = await asToken({ url: "https://res.openai.azure.com/v1" });
+        assert.equal(moved.status, 403);
+        assert.equal((await asToken({ url: null })).status, 403);
+        assert.equal((await ready(w)).url, "https://llm.example.com/v1");
+        // An admin whose sign-in is old is asked to confirm it's them first.
+        const idHash = sha256(admin.cookie.split("=")[1] as string);
+        const s = await t.services.store.sessions.get(idHash);
+        assert.ok(s);
+        await t.services.store.sessions.put({ ...s, authAt: Date.now() - 60 * 60_000 });
+        try {
+            const stale = await patch(w, { url: "https://res.openai.azure.com/v1" });
+            assert.equal(stale.status, 401);
+            assert.equal(stale.body.code, "reauth_required");
+            assert.equal((await patch(w, { model: "qwen3:32b", url: "https://llm.example.com/v1" })).status, 200);
+        } finally {
+            await t.services.store.sessions.put(s);
+        }
+        assert.equal((await patch(w, { url: "https://res.openai.azure.com/v1" })).status, 200);
     });
 
     test("the instance key for Bedrock, through an allowance", async () => {

@@ -16,7 +16,11 @@ export function useDraft<T>(server: T | undefined) {
     const dirty = draft !== undefined && base !== undefined && !same(draft, base);
 
     // Adjusting state while rendering (not in an effect) avoids showing a stale copy for one frame.
-    if (server !== undefined && base === undefined) {
+    if (server === undefined && base !== undefined) {
+        // Gone (another entity is loading): the next one starts fresh rather than inheriting these edits.
+        setBase(undefined);
+        setDraft(undefined);
+    } else if (server !== undefined && base === undefined) {
         setBase(server);
         setDraft(server);
     } else if (server !== undefined && !dirty && server !== base && !same(server, base)) {

@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
+import { MAX_BATCH } from "../src/mcp/server.ts";
 import { EventBus, type LiveEvent } from "../src/services/events.ts";
 import type { ActivityRow } from "../src/store/types.ts";
 import { ADMIN_PASSWORD, report, type Session, type TestApp, testApp } from "./helpers.ts";
@@ -120,6 +121,26 @@ test("the MCP endpoint only reaches the token's own workspace", async () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.result.isError, true);
     assert.ok(!res.text.includes(issueId));
+});
+
+test("an MCP batch is answered in order, and a huge one is refused", async () => {
+    const ping = (id: number) => ({ jsonrpc: "2.0", id, method: "ping" });
+    const ok = await t.request("/mcp", { method: "POST", token: outsiderToken, body: [ping(1), ping(2), ping(3)] });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(
+        ok.body.map((r: { id: number }) => r.id),
+        [1, 2, 3],
+    );
+    // Notifications get no reply, not even for a method that doesn't exist.
+    const quiet = await t.request("/mcp", { method: "POST", token: outsiderToken, body: { jsonrpc: "2.0", method: "no/such" } });
+    assert.equal(quiet.status, 202);
+    const big = await t.request("/mcp", {
+        method: "POST",
+        token: outsiderToken,
+        body: Array.from({ length: MAX_BATCH + 1 }, (_, i) => ping(i)),
+    });
+    assert.equal(big.status, 400);
+    assert.equal(big.body.error.code, -32600);
 });
 
 test("live events only reach subscribers in the same workspace, and admin-only kinds only reach admins", () => {

@@ -92,6 +92,11 @@ test("every string in a report or progress, keys and all, is redacted", () => {
     assert.equal(out.comments[1], null);
     assert.equal(out.comments[2], 5);
     assert.equal(out.warnings[0]?.message, "401 for key [redacted]");
-    // Characters Postgres text can't hold go too.
+    // Characters Postgres text can't hold go too, and half a surrogate pair (jsonb refuses it) becomes U+FFFD.
     assert.equal(redactDeep("a\u0000b", clean), "ab");
+    assert.equal(redactDeep("a\ud800b\udc00c\ud83d\ude00", clean), "a\ufffdb\ufffdc\ud83d\ude00");
+    // Nested deeper than is read: replaced whole, never kept as it was.
+    let deep: unknown = { key: secret };
+    for (let i = 0; i < 100; i++) deep = [deep];
+    assert.ok(!JSON.stringify(redactDeep(deep, clean)).includes(secret));
 });

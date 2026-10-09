@@ -53,7 +53,9 @@ function describe(c: TaskChange): string {
 
 export function TaskPanel() {
     const { taskId } = useParams({ from: ROUTE });
-    return <TaskView key={taskId} id={taskId} />;
+    const { branch } = useProject();
+    // A fresh panel for each task on each branch: drafts and conflicts belong to that one.
+    return <TaskView key={`${branch}\0${taskId}`} id={taskId} />;
 }
 
 function TaskView({ id }: { id: string }) {
@@ -188,10 +190,12 @@ function TaskView({ id }: { id: string }) {
                             <Button
                                 size="sm"
                                 variant="outline"
+                                disabled={update.isPending}
                                 onClick={() => {
                                     const attempted = conflict.attempted;
                                     void change(attempted).then((ok) => {
-                                        if (ok && attempted.note) setNote("");
+                                        // Clear the box only if it still holds the note that was just added.
+                                        if (ok && attempted.note) setNote((n) => (n.trim() === attempted.note ? "" : n));
                                     });
                                 }}
                             >

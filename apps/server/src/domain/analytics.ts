@@ -200,6 +200,7 @@ export function analyse(input: AnalyticsInput) {
         }
     }
     for (const e of input.activity) {
+        if (!inBranch(e.branch)) continue;
         const t = Date.parse(e.at);
         if (Number.isFinite(t) && (earliest === null || t < earliest)) earliest = t;
     }
@@ -263,7 +264,10 @@ export function scans(recs: readonly ReviewRecord[], costs: ReadonlyMap<string, 
                     : null,
                 details: {
                     ...lead.details,
-                    runSeconds: group.reduce((n, r) => n + (r.details.runSeconds ?? 0), 0),
+                    // Only a time some model recorded: none at all isn't a run of 0 seconds.
+                    ...(group.some((r) => r.details.runSeconds !== undefined)
+                        ? { runSeconds: group.reduce((n, r) => n + (r.details.runSeconds ?? 0), 0) }
+                        : {}),
                     ...(scan.findings !== null
                         ? { findings: { ...(lead.details.findings ?? { bySeverity: zeroes() }), total: scan.findings } }
                         : {}),
@@ -354,7 +358,9 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
     }
 
     // Each review once: a review run with several models is one scan, however many records it has.
-    for (const { r, cost: c } of scans(recs, costs)) {
+    // Reviews as people count them (a run with several models is one), merged once.
+    const merged = scans(recs, costs);
+    for (const { r, cost: c } of merged) {
         const found = r.status === "done" || r.status === "partial" ? (r.details.findings?.total ?? 0) : 0;
         byStatus[r.status]++;
         if (r.source === "run") runs++;
@@ -403,7 +409,7 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             .sort((a, b) => b.reviews - a.reviews || a.key.localeCompare(b.key));
 
     const prCosts = [...prs.values()];
-    const latest = scans(recs, costs)
+    const latest = merged
         .map((x) => x.r)
         .sort((a, b) => b.at.localeCompare(a.at))
         .slice(0, 15)

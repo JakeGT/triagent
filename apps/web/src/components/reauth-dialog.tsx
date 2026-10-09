@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { errorMessage, request, setCsrfToken } from "@/lib/api";
 import { authConfigQuery, meQuery } from "@/lib/queries";
+import { localPath } from "@/lib/safe-href";
 import type { ApiErrorBody, Me } from "@/lib/types";
 
 /** How the sign-in window tells this page it's done (features/auth/reauthenticated-page.tsx). */
@@ -61,11 +62,10 @@ const subscribe = (listener: () => void) => {
 
 /** The provider sign-in address from the server, coming back to this page. Only ever a path on this site. */
 export function reauthHref(reauthUrl: unknown, here: string): string {
-    const url = new URL(
-        typeof reauthUrl === "string" && reauthUrl.startsWith("/auth/login") ? reauthUrl : "/auth/login?prompt=login&max_age=60",
-        "http://x",
-    );
-    url.searchParams.set("next", here.startsWith("/") && !here.startsWith("//") ? here : "/");
+    const given = typeof reauthUrl === "string" ? localPath(reauthUrl) : null;
+    let url = new URL(given ?? "/auth/login", "http://x");
+    if (!given || url.pathname !== "/auth/login") url = new URL("/auth/login?prompt=login&max_age=60", "http://x");
+    url.searchParams.set("next", localPath(here) ?? "/");
     return `${url.pathname}${url.search}`;
 }
 

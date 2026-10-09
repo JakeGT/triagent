@@ -290,7 +290,12 @@ export class JobRun {
 
     async end(): Promise<void> {
         for (const t of this.timers) clearInterval(t);
-        await this.flush();
+        // Everything left, a batch at a time, until it's sent or the server stops taking it.
+        for (let i = 0; i < 100; i++) {
+            const before = this.buffer.length;
+            await this.flush();
+            if (this.lost || (!this.buffer.length && !this.progressDirty) || this.buffer.length >= before) break;
+        }
     }
 
     attach(stop: () => void): void {
@@ -306,6 +311,8 @@ export class Runner {
     readonly id = `runner-${randomBytes(9).toString("base64url")}`;
     private readonly active = new Map<string, JobRun>();
     private stopping = false;
+    /** Aborted by stop(), to end the poll loop's wait. */
+    private readonly wake = new AbortController();
     private loop: Promise<void> | null = null;
     /** Called when a job ends (tests wait on it). */
     onJobEnd: (jobId: string) => void = () => {};
@@ -333,6 +340,7 @@ export class Runner {
     /** Stop asking for work; stop running reviews and tell the server why. */
     async stop(): Promise<void> {
         this.stopping = true;
+        this.wake.abort();
         for (const run of this.active.values()) run.cancel();
         while (this.active.size) await sleep(50);
         await this.loop;
@@ -348,7 +356,7 @@ export class Runner {
                     failures = 0;
                     if (job) {
                         claimed = true;
-                        void this.execute(job);
+                        void this.execute(job).catch((err) => console.error(`Running ${job.id} failed: ${(err as Error).message}`));
                     }
                 } catch (err) {
                     failures++;
@@ -356,7 +364,10 @@ export class Runner {
                         console.error(`Asking the server for work failed: ${(err as Error).message}`);
                 }
             }
-            if (!claimed) await sleep(Math.min(this.config.pollMs * 2 ** Math.min(failures, 4), 60_000));
+            if (!claimed)
+                await sleep(Math.min(this.config.pollMs * 2 ** Math.min(failures, 4), 60_000), undefined, {
+                    signal: this.wake.signal,
+                }).catch(() => {});
         }
     }
 
@@ -365,13 +376,24 @@ export class Runner {
         const run = new JobRun(job, this.server);
         this.active.set(job.id, run);
         run.begin();
-        const work = mkdtempSync(path.join(this.config.workDir, "job-"));
-        const tree = path.join(work, "tree");
+        try {
+            await this.runJob(job, run);
+        } finally {
+            this.active.delete(job.id);
+            this.onJobEnd(job.id);
+        }
+    }
+
+    private async runJob(job: ClaimedJob, run: JobRun): Promise<void> {
+        let work: string | null = null;
+        let tree = "";
         const mirror = mirrorPath(this.config.cacheDir, job.repository.cloneUrl);
         let fetched: { head: string; base: string | null } | null = null;
         let outcome: Parameters<ServerClient["finish"]>[1];
         let ocrStarted = false;
         try {
+            work = mkdtempSync(path.join(this.config.workDir, "job-"));
+            tree = path.join(work, "tree");
             run.setProgress({ phase: "fetching" });
             run.say(
                 `Fetching ${job.kind === "pr" ? `pull request #${job.pr?.number}` : job.gitRef}${job.baseRef ? ` and ${job.baseRef}` : ""} from ${job.repository.fullName}…`,
@@ -509,13 +531,17 @@ export class Runner {
         } finally {
             // So the server doesn't charge an estimate for a review that never reached the model.
             if (!ocrStarted) run.setProgress({ ...run.currentProgress, tokens: 0 });
-            await this.git.removeWorktree(mirror, tree).catch(() => {});
-            rmSync(work, { recursive: true, force: true });
+            if (work) {
+                await this.git.removeWorktree(mirror, tree).catch(() => {});
+                try {
+                    rmSync(work, { recursive: true, force: true });
+                } catch (err) {
+                    console.error(`Couldn't remove ${work}: ${(err as Error).message}`);
+                }
+            }
             await run.end();
         }
         if (!run.lost) await this.report(job.id, { ...outcome, headSha: fetched?.head ?? null, baseSha: fetched?.base ?? null });
-        this.active.delete(job.id);
-        this.onJobEnd(job.id);
     }
 
     /** Tell the server how the job ended, trying again for a while if it can't be reached. */
@@ -525,7 +551,9 @@ export class Runner {
                 await this.server.finish(jobId, outcome);
                 return;
             } catch (err) {
-                if (isLost(err) || attempt === 8) {
+                // Lost, or refused (sending it again would be refused again): no point trying again.
+                const refused = err instanceof ServerError && err.status >= 400 && err.status < 500;
+                if (isLost(err) || refused || attempt === 8) {
                     console.error(`Couldn't report how ${jobId} ended: ${(err as Error).message}`);
                     return;
                 }

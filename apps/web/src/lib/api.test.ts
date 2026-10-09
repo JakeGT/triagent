@@ -28,6 +28,15 @@ describe("the API client", () => {
         hooks.onReauthRequired.mockReset();
     });
 
+    it("turns a success that isn't JSON into an ApiError", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response("<!doctype html><html></html>", { status: 200 })),
+        );
+        const err = await api.get("/api/v1/me").catch((e: unknown) => e);
+        expect(isApiError(err, 200)).toBe(true);
+    });
+
     it("sends the CSRF token and the tab's client id with every write", async () => {
         const fetchMock = respond(200, { ok: true });
         vi.stubGlobal("fetch", fetchMock);
@@ -125,6 +134,7 @@ describe("the API client", () => {
             "/auth/login?next=%2Fw%2Facme%2Fp%2Fapp%2Fissues%3Fbranch%3Dmain",
         );
         expect(providerSignInUrl("//evil.example")).toBe("/auth/login?next=%2F");
+        expect(providerSignInUrl("/\\evil.example")).toBe("/auth/login?next=%2F");
         expect(providerSignInUrl("https://evil.example")).toBe("/auth/login?next=%2F");
         expect(providerSignInUrl("/", { prompt: "login" })).toBe("/auth/login?prompt=login&next=%2F");
     });

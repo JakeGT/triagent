@@ -180,7 +180,7 @@ function otherFindings(v: unknown): OtherFinding[] {
     return v.slice(0, 10).flatMap((o: unknown) => {
         if (!o || typeof o !== "object") return [];
         const x = o as Record<string, unknown>;
-        if (typeof x.model !== "string" || typeof x.content !== "string" || !x.content) return [];
+        if (typeof x.model !== "string" || !x.model.trim() || typeof x.content !== "string" || !x.content) return [];
         return [
             Object.freeze({
                 model: x.model.slice(0, 200),
@@ -265,12 +265,20 @@ function parseSummary(markdown: string): DraftSection[] {
             item = null;
         }
     }
-    // Two headings with the same text would give two sections the same id.
+    // Two headings with the same text would give two sections the same id; so could "A" twice and an "A 2".
+    // Section ids end in a letter or a number, and task ids are "<section>-<n>", so unique section ids
+    // keep task ids unique too.
     const seen = new Map<string, number>();
+    const taken = new Set<string>();
     for (const s of sections) {
         const n = (seen.get(s.id) ?? 0) + 1;
         seen.set(s.id, n);
-        if (n > 1) s.id = `${s.id}-${n}`;
+        if (n > 1 || taken.has(s.id)) {
+            let k = Math.max(n, 2);
+            while (taken.has(`${s.id}-${k}`)) k++;
+            s.id = `${s.id}-${k}`;
+        }
+        taken.add(s.id);
     }
     return sections;
 }

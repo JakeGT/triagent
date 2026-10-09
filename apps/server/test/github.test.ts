@@ -179,6 +179,54 @@ describe("more than a page of pull requests, and a project that moves to another
         for (let n = 1; n <= 130; n++) env.fake.repo("acme/app").pulls.delete(n);
     });
 
+    test("a review finishing during a check keeps its outcome", async () => {
+        const pr = env.fake.pull("acme/app", { number: 501, headRef: "during" });
+        const p = await project();
+        await env.t.services.automation.checkPulls(p);
+        const jobs = env.t.services.store.jobs;
+        const list = jobs.list;
+        // The review of the head commit finishes while the check is deciding.
+        jobs.list = async (...args) => {
+            jobs.list = list;
+            await env.t.services.store.transaction(async (tx) => {
+                const s = structuredClone(await tx.githubState.get(p.id)) as { prs: Record<string, Record<string, unknown>> };
+                Object.assign(s.prs["501"] as object, { reviewedSha: pr.headSha, status: "reviewed", baseline: false });
+                await tx.githubState.put(p.id, s);
+            });
+            return list.apply(jobs, args);
+        };
+        try {
+            await env.t.services.automation.checkPulls(p);
+        } finally {
+            jobs.list = list;
+        }
+        const after = (await env.t.services.automation.state(p)).prs["501"];
+        assert.equal(after?.reviewedSha, pr.headSha);
+        assert.equal(after?.status, "reviewed");
+        env.fake.repo("acme/app").pulls.delete(501);
+    });
+
+    test("a check that fails rejects for its caller only, with no unhandled rejection", async () => {
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown) => unhandled.push(reason);
+        process.on("unhandledRejection", onUnhandled);
+        const settings = env.t.services.settings;
+        const original = settings.automation;
+        settings.automation = async () => {
+            throw new Error("store down");
+        };
+        try {
+            await assert.rejects(env.t.services.automation.checkPulls(await project()), /store down/);
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.deepEqual(unhandled, []);
+        } finally {
+            settings.automation = original;
+            process.off("unhandledRejection", onUnhandled);
+        }
+        // And the next check runs as usual.
+        assert.ok(await env.t.services.automation.checkPulls(await project()));
+    });
+
     test("a review reports only to the repository it reviewed: if the project moves, nothing is posted elsewhere", async () => {
         const runs = env.t.services.runs;
         const admin = { name: "admin", userId: null, via: "web" } as const;
@@ -226,6 +274,49 @@ describe("more than a page of pull requests, and a project that moves to another
         assert.match(failed?.error ?? "", /This project now uses acme\/other, but this review was queued for acme\/app/);
         await runs.settled();
         assert.equal(other.statuses.length, 0);
+    });
+
+    test("a run whose ending can't be recorded still finishes on GitHub, not left pending", async () => {
+        const runs = env.t.services.runs;
+        const admin = { name: "admin", userId: null, via: "web" } as const;
+        const hello = { id: "runner-unrecorded-0000", name: "unrecorded", version: "1", slots: 1 };
+        await env.t.services.projects.update(admin, await project(), { repoUrl: "https://github.com/acme/app" });
+        const headSha = randomBytes(20).toString("hex");
+        const spec = (await import("../src/services/runs.ts")).specForPull({
+            number: 8,
+            title: "Eight",
+            state: "open",
+            html_url: "https://github.com/acme/app/pull/8",
+            user: { login: "octo" },
+            head: { ref: "feat", sha: headSha, repo: { full_name: "acme/app" } },
+            base: { ref: "main", sha: "0".repeat(40), repo: { full_name: "acme/app" } },
+        });
+        await runs.enqueue(admin, await project(), spec);
+        const claimed = await runs.claim(hello);
+        assert.ok(claimed);
+        const finished: string[] = [];
+        const onFinished = runs.onFinished;
+        runs.onFinished = (job, p) => {
+            finished.push(job.id);
+            onFinished(job, p);
+        };
+        // Recording the ending fails (here: reading the project's settings), so the fallback ends it.
+        const settings = env.t.services.settings;
+        const automation = settings.automation;
+        settings.automation = async () => {
+            throw new Error("settings unreadable");
+        };
+        try {
+            await runs.finish(hello, claimed.id, { status: "failed", error: "boom" });
+        } finally {
+            settings.automation = automation;
+        }
+        await runs.settled();
+        runs.onFinished = onFinished;
+        assert.equal((await env.t.services.store.jobs.get(claimed.id))?.status, "failed");
+        assert.deepEqual(finished, [claimed.id]);
+        const statuses = env.fake.repo("acme/app").statuses.filter((s) => s.sha === headSha);
+        assert.ok(statuses.length > 0 && statuses.at(-1)?.state !== "pending", JSON.stringify(statuses));
     });
 });
 
@@ -326,10 +417,13 @@ describe("branches on GitHub, and the nightly scan", () => {
         const main = fake.repo("acme/app").branches.get("main") as string;
         const feature = await fake.commit("acme/app", "feature", { "src/f.ts": "f\n" }, "f", "main");
         const gone = await fake.commit("acme/app", "gone", { "src/g.ts": "g\n" }, "g", "main");
+        // A branch name that's also an Object property: still just a branch.
+        const odd = await fake.commit("acme/app", "constructor", { "src/c.ts": "c\n" }, "c", "main");
         await fake.commit("acme/app", "fresh", { "src/n.ts": "n\n" }, "n", "main");
         assert.equal((await upload("main", main)).status, 200);
         assert.equal((await upload("feature", feature)).status, 200);
         assert.equal((await upload("gone", gone)).status, 200);
+        assert.equal((await upload("constructor", odd)).status, 200);
         await fake.commit("acme/app", "feature", { "src/f2.ts": "x\n" }, "f2");
         await fake.commit("acme/app", "feature", { "src/f3.ts": "x\n" }, "f3");
         await env.t.request("/api/v1/w/acme/p/app/settings/automation", {
@@ -354,10 +448,12 @@ describe("branches on GitHub, and the nightly scan", () => {
 
         // Deleted on GitHub: archived here (never the default branch, even if that goes too).
         fake.deleteBranch("acme/app", "gone");
+        fake.deleteBranch("acme/app", "constructor");
         fake.deleteBranch("acme/app", "main");
         await env.t.services.automation.syncBranches(project);
         list = (await env.t.request("/api/v1/w/acme/p/app/branches", { session: env.admin })).body;
         assert.equal(by("gone"), undefined);
+        assert.equal(by("constructor"), undefined);
         assert.equal(by("main").github.onGitHub, false);
         const history = (await env.t.request("/api/v1/w/acme/p/app/reports?branch=gone", { session: env.admin })).body;
         assert.equal(history.archived[0].reason, "deleted");
@@ -594,6 +690,31 @@ describe("the GitHub App", () => {
                 (await env.t.request(`/api/v1/w/acme/github/installations/${id}`, { method: "DELETE", session: env.admin })).status,
                 200,
             );
+    });
+
+    test("losing the right to manage secrets while GitHub is being asked links nothing", async () => {
+        const late = env.fake.install("late", ["late/app"], ["alice"]);
+        env.fake.orgRole("late", "alice", "admin");
+        const store = env.t.services.store;
+        const workspace = await store.workspaces.bySlug("acme");
+        const user = await store.users.byUsername("admin");
+        const before = workspace && user ? await store.memberships.get(workspace.id, user.id) : null;
+        assert.ok(before);
+        const app = env.t.services.github.app;
+        const original = app.installation.bind(app);
+        // Demoted between the first check and the link.
+        app.installation = async (id: number) => {
+            await store.transaction((tx) => tx.memberships.put({ ...before, role: "viewer" }));
+            return original(id);
+        };
+        try {
+            const r = await link(env.admin, "acme", late.id, "alice");
+            assert.match(r.location, /\?github=not-allowed$/);
+            assert.equal(await store.githubInstallations.get(late.id), null);
+        } finally {
+            app.installation = original;
+            await store.transaction((tx) => tx.memberships.put(before));
+        }
     });
 
     test("the app's webhook: verified, then routed by installation and repository to the right workspace's project", async () => {

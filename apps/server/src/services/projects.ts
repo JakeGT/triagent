@@ -131,6 +131,13 @@ export class Projects {
             throw badRequest(`Deleting a project removes its reports, triage and settings. To confirm, send "confirm": "${project.slug}".`);
         return this.core.write(actor, async (w) => {
             await w.tx.projects.delete(project.id);
+            // A tutorial example deleted here is gone for good: a later project given its name isn't the example.
+            if ((await w.tx.workspaces.get(project.workspaceId))?.kind === "personal")
+                for (const m of await w.tx.memberships.forWorkspace(project.workspaceId)) {
+                    const user = await w.tx.users.get(m.userId);
+                    if (user?.tutorial.exampleProject === project.slug)
+                        await w.tx.users.put({ ...user, tutorial: { ...user.tutorial, exampleProject: null } });
+                }
             await w.audit({
                 workspaceId: project.workspaceId,
                 kind: "project",

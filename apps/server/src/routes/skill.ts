@@ -19,7 +19,9 @@ export const skillRoutes: Route[] = [
         async handler() {
             try {
                 return markdown(await readFile(SKILL, "utf8"));
-            } catch {
+            } catch (err) {
+                // Only a missing file is "not here"; anything else is the server's problem, logged as a 500.
+                if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
                 throw notFound("This server has no copy of the skill. See skills/triagent/SKILL.md in the Triagent repository.");
             }
         },

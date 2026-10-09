@@ -73,8 +73,10 @@ function whole(value: unknown, fallback: number, min: number, max: number, field
 
 /** Filters from a query string or an MCP tool's arguments (both spellings of the flags are accepted). */
 export function parseFilters(input: Input, { maxLimit = 500, defaultLimit = 50 } = {}): IssueFilters {
-    const get = (...keys: string[]) => keys.map((k) => read(input, k)).find((v) => v !== undefined);
-    const sort = String(get("sort") ?? "priority");
+    // The first alias actually given: an empty one counts as not given, as it does for every field.
+    const get = (...keys: string[]) => keys.map((k) => read(input, k)).find((v) => v !== undefined && v !== "");
+    const sort = String(get("sort") || "priority");
+    const foundBy = get("foundBy", "found_by");
     return {
         severity: oneOf(list(get("severity")), SEVERITIES, "severity"),
         category: oneOf(list(get("category")), CATEGORIES, "category"),
@@ -87,10 +89,7 @@ export function parseFilters(input: Input, { maxLimit = 500, defaultLimit = 50 }
         needsDiscussion: flag(get("needsDiscussion", "needs_discussion"), "needsDiscussion"),
         duplicates: flag(get("duplicates"), "duplicates"),
         adjusted: flag(get("adjusted"), "adjusted"),
-        foundBy:
-            get("foundBy", "found_by") == null || get("foundBy", "found_by") === ""
-                ? null
-                : whole(get("foundBy", "found_by"), 1, 1, 10, "foundBy"),
+        foundBy: foundBy == null ? null : whole(foundBy, 1, 1, 10, "foundBy"),
         ids: list(get("ids")),
         sort: oneOf([sort], ISSUE_SORTS, "sort")[0] as IssueSort,
         limit: whole(get("limit"), defaultLimit, 1, maxLimit, "limit"),
@@ -102,6 +101,8 @@ export function describeFilters(f: IssueFilters): string {
     const parts: string[] = [];
     for (const k of ["severity", "category", "status"] as const) if (f[k].length) parts.push(`${k}=${f[k].join(",")}`);
     for (const k of ["path", "q", "task", "assignee"] as const) if (f[k]) parts.push(`${k}=${f[k]}`);
+    for (const k of ["hasSuggestion", "needsDiscussion", "duplicates", "adjusted"] as const) if (f[k] !== null) parts.push(`${k}=${f[k]}`);
+    if (f.ids.length) parts.push(`${f.ids.length} chosen id(s)`);
     if (f.foundBy) parts.push(`found by at least ${f.foundBy} models`);
     return parts.length ? ` for ${parts.join(", ")}` : "";
 }

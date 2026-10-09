@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { lineDiff } from "@/lib/line-diff";
 import { cn } from "@/lib/utils";
@@ -26,16 +26,17 @@ export function CodeView({
     startLine?: number | null;
 }) {
     const [tab, setTab] = useState(existing && suggestion ? "diff" : suggestion ? "suggestion" : "existing");
+    // Kept between renders: the page re-renders on every keystroke of a note being typed.
+    const diff = useMemo(() => (existing && suggestion ? lineDiff(existing, suggestion) : []), [existing, suggestion]);
     if (!existing && !suggestion) return null;
     if (!(existing && suggestion)) {
         return (
             <section className="grid gap-1.5">
                 <h3 className="text-sm font-medium">{existing ? "Code" : "Suggested code"}</h3>
-                <CodeBlock code={(existing ?? suggestion) as string} />
+                <CodeBlock code={existing || suggestion || ""} />
             </section>
         );
     }
-    const diff = lineDiff(existing, suggestion);
     return (
         <section className="grid gap-1.5">
             <h3 className="text-sm font-medium">Code and suggested fix</h3>

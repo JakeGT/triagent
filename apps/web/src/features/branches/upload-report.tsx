@@ -33,13 +33,16 @@ export function UploadReport() {
     const [branch, setBranch] = useState(project.defaultBranch);
     const [commit, setCommit] = useState("");
     const [scope, setScope] = useState<"full" | "diff">("full");
+    const [branchError, setBranchError] = useState<string | null>(null);
     const [fileError, setFileError] = useState<string | null>(null);
     const [prepared, setPrepared] = useState<Prepared | null>(null);
     const [preview, setPreview] = useState<UploadPreview | null>(null);
 
+    // Any change to what would be uploaded takes the preview away, so Confirm only sends what was shown.
     const clearPreview = () => {
         setPrepared(null);
         setPreview(null);
+        setBranchError(null);
         setFileError(null);
     };
     const reset = () => {
@@ -62,13 +65,14 @@ export function UploadReport() {
     });
 
     const prepare = async () => {
+        setBranchError(null);
         setFileError(null);
         setPreview(null);
         previewIt.reset();
         upload.reset();
         const file = fileRef.current?.files?.[0];
         if (!branch.trim()) {
-            setFileError("Enter the branch the report is for.");
+            setBranchError("Enter the branch the report is for.");
             return;
         }
         if (!file) {
@@ -112,12 +116,32 @@ export function UploadReport() {
                 }}
             >
                 <FieldRow>
-                    <Field label="Branch">
-                        {(f) => <Input {...f} value={branch} onChange={(e) => setBranch(e.target.value)} className="font-mono" required />}
+                    <Field label="Branch" error={branchError}>
+                        {(f) => (
+                            <Input
+                                {...f}
+                                value={branch}
+                                onChange={(e) => {
+                                    setBranch(e.target.value);
+                                    clearPreview();
+                                }}
+                                className="font-mono"
+                                required
+                            />
+                        )}
                     </Field>
                     <Field label="Commit" hint="Optional: the commit that was reviewed.">
                         {(f) => (
-                            <Input {...f} value={commit} onChange={(e) => setCommit(e.target.value)} className="font-mono" maxLength={40} />
+                            <Input
+                                {...f}
+                                value={commit}
+                                onChange={(e) => {
+                                    setCommit(e.target.value);
+                                    clearPreview();
+                                }}
+                                className="font-mono"
+                                maxLength={40}
+                            />
                         )}
                     </Field>
                 </FieldRow>
@@ -125,7 +149,10 @@ export function UploadReport() {
                     legend="What the review covered"
                     name={scopeName}
                     value={scope}
-                    onChange={setScope}
+                    onChange={(v) => {
+                        setScope(v);
+                        clearPreview();
+                    }}
                     choices={[
                         { value: "full", label: "The whole codebase" },
                         { value: "diff", label: "Only the branch's changes" },
@@ -135,7 +162,7 @@ export function UploadReport() {
                     {(f) => <Input {...f} ref={fileRef} type="file" accept=".json,application/json" onChange={clearPreview} />}
                 </Field>
                 <FormActions>
-                    <Button type="submit" disabled={previewIt.isPending}>
+                    <Button type="submit" disabled={previewIt.isPending || upload.isPending}>
                         {previewIt.isPending ? "Checking…" : "Preview upload"}
                     </Button>
                 </FormActions>
@@ -191,7 +218,7 @@ export function UploadReport() {
                         >
                             {upload.isPending ? "Uploading…" : "Confirm upload"}
                         </Button>
-                        <Button variant="ghost" onClick={reset}>
+                        <Button variant="ghost" onClick={reset} disabled={upload.isPending}>
                             Cancel
                         </Button>
                     </FormActions>

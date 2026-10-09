@@ -156,9 +156,11 @@ export class Automation {
         const before = this.busy.get(key) ?? Promise.resolve();
         const next = before.catch(() => {}).then(task);
         this.busy.set(key, next);
-        void next.finally(() => {
+        // Cleaned up either way, without a branch of its own that could reject unhandled (the caller sees any failure).
+        const done = () => {
             if (this.busy.get(key) === next) this.busy.delete(key);
-        });
+        };
+        next.then(done, done);
         return next;
     }
 
@@ -272,11 +274,17 @@ export class Automation {
             if (capped) for (const [n, p] of Object.entries(before.prs)) if (!prs[n]) prs[n] = p;
             for (const { spec } of toQueue) await this.runs.enqueue(AUTOMATION, project, spec);
             const s = await this.update(project, (s) => {
-                // Keep what a run finishing meanwhile recorded.
+                // Keep what a run finishing meanwhile recorded, and its outcome when it was of the head commit.
                 for (const [n, p] of Object.entries(prs)) {
                     const latest = s.prs[n];
-                    if (latest?.reviewedSha && latest.reviewedSha !== p.reviewedSha) p.reviewedSha = latest.reviewedSha;
-                    if (latest?.attemptedSha && latest.attemptedSha !== p.attemptedSha) p.attemptedSha = latest.attemptedSha;
+                    if (latest?.reviewedSha && latest.reviewedSha !== p.reviewedSha) {
+                        p.reviewedSha = latest.reviewedSha;
+                        if (latest.reviewedSha === p.headSha) Object.assign(p, { status: latest.status, baseline: false });
+                    }
+                    if (latest?.attemptedSha && latest.attemptedSha !== p.attemptedSha) {
+                        p.attemptedSha = latest.attemptedSha;
+                        if (latest.attemptedSha === p.headSha) p.status = latest.status;
+                    }
                 }
                 s.prs = prs;
                 s.automationSeen = enabled;
@@ -360,7 +368,7 @@ export class Automation {
             if (automation.archiveDeletedBranches) {
                 for (const stored of await this.store.reports.branches(project.id)) {
                     const name = stored.branch;
-                    if (name === project.defaultBranch || name in items || !before.branches.seen.includes(name)) continue;
+                    if (name === project.defaultBranch || Object.hasOwn(items, name) || !before.branches.seen.includes(name)) continue;
                     if (await this.archive(project, name)) seen.delete(name);
                 }
             }
@@ -385,7 +393,7 @@ export class Automation {
         const out: GithubState["branchStatus"] = {};
         for (const stored of await this.store.reports.branches(project.id)) {
             if (only && stored.branch !== only) continue;
-            const githubSha = items[stored.branch];
+            const githubSha = Object.hasOwn(items, stored.branch) ? items[stored.branch] : undefined;
             if (!githubSha) continue;
             const reviewedSha = stored.upload.commit;
             const entry = { githubSha, reviewedSha, behind: null as number | null, diverged: false };
@@ -435,7 +443,7 @@ export class Automation {
             { onGitHub: boolean; current: boolean; githubSha: string | null; behind: number | null; diverged: boolean }
         > = {};
         for (const r of stored) {
-            const githubSha = s.branches.items[r.branch] ?? null;
+            const githubSha = Object.hasOwn(s.branches.items, r.branch) ? (s.branches.items[r.branch] ?? null) : null;
             const st = s.branchStatus[r.branch];
             const reviewed = r.upload.commit;
             const current = Boolean(githubSha && reviewed && githubSha.startsWith(reviewed));
@@ -496,7 +504,7 @@ export class Automation {
         const status = await this.staleness(project, gh, items, branch);
         await this.update(project, (s) => {
             s.branches.items[branch] = items[branch] as string;
-            if (!s.branches.seen.includes(branch)) s.branches.seen.push(branch);
+            if (!s.branches.seen.includes(branch)) s.branches.seen = [...s.branches.seen, branch].slice(-5000);
             if (status[branch]) s.branchStatus[branch] = status[branch];
         });
     }
@@ -709,10 +717,11 @@ export class Automation {
         if (automation.enabled && automation.nightlyHourUtc !== null && at.getUTCHours() === automation.nightlyHourUtc) {
             const today = at.toISOString().slice(0, 10);
             if (s.lastNightly !== today) {
+                // Queued first, so a failure is tried again next tick (a second request replaces the first: same dedupe key).
+                await this.runs.enqueue(AUTOMATION, project, specForBranch("full", project.defaultBranch, null, "nightly"));
                 await this.update(project, (x) => {
                     x.lastNightly = today;
                 });
-                await this.runs.enqueue(AUTOMATION, project, specForBranch("full", project.defaultBranch, null, "nightly"));
             }
         }
     }

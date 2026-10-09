@@ -200,3 +200,21 @@ test("changing a member's role closes their tokens' live streams too, so they re
         ok(await setRole("admin"));
     }
 });
+
+test("signing someone out closes their live streams at once, not at the next heartbeat", async () => {
+    const closed: string[] = [];
+    const original = t.services.events.disconnect.bind(t.services.events);
+    t.services.events.disconnect = (key: string, workspaceId?: string) => {
+        closed.push(key);
+        original(key, workspaceId);
+    };
+    try {
+        await t.signIn("sam", "correct-horse-two");
+        const res = await t.request(`/api/v1/instance/users/${samId}/sign-out`, { method: "POST", session: admin });
+        ok(res);
+        assert.ok(res.body.signedOutSessions >= 1);
+        assert.ok(closed.includes(`user:${samId}`));
+    } finally {
+        t.services.events.disconnect = original;
+    }
+});

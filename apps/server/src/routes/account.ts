@@ -183,14 +183,14 @@ export const accountRoutes: Route[] = [
         summary: "All accounts",
         async handler({ services }) {
             const users = await services.store.users.list();
-            const items = [];
-            for (const u of users)
-                items.push({
+            const items = await Promise.all(
+                users.map(async (u) => ({
                     ...publicUser(u),
                     signsInWith: u.subject ? "provider" : "password",
                     mustChangePassword: u.mustChangePassword,
                     sessions: (await services.store.sessions.listForUser(u.id)).length,
-                });
+                })),
+            );
             return json({ items: items.sort((a, b) => a.displayName.localeCompare(b.displayName)) });
         },
     }),

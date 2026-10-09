@@ -251,6 +251,21 @@ test("the example lands in each person's own personal workspace, beside their pr
     assert.notEqual(again.project, EXAMPLE_SLUG);
 });
 
+test("an example deleted as a project is forgotten: a real project later given its id is never removed as the example", async () => {
+    const t = await testApp();
+    const admin = await t.signIn("admin", ADMIN_PASSWORD);
+    const made = (await t.request("/api/v1/me/tutorial/example", { method: "POST", session: admin })).body.example;
+    const base = `/api/v1/w/admin/p/${made.project}`;
+    assert.equal((await t.request(base, { method: "DELETE", session: admin, body: { confirm: made.project } })).status, 200);
+    assert.equal(
+        (await t.request("/api/v1/w/admin/projects", { method: "POST", session: admin, body: { slug: made.project } })).status,
+        201,
+    );
+    assert.equal((await t.request("/api/v1/me/tutorial", { session: admin })).body.example, null);
+    assert.equal((await t.request("/api/v1/me/tutorial/example", { method: "DELETE", session: admin })).status, 200);
+    assert.equal((await t.request(base, { session: admin })).status, 200, "the real project is still there");
+});
+
 test("two requests at once make one example", async () => {
     const t = await testApp();
     const admin = await t.signIn("admin", ADMIN_PASSWORD);

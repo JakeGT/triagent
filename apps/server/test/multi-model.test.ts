@@ -95,6 +95,17 @@ describe("merging several models' reports", () => {
         assert.deepEqual(odd.issues[0]?.alsoFound, []);
     });
 
+    test("something in one model's list that isn't a finding doesn't lose the others' findings", () => {
+        const merged = mergeReports([
+            { label: "a", report: { comments: [null, 7, finding("x.ts", 1, "A")] as never } },
+            { label: "b", report: { comments: [finding("y.ts", 2, "B")] } },
+        ]);
+        assert.deepEqual(
+            merged.comments.map((c) => c.content),
+            ["A", "B"],
+        );
+    });
+
     test("labels: the model's name, with its provider when two share it", () => {
         assert.deepEqual(
             modelLabels(

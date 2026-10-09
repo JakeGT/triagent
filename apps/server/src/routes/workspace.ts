@@ -8,7 +8,7 @@ import { json, type Route, route } from "../http/route.ts";
 import type { Access } from "../services/accounts.ts";
 import type { LiveEvent } from "../services/events.ts";
 import { PagingQuery, pageOf, RoleSchema, ScopeSchema, W } from "./common.ts";
-import { ModelChoiceBody } from "./instance-models.ts";
+import { guardKeyDestination, ModelChoiceBody } from "./instance-models.ts";
 
 const HEARTBEAT_MS = 25_000;
 
@@ -74,15 +74,27 @@ export const workspaceRoutes: Route[] = [
             let closed = false;
             const stream = new ReadableStream<Uint8Array>({
                 start(controller) {
+                    // The client can go away at any moment, leaving the stream closed or errored under us.
                     const send = (text: string) => {
-                        if (!closed) controller.enqueue(encoder.encode(text));
+                        if (closed) return;
+                        try {
+                            controller.enqueue(encoder.encode(text));
+                        } catch {
+                            stop();
+                            closed = true;
+                        }
                     };
                     const end = () => {
                         if (closed) return;
                         send("event: bye\ndata: {}\n\n");
                         stop();
+                        if (closed) return;
                         closed = true;
-                        controller.close();
+                        try {
+                            controller.close();
+                        } catch {
+                            // already closed
+                        }
                     };
                     const unsubscribe = services.events.subscribe({
                         workspaceId: a.workspace.id,
@@ -98,9 +110,12 @@ export const workspaceRoutes: Route[] = [
                         return;
                     }
                     send(`retry: 5000\n\nevent: hello\ndata: ${JSON.stringify({ workspace: a.workspace.slug })}\n\n`);
-                    const timer = setInterval(async () => {
-                        if (await stillValid()) send(": ping\n\n");
-                        else end();
+                    // If access can't be checked (the database is away), close: the client reconnects and is checked afresh.
+                    const timer = setInterval(() => {
+                        stillValid().then(
+                            (ok) => (ok ? send(": ping\n\n") : end()),
+                            () => end(),
+                        );
                     }, HEARTBEAT_MS);
                     stop = () => {
                         clearInterval(timer);
@@ -290,7 +305,8 @@ export const workspaceRoutes: Route[] = [
         tag: "Settings",
         summary: "Choose the provider and model reviews use, and that provider's protocol, endpoint URL or AWS region",
         body: ModelChoiceBody,
-        async handler({ services, access, body, actor }) {
+        async handler({ services, access, body, actor, principal, can }) {
+            guardKeyDestination({ services, principal, can }, body, await services.settings.reviewModel((access as Access).workspace));
             await services.settings.setReviewModel(actor, (access as Access).workspace, body);
             return json(await services.settings.reviewModel((access as Access).workspace));
         },

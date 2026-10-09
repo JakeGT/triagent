@@ -2,6 +2,7 @@ import { Eye, EyeOff } from "lucide-react";
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 
 type PasswordInputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> & {
     ref?: React.Ref<HTMLInputElement>;
@@ -12,13 +13,8 @@ export function PasswordInput({ className, disabled, ref, ...props }: PasswordIn
 
     return (
         <div className={cn("relative rounded-md", className)}>
-            <input
-                type={showPassword ? "text" : "password"}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
-                ref={ref}
-                disabled={disabled}
-                {...props}
-            />
+            {/* The shared input's look (focus ring, invalid state), with room on the end for the toggle. */}
+            <Input ref={ref} disabled={disabled} {...props} type={showPassword ? "text" : "password"} className="pe-9" />
             <Button
                 type="button"
                 size="icon"

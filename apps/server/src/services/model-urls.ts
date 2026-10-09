@@ -19,6 +19,8 @@ export const defaultLookup: Lookup = (hostname) => dnsLookup(hostname, { all: tr
 
 export class UnsafeUrl extends Error {}
 
+const LOOKUP_TIMEOUT_MS = 5000;
+
 const v4 = new BlockList();
 for (const [net, bits] of [
     ["0.0.0.0", 8], // "this network"
@@ -66,8 +68,9 @@ function v6Bytes(address: string): number[] | null {
     const [head, tail] = a.includes("::") ? (a.split("::") as [string, string]) : [a, null];
     const h = head ? head.split(":") : [];
     const t = tail ? tail.split(":") : [];
+    if (h.length + t.length > 8) return null;
     const groups = tail === null ? h : [...h, ...Array(8 - h.length - t.length).fill("0"), ...t];
-    if (groups.length !== 8) return null;
+    if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/i.test(g))) return null;
     return groups.flatMap((g) => {
         const n = Number.parseInt(g, 16);
         return [n >> 8, n & 0xff];
@@ -94,6 +97,15 @@ export function isPrivateAddress(address: string): boolean {
     return v6.check(address.replace(/%.*$/, ""), "ipv6");
 }
 
+/**
+ * Whether an address really is on a private network: unlike isPrivateAddress, an IPv4 address carried in
+ * an IPv6 one (e.g. ::ffff:8.8.8.8, refused as an odd answer) counts as what it carries. For plain http.
+ */
+function reachesPrivate(address: string): boolean {
+    const inner = isIPv6(address) ? embeddedV4(address) : null;
+    return inner ? v4.check(inner, "ipv4") : isPrivateAddress(address);
+}
+
 export interface UrlPolicy {
     allowPrivate: boolean;
     lookup: Lookup;
@@ -117,10 +129,17 @@ export async function checkModelUrl(raw: string, policy: UrlPolicy, what = "The 
     let addresses: string[];
     if (isIPv4(host) || isIPv6(host)) addresses = [host];
     else {
+        // A resolver that doesn't answer counts as not resolving, rather than holding the request.
+        let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-            addresses = (await policy.lookup(host)).map((a) => a.address);
+            const timeout = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("DNS lookup timed out")), LOOKUP_TIMEOUT_MS);
+            });
+            addresses = (await Promise.race([policy.lookup(host), timeout])).map((a) => a.address);
         } catch {
             addresses = [];
+        } finally {
+            clearTimeout(timer);
         }
         if (!addresses.length) throw new UnsafeUrl(`${what} names a host that doesn't resolve (${host}).`);
     }
@@ -130,7 +149,7 @@ export async function checkModelUrl(raw: string, policy: UrlPolicy, what = "The 
             `${what} points at a private or loopback address (${host}). This instance only sends model keys to public addresses; its administrator can allow private ones with ALLOW_PRIVATE_MODEL_URLS=true.`,
         );
     // Plain http only where the instance has allowed private addresses, and only to them.
-    if (url.protocol === "http:" && !(policy.allowPrivate && addresses.every(isPrivateAddress)))
+    if (url.protocol === "http:" && !(policy.allowPrivate && addresses.every(reachesPrivate)))
         throw new UnsafeUrl(`${what} must use https.`);
     return url.href.replace(/\/+$/, "");
 }

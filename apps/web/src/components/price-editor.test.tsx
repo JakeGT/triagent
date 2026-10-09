@@ -32,6 +32,8 @@ describe("readPrice", () => {
         expect(readPrice({ model: "m", input: "1", output: "-2", cacheRead: "" })).toMatch(/^The output price/);
         expect(readPrice({ model: "m", input: "1", output: "2", cacheRead: "lots" })).toMatch(/^The cache read price/);
         expect(readPrice({ model: "m", input: "20000", output: "2", cacheRead: "" })).toMatch(/from 0 to 10,000/);
+        for (const odd of ["0x10", "1e3", "0b1", "Infinity", "1.2.3"])
+            expect(readPrice({ model: "m", input: odd, output: "1", cacheRead: "" }), odd).toMatch(/^The input price/);
     });
 });
 

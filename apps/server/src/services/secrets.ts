@@ -109,6 +109,12 @@ export class Secrets {
         return viewOf(name, await repos.secrets.get(scope.workspaceId, scope.projectId, name));
     }
 
+    /** Views of any of the secrets in `scope`, from one read: for pages that show many at once. */
+    async views(repos: Repos, scope: SecretScope): Promise<(name: string) => SecretView> {
+        const records = new Map((await repos.secrets.list(scope.workspaceId, scope.projectId)).map((r) => [r.name, r]));
+        return (name) => viewOf(name, records.get(name) ?? null);
+    }
+
     /** The secret's value, for the code that uses it. Never put the result in a response or a log. */
     async reveal(repos: Repos, scope: SecretScope, name: string): Promise<string | null> {
         const record = await repos.secrets.get(scope.workspaceId, scope.projectId, name);

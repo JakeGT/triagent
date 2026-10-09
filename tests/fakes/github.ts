@@ -152,8 +152,10 @@ export class FakeGitHub {
     }
 
     async stop(): Promise<void> {
-        await new Promise<void>((resolve) => (this.server ? this.server.close(() => resolve()) : resolve()));
+        const closed = new Promise<void>((resolve) => (this.server ? this.server.close(() => resolve()) : resolve()));
+        // close() waits for open connections, so end them rather than wait.
         this.server?.closeAllConnections();
+        await closed;
         rmSync(this.root, { recursive: true, force: true });
     }
 
@@ -545,7 +547,8 @@ export class FakeGitHub {
         }
         m = /^\/app\/installations\/(\d+)(\/access_tokens)?$/.exec(p);
 
-        if (m) {
+        // GET reads the installation, POST .../access_tokens mints a token.
+        if (m && req.method === (m[2] ? "POST" : "GET")) {
             if (auth.kind !== "app") return json(res, 401, { message: "A JSON web token could not be decoded" });
             const inst = this.installations.get(Number(m[1]));
             if (!inst) return json(res, 404, { message: "Not Found" });

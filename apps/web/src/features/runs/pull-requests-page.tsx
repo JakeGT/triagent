@@ -103,7 +103,8 @@ export function PullRequestsPage() {
         onSuccess: (data) => {
             queryClient.setQueryData(keys.pullRequests(ws, slug), data);
             void queryClient.invalidateQueries({ queryKey: keys.runs(ws) });
-            toast.success(data.lastCheck?.error ? "GitHub couldn't be reached." : "Checked GitHub.");
+            if (data.lastCheck?.error) toast.error("GitHub couldn't be reached.");
+            else toast.success("Checked GitHub.");
         },
     });
     const data = prs.data;

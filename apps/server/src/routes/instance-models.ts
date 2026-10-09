@@ -4,8 +4,11 @@
 
 import { MODEL_PROTOCOLS } from "@triagent/shared/model";
 import { z } from "zod";
-import { notFound } from "../errors.ts";
+import { forbidden, notFound } from "../errors.ts";
+import { reauthRequired } from "../http/mount.ts";
 import { json, type Route, route } from "../http/route.ts";
+import type { Principal } from "../services/accounts.ts";
+import type { Services } from "../services/index.ts";
 import { PROVIDER_IDS } from "../services/providers.ts";
 import { ModelBody, PriceBody } from "./insights.ts";
 
@@ -17,6 +20,31 @@ export const ModelChoiceBody = z.object({
     url: z.string().max(500).nullable().optional(),
     region: z.string().max(40).nullable().optional(),
 });
+
+interface ModelView {
+    provider: string;
+    providers: { id: string; endpoint: string | null; key: { set: boolean }; accessKeyId: { set: boolean } | null }[];
+}
+
+/**
+ * A provider's endpoint URL decides where its stored key is sent, so moving it once a key is set is as
+ * sensitive as setting the key: it takes the secrets permission (never a token's) and a recent sign-in.
+ * Saving the form with the address unchanged doesn't.
+ */
+export function guardKeyDestination(
+    ctx: { services: Services; principal: Principal | null; can?: (p: "secrets") => boolean },
+    body: z.infer<typeof ModelChoiceBody>,
+    view: ModelView,
+): void {
+    if (body.url === undefined) return;
+    const p = view.providers.find((x) => x.id === (body.provider ?? view.provider));
+    if (!p || !(p.key.set || p.accessKeyId?.set)) return;
+    if ((body.url?.trim() || null) === p.endpoint) return;
+    if (ctx.can && !ctx.can("secrets"))
+        throw forbidden("Changing the address a provider's key is sent to needs the secrets permission, signed in through the browser.");
+    const { principal, services } = ctx;
+    if (!(principal?.kind === "session" && services.accounts.recentlyAuthenticated(principal.session))) throw reauthRequired(services);
+}
 
 export const instanceModelRoutes: Route[] = [
     route({
@@ -36,7 +64,8 @@ export const instanceModelRoutes: Route[] = [
         tag: "Instance",
         summary: "Choose the provider and model reviews use with the instance key, and that provider's settings",
         body: ModelChoiceBody,
-        async handler({ services, body, actor }) {
+        async handler({ services, body, actor, principal }) {
+            guardKeyDestination({ services, principal }, body, await services.allowances.view());
             return json(await services.allowances.setModel(actor, body));
         },
     }),

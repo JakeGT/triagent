@@ -36,6 +36,10 @@ describe("issue filters in the URL", () => {
             severity: ["low"],
         });
         expect(parseIssueSearch({ page: "1", sort: "priority", q: "   " })).toEqual({});
+        // Pages past the server's 1,000,000 offset, and task ids past its 100 characters.
+        expect(parseIssueSearch({ page: "10001" })).toEqual({ page: 10001 });
+        expect(parseIssueSearch({ page: "10002" })).toEqual({});
+        expect(parseIssueSearch({ task: "t".repeat(150) }).task).toHaveLength(100);
     });
 
     it("writes readable URLs and reads them back unchanged", () => {
@@ -73,6 +77,7 @@ describe("issue filters in the URL", () => {
     it("goes back to the first page when a filter changes, and clears filters but not the branch or sort", () => {
         const s = { branch: "dev", severity: ["high" as const], sort: "path" as const, page: 4, q: "x" };
         expect(withFilter(s, { q: undefined })).toEqual({ branch: "dev", severity: ["high"], sort: "path" });
+        expect(withFilter(s, { severity: [] })).toEqual({ branch: "dev", sort: "path", q: "x" });
         expect(withoutFilters(s)).toEqual({ branch: "dev", sort: "path" });
         expect(activeFilters(s)).toBe(2);
     });

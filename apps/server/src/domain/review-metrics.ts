@@ -25,11 +25,16 @@ const label = (v: unknown, max: number): string | null => (typeof v === "string"
 const obj = (v: unknown): Record<string, unknown> | null =>
     v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 
+/** The longest a review can plausibly take, in seconds. */
+const MAX_ELAPSED = 7 * 24 * 3600;
+
 /** "1h37m45s", "31m3s" or "45s" in seconds. */
 export function parseElapsed(text: unknown): number | null {
     const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(String(text ?? "").trim());
     if (!m || !(m[1] || m[2] || m[3])) return null;
-    return Math.round(Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0));
+    const seconds = Math.round(Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0));
+    // No review runs for a week: anything longer is a broken report, and would skew every average it joins.
+    return seconds <= MAX_ELAPSED ? seconds : null;
 }
 
 /** Warning types that mean part of the review was lost; repairs OCR made along the way don't count. */
@@ -61,7 +66,8 @@ export function reportMetrics(report: RawReport): ReportMetrics {
             : { input: input ?? Math.max(0, total - (output ?? 0)), output: output ?? 0, cacheRead: cacheRead ?? 0, total };
 
     const elapsedMs = count(manifest.elapsed_ms);
-    const runSeconds = elapsedMs !== null ? Math.round(elapsedMs / 1000) : parseElapsed(summary.elapsed);
+    const fromManifest = elapsedMs !== null ? Math.round(elapsedMs / 1000) : null;
+    const runSeconds = fromManifest !== null ? (fromManifest <= MAX_ELAPSED ? fromManifest : null) : parseElapsed(summary.elapsed);
 
     const warnings = Array.isArray(report.warnings) ? report.warnings : [];
     const lost = warnings.filter((w) => obj(w) && LOST.test(String((w as Record<string, unknown>).type ?? ""))).length;
@@ -108,7 +114,7 @@ export function reportMetrics(report: RawReport): ReportMetrics {
     return {
         model: label(llm.model, 150),
         provider: label(llm.provider, 40),
-        ocrVersion: label(execution.ocr_version, 30)?.replace(/^v/, "") ?? null,
+        ocrVersion: label(execution.ocr_version, 30)?.replace(/^v(?=\d)/, "") ?? null,
         tokens,
         runSeconds,
         partial: lost > 0 || report.status === "partial",

@@ -112,7 +112,7 @@ export class FakeProvider {
             id_token_signing_alg_values_supported: ["RS256"],
             code_challenge_methods_supported: ["S256"],
             token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
-            grant_types_supported: ["authorization_code", "refresh_token"],
+            grant_types_supported: ["authorization_code"],
             scopes_supported: ["openid", "email", "profile"],
         };
     }
@@ -147,11 +147,11 @@ export class FakeProvider {
         let secret = form.get("client_secret");
         const basic = /^Basic (.+)$/.exec(req.headers.get("authorization") ?? "");
         if (basic) {
-            const [user, pass] = Buffer.from(basic[1] as string, "base64")
-                .toString()
-                .split(":");
-            id = decodeURIComponent(user ?? "");
-            secret = decodeURIComponent(pass ?? "");
+            // The secret may itself contain ":", so split at the first one only (RFC 7617).
+            const pair = Buffer.from(basic[1] as string, "base64").toString();
+            const colon = pair.indexOf(":");
+            id = decodeURIComponent(colon < 0 ? pair : pair.slice(0, colon));
+            secret = decodeURIComponent(colon < 0 ? "" : pair.slice(colon + 1));
         }
         const fail = (error: string) => Response.json({ error }, { status: 400 });
         if (id !== this.clientId || secret !== this.clientSecret) return Response.json({ error: "invalid_client" }, { status: 401 });

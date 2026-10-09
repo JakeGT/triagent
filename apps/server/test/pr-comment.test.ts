@@ -97,3 +97,23 @@ test("plain text stays readable", () => {
     assert.equal(plain("a & b"), "a &amp; b");
     assert.equal(plain("x".repeat(200)).length, 140);
 });
+
+test("a branch name with parentheses keeps the links whole", () => {
+    const branch = encodeURIComponent("fix/x) (y");
+    const html = render(
+        comment("A title", {
+            issuesUrl: `${OURS}w/acme/p/app/issues?branch=${branch}`,
+            issueUrl: (id) => `${OURS}w/acme/p/app/issues/${id}?branch=${branch}`,
+        }),
+    );
+    assert.deepEqual(problems(html), [], html);
+    const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
+    assert.equal(hrefs.length, 2, html);
+    for (const h of hrefs) assert.ok(h?.endsWith("branch=fix%2Fx%29%20%28y"), h);
+});
+
+test("a long title is cut between characters, not inside an emoji", () => {
+    const cut = plain(`${"a".repeat(138)}😀 and more`, 140);
+    assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(cut), cut);
+    assert.ok(cut.endsWith("…"));
+});

@@ -19,13 +19,15 @@ export interface PriceInput extends Price {
 }
 
 const MODEL_NAME = /^[\w.:/@+-]{1,150}$/;
+/** Plain decimals only: Number() would also take "0x10", "1e3" or "0b1". */
+const DECIMAL = /^(\d+\.?\d*|\.\d+)$/;
 
 /** Check a price form; returns the price or a message for people. */
 export function readPrice(form: { model: string; input: string; output: string; cacheRead: string }): PriceInput | string {
     const model = form.model.trim();
     if (!MODEL_NAME.test(model)) return "Give the model's name as reviews use it, e.g. anthropic/claude-sonnet-4.5.";
     const number = (v: string, what: string) => {
-        const n = v.trim() === "" ? Number.NaN : Number(v);
+        const n = DECIMAL.test(v.trim()) ? Number(v) : Number.NaN;
         return Number.isFinite(n) && n >= 0 && n <= 10_000
             ? n
             : `The ${what} price must be a number of US dollars per million tokens, from 0 to 10,000.`;

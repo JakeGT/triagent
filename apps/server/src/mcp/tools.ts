@@ -99,6 +99,9 @@ async function viewOf(ctx: ToolContext, args: Record<string, unknown>) {
     return { ref, view: await ctx.services.reports.view(ctx.services.store, ref.project, ref.branch) };
 }
 
+/** How many findings compare_branches lists in its text, per section. */
+const COMPARE_LINES = 100;
+
 const line = (x: {
     id: string;
     severity: string;
@@ -179,14 +182,19 @@ export const TOOLS: Tool[] = [
                 ctx.services.reports.branchOf(p, args.base),
                 ctx.services.reports.branchOf(p, args.head),
             );
+            // A long list would flood the agent's context: the first ones, and how many more (all are in the data).
+            const some = (items: typeof c.added.items) => [
+                ...items.slice(0, COMPARE_LINES).map(line),
+                ...(items.length > COMPARE_LINES ? [`- … and ${items.length - COMPARE_LINES} more`] : []),
+            ];
             const text = [
                 `# ${c.head} compared with ${c.base}`,
                 "",
                 `## New on ${c.head} (${c.added.total})`,
-                ...c.added.items.map(line),
+                ...some(c.added.items),
                 "",
                 `## Gone from ${c.head} (${c.gone.total})`,
-                ...c.gone.items.map(line),
+                ...some(c.gone.items),
                 "",
                 `${c.shared.total} findings are on both.`,
             ].join("\n");

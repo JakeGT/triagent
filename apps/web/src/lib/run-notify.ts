@@ -44,11 +44,13 @@ export const desktopNotificationsOn = () =>
 async function announce(queryClient: QueryClient, ws: string, id: string, open: (run: Run) => void): Promise<void> {
     const me = queryClient.getQueryData<Me>(meQuery.queryKey);
     if (!me) return;
+    // `after` is the last log line we have: past any real one, so the run comes back without its log.
     const run = await api.get<Run>(`${paths.workspace(ws)}/runs/${encodeURIComponent(id)}`, { after: 1_000_000_000 });
     if (!shouldNotify(run, me)) return;
     const { title, body } = describeRun(run);
     const problem = run.status === "failed" || run.status === "partial" || (run.result?.bySeverity?.critical ?? 0) > 0;
-    const show = { description: body, action: { label: "View", onClick: () => open(run) } };
+    // A run whose project has gone has no page to open.
+    const show = { description: body, ...(run.project ? { action: { label: "View", onClick: () => open(run) } } : {}) };
     if (run.status === "cancelled") toast.info(title, show);
     else if (problem) toast.warning(title, show);
     else toast.success(title, show);
