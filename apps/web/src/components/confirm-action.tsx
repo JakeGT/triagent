@@ -27,6 +27,10 @@ export interface ConfirmActionProps {
     confirmLabel: string;
     /** If set, the person must type exactly this to confirm. */
     typeToConfirm?: string;
+    /** Choices that go with the action (a checkbox, say), shown under the description. */
+    children?: ReactNode;
+    /** Called when the dialog opens or closes, e.g. to reset those choices. */
+    onOpenChange?(open: boolean): void;
     /** Runs on confirm; the dialog stays open and shows the error if it throws. */
     onConfirm(): Promise<unknown> | unknown;
     destructive?: boolean;
@@ -38,6 +42,8 @@ export function ConfirmAction({
     description,
     confirmLabel,
     typeToConfirm,
+    children,
+    onOpenChange,
     onConfirm,
     destructive = true,
 }: ConfirmActionProps) {
@@ -52,6 +58,7 @@ export function ConfirmAction({
         // Not while it's working: closing wouldn't stop it, and its outcome would land on a closed dialog.
         if (!next && busy) return;
         setOpen(next);
+        onOpenChange?.(next);
         if (!next) {
             setTyped("");
             setError(null);
@@ -90,6 +97,7 @@ export function ConfirmAction({
                             <div>{description}</div>
                         </AlertDialogDescription>
                     </AlertDialogHeader>
+                    {children}
                     {typeToConfirm && (
                         <div className="grid gap-1.5">
                             <Label htmlFor={inputId}>

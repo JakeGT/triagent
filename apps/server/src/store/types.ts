@@ -478,6 +478,8 @@ export interface Repos {
         add(row: ActivityRow): Promise<void>;
         /** Newest first. */
         list(filter: { workspaceId: string; projectId?: string; branch?: string }, page: Page): Promise<ActivityRow[]>;
+        /** Forget a project's activity (deleting a project otherwise keeps it in its workspace's log). */
+        removeProject(workspaceId: string, projectId: string): Promise<void>;
     };
     audit: {
         add(row: AuditRow): Promise<void>;

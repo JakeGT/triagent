@@ -513,6 +513,67 @@ for (const kind of kinds) {
             assert.equal((await store.reviewHistory.list({ workspaceId: "w2" }, 10)).length, 1);
         });
 
+        test("review history and activity: one project's can be forgotten, and nothing else is", async () => {
+            const store = await kind.make();
+            await seed(store, "w1", "p1");
+            await store.projects.put(project("p2", "w1"));
+            await seed(store, "w2", "p3");
+            const review = (id: string, w: string, p: string | null): ReviewRecord => ({
+                id,
+                workspaceId: w,
+                projectId: p,
+                branch: "main",
+                at: at(),
+                source: "upload",
+                kind: "upload",
+                status: "done",
+                model: null,
+                provider: null,
+                keySource: null,
+                tokens: null,
+                details: {},
+            });
+            const rows = [
+                activity("w1", "p1", "main"),
+                activity("w1", "p1", null),
+                activity("w1", "p2", "main"),
+                activity("w1", null, null),
+            ];
+            for (const r of [...rows, activity("w2", "p3", "main")]) await store.activity.add(r);
+            for (const [id, w, p] of [
+                ["r1", "w1", "p1"],
+                ["r2", "w1", "p2"],
+                ["r3", "w1", null],
+                ["r4", "w2", "p3"],
+            ] as const)
+                await store.reviewHistory.add(review(id, w, p));
+
+            // Another workspace's id for the project matches nothing.
+            await store.activity.removeProject("w2", "p1");
+            await store.reviewHistory.removeProject("w2", "p1");
+            assert.equal((await store.activity.list({ workspaceId: "w1" }, { limit: 10 })).length, 4);
+            assert.equal((await store.reviewHistory.list({ workspaceId: "w1" }, 10)).length, 3);
+
+            await store.activity.removeProject("w1", "p1");
+            await store.reviewHistory.removeProject("w1", "p1");
+            assert.deepEqual(
+                (await store.activity.list({ workspaceId: "w1" }, { limit: 10 })).map((r) => r.id),
+                [rows[3]?.id, rows[2]?.id],
+            );
+            assert.deepEqual((await store.reviewHistory.list({ workspaceId: "w1" }, 10)).map((r) => r.id).sort(), ["r2", "r3"]);
+            assert.equal((await store.activity.list({ workspaceId: "w2" }, { limit: 10 })).length, 1);
+            assert.equal((await store.reviewHistory.list({ workspaceId: "w2" }, 10)).length, 1);
+
+            // Undone with the transaction it was part of.
+            await assert.rejects(
+                store.transaction(async (tx) => {
+                    await tx.activity.removeProject("w1", "p2");
+                    throw new Error("no");
+                }),
+            );
+            assert.equal((await store.activity.list({ workspaceId: "w1", projectId: "p2" }, { limit: 10 })).length, 1);
+        });
+
         test("upload links: counted, swept when expired, and taken once", async () => {
             const store = await kind.make();
             await seed(store);

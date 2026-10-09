@@ -266,6 +266,64 @@ test("an example deleted as a project is forgotten: a real project later given i
     assert.equal((await t.request(base, { session: admin })).status, 200, "the real project is still there");
 });
 
+test("removing the example, either way, leaves the analytics as they were before it was made", async () => {
+    // A clock that stands still, so two readings of the analytics cover the same range.
+    const at = new Date();
+    const t = await testApp(undefined, { now: () => at });
+    const admin = await t.signIn("admin", ADMIN_PASSWORD);
+    // A project of their own, with a review and some triage: none of it changes.
+    assert.equal((await t.request("/api/v1/w/admin/projects", { method: "POST", session: admin, body: { slug: "mine" } })).status, 201);
+    await t.request("/api/v1/w/admin/p/mine/reports", {
+        method: "POST",
+        session: admin,
+        body: { report: report("src/mine.ts", "src/b.ts") },
+    });
+    const issue = (await t.request("/api/v1/w/admin/p/mine/issues?branch=main", { session: admin })).body.items[0];
+    await t.request(`/api/v1/w/admin/p/mine/issues/${issue.id}?branch=main`, {
+        method: "PATCH",
+        session: admin,
+        body: { status: "resolved" },
+    });
+
+    const workspaceId = (await t.services.store.workspaces.bySlug("admin"))?.id as string;
+    const analytics = async () => {
+        const all = await Promise.all(
+            ["7", "30", "0"].map(async (days) => {
+                const res = await t.request(`/api/v1/w/admin/analytics?days=${days}`, { session: admin });
+                assert.equal(res.status, 200, res.text);
+                return res.body;
+            }),
+        );
+        return JSON.stringify(all);
+    };
+    const stored = async () => ({
+        history: (await t.services.store.reviewHistory.list({ workspaceId }, 1000)).map((r) => r.id).sort(),
+        // Deleting a project is itself recorded, by the person who did it: nothing of the example's is.
+        activity: (await t.services.store.activity.list({ workspaceId }, { limit: 1000 }))
+            .filter((r) => !(r.kind === "project" && r.projectId === null && "deleted" in r.changes))
+            .map((r) => r.id)
+            .sort(),
+    });
+    const before = { analytics: await analytics(), stored: await stored() };
+
+    const remove = {
+        "from the tutorial": () => t.request("/api/v1/me/tutorial/example", { method: "DELETE", session: admin }),
+        "as a project": (slug: string) =>
+            t.request(`/api/v1/w/admin/p/${slug}`, { method: "DELETE", session: admin, body: { confirm: slug } }),
+    };
+    for (const [how, run] of Object.entries(remove)) {
+        const made = (await t.request("/api/v1/me/tutorial/example", { method: "POST", session: admin })).body.example;
+        const withExample = await analytics();
+        assert.notEqual(withExample, before.analytics, "the example shows in the analytics while it exists");
+        assert.match(withExample, /\(example\)/);
+        assert.equal((await run(made.project)).status, 200, how);
+        assert.equal(await analytics(), before.analytics, `removed ${how}`);
+        assert.deepEqual(await stored(), before.stored, `removed ${how}`);
+        const everyone = await t.services.store.activity.list({ workspaceId }, { limit: 1000 });
+        assert.ok(!everyone.some((r) => r.actor.includes("(example)")), `removed ${how}: no made-up people are left in the activity log`);
+    }
+});
+
 test("two requests at once make one example", async () => {
     const t = await testApp();
     const admin = await t.signIn("admin", ADMIN_PASSWORD);

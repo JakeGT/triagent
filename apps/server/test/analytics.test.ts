@@ -507,6 +507,54 @@ describe("analytics API and MCP", () => {
         assert.equal((await t.request("/api/v1/w/acme/analytics?days=12", { session: admin })).status, 400);
     });
 
+    test("deleting a project keeps its reviews and activity in the analytics, unless asked to remove them", async () => {
+        const app = await testApp();
+        const session = await app.signIn("admin", ADMIN_PASSWORD);
+        const workspaceId = (await app.services.store.workspaces.bySlug("admin"))?.id as string;
+        const ids: Record<string, string> = {};
+        for (const slug of ["kept", "purged", "other"]) {
+            await app.request("/api/v1/w/admin/projects", { method: "POST", session, body: { slug } });
+            await app.request(`/api/v1/w/admin/p/${slug}/reports`, { method: "POST", session, body: { report: report("src/a.ts") } });
+            const issue = (await app.request(`/api/v1/w/admin/p/${slug}/issues?branch=main`, { session })).body.items[0];
+            await app.request(`/api/v1/w/admin/p/${slug}/issues/${issue.id}?branch=main`, {
+                method: "PATCH",
+                session,
+                body: { status: "resolved" },
+            });
+            ids[slug] = (await app.services.store.projects.bySlug(workspaceId, slug))?.id as string;
+        }
+        const figures = async () => {
+            const a = (await app.request("/api/v1/w/admin/analytics", { session })).body;
+            return { reviews: a.reviews.total, added: a.findings.added, closed: a.findings.closed };
+        };
+        const rows = async (slug: string) => ({
+            history: (await app.services.store.reviewHistory.list({ workspaceId, projectId: ids[slug] as string }, 100)).length,
+            activity: (await app.services.store.activity.list({ workspaceId, projectId: ids[slug] as string }, { limit: 100 })).length,
+        });
+        const all = await figures();
+        assert.deepEqual(all, { reviews: 3, added: 3, closed: 3 });
+        const each = await rows("other");
+        assert.ok(each.history === 1 && each.activity >= 3, JSON.stringify(each));
+
+        const remove = (slug: string, body: Record<string, unknown>) =>
+            app.request(`/api/v1/w/admin/p/${slug}`, { method: "DELETE", session, body: { confirm: slug, ...body } });
+        // As before: nothing said, or false, keeps them.
+        assert.equal((await remove("kept", {})).status, 200);
+        assert.deepEqual(await figures(), all);
+        assert.deepEqual(await rows("kept"), each);
+        assert.equal((await remove("purged", { purgeAnalytics: "yes" })).status, 400);
+        assert.equal((await remove("purged", { purgeAnalytics: true })).status, 200);
+        assert.deepEqual(await figures(), { reviews: 2, added: 2, closed: 2 });
+        assert.deepEqual(await rows("purged"), { history: 0, activity: 0 });
+        assert.deepEqual(await rows("kept"), each);
+        assert.deepEqual(await rows("other"), each);
+        assert.equal((await remove("other", { purgeAnalytics: false })).status, 200);
+        assert.deepEqual(await rows("other"), each);
+        // That each was deleted is still in the workspace's log.
+        const deleted = (await app.services.store.activity.list({ workspaceId }, { limit: 100 })).filter((r) => "deleted" in r.changes);
+        assert.deepEqual(deleted.map((r) => r.itemId).sort(), ["kept", "other", "purged"]);
+    });
+
     test("a read token can see analytics; outsiders get 404", async () => {
         assert.equal((await t.request("/api/v1/w/acme/analytics?days=0", { token })).status, 200);
         assert.equal((await t.request("/api/v1/w/someone-else/analytics", { token })).status, 404);

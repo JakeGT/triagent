@@ -125,3 +125,29 @@ test("a token can only have the access of the member it acts for", async ({ page
     await expect(page.getByTestId("one-time-reveal")).toBeVisible();
     await expect(page.getByRole("cell", { name: /^viewer bot/ })).toBeVisible();
 });
+
+test("deleting a project keeps its past reviews in Analytics unless asked to remove them", async ({ page, admin }) => {
+    const ws = unique("del");
+    await admin.post("/api/v1/workspaces", { slug: ws });
+    await seedProject(admin, { ws, project: "kept" });
+    await seedProject(admin, { ws, project: "purged" });
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    const reviews = async () => (await admin.get(`/api/v1/w/${ws}/analytics`)).reviews.total;
+    expect(await reviews()).toBe(2);
+
+    const remove = async (slug: string, purge: boolean) => {
+        await page.goto(`/w/${ws}/p/${slug}/settings/general`);
+        await page.getByRole("button", { name: "Delete project" }).click();
+        const dialog = page.getByRole("alertdialog");
+        const also = dialog.getByRole("checkbox", { name: "Also remove this project's past reviews and activity from Analytics" });
+        await expect(also).not.toBeChecked();
+        if (purge) await also.click();
+        await dialog.getByLabel(/to confirm/).fill(slug);
+        await dialog.getByRole("button", { name: "Delete project" }).click();
+        await expect(page.getByText(/^Project .* deleted\.$/)).toBeVisible();
+    };
+    await remove("kept", false);
+    expect(await reviews()).toBe(2);
+    await remove("purged", true);
+    expect(await reviews()).toBe(1);
+});

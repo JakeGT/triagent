@@ -164,15 +164,12 @@ export class Tutorial {
         });
     }
 
-    /** Remove the example project, and its reviews from the analytics. Nothing else is touched. */
+    /** Remove the example project, and its reviews and activity from the analytics. Nothing else is touched. */
     async removeExample(actor: Actor & { userId: string }): Promise<TutorialView> {
         return this.core.store.transaction(async (tx) => {
             const user = await this.user(tx, actor.userId);
             const found = await this.example(tx, user);
-            if (found) {
-                await this.projects.delete(actor, found.project, found.project.slug);
-                await tx.reviewHistory.removeProject(found.workspace.id, found.project.id);
-            }
+            if (found) await this.projects.delete(actor, found.project, found.project.slug, { purgeAnalytics: true });
             return this.view(tx, await this.save(tx, user, { ...user.tutorial, exampleProject: null }));
         });
     }

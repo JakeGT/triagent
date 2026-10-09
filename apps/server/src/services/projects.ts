@@ -125,19 +125,30 @@ export class Projects {
         });
     }
 
-    /** Deletes the project and everything stored for it. `confirm` must repeat the project's id. */
-    async delete(actor: Actor, project: Project, confirm: unknown) {
+    /**
+     * Deletes the project and everything stored for it. `confirm` must repeat the project's id. Its past
+     * reviews and activity stay in the workspace's analytics unless `purgeAnalytics` is set; a tutorial
+     * example's never stay.
+     */
+    async delete(actor: Actor, project: Project, confirm: unknown, options: { purgeAnalytics?: boolean } = {}) {
         if (confirm !== project.slug)
             throw badRequest(`Deleting a project removes its reports, triage and settings. To confirm, send "confirm": "${project.slug}".`);
         return this.core.write(actor, async (w) => {
             await w.tx.projects.delete(project.id);
+            let purge = options.purgeAnalytics === true;
             // A tutorial example deleted here is gone for good: a later project given its name isn't the example.
             if ((await w.tx.workspaces.get(project.workspaceId))?.kind === "personal")
                 for (const m of await w.tx.memberships.forWorkspace(project.workspaceId)) {
                     const user = await w.tx.users.get(m.userId);
-                    if (user?.tutorial.exampleProject === project.slug)
-                        await w.tx.users.put({ ...user, tutorial: { ...user.tutorial, exampleProject: null } });
+                    if (user?.tutorial.exampleProject !== project.slug) continue;
+                    await w.tx.users.put({ ...user, tutorial: { ...user.tutorial, exampleProject: null } });
+                    // Its made-up people and reviews leave the analytics with it.
+                    purge = true;
                 }
+            if (purge) {
+                await w.tx.reviewHistory.removeProject(project.workspaceId, project.id);
+                await w.tx.activity.removeProject(project.workspaceId, project.id);
+            }
             await w.audit({
                 workspaceId: project.workspaceId,
                 kind: "project",

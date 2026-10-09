@@ -377,6 +377,8 @@ export class MemoryStore implements Store {
 
     activity: Repos["activity"] = {
         add: (row) => this.write(() => this.t.activity.add(row)),
+        removeProject: (workspaceId, projectId) =>
+            this.write(() => this.t.activity.remove((r) => r.workspaceId === workspaceId && r.projectId === projectId)),
         list: async (f, page) =>
             this.t.activity.list(
                 (r) =>

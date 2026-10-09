@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
 import { ConfirmAction } from "@/components/confirm-action";
-import { Field, FieldError } from "@/components/field";
+import { CheckField, Field, FieldError } from "@/components/field";
 import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
@@ -31,6 +33,7 @@ export function ProjectGeneral() {
     const navigate = useNavigate();
     const query = useQuery(generalQuery(ws, slug));
     const form = useDraft(query.data ? toForm(query.data) : undefined);
+    const [purgeAnalytics, setPurgeAnalytics] = useState(false);
 
     const save = useMutation({
         mutationFn: (v: General) =>
@@ -49,7 +52,7 @@ export function ProjectGeneral() {
     });
 
     const remove = async () => {
-        await api.delete(paths.project(ws, slug), { confirm: slug });
+        await api.delete(paths.project(ws, slug), { confirm: slug, purgeAnalytics });
         queryClient.removeQueries({ queryKey: keys.project(ws, slug) });
         await queryClient.invalidateQueries({ queryKey: keys.projects(ws) });
         toast.success(`Project ${project.name} deleted.`);
@@ -131,7 +134,7 @@ export function ProjectGeneral() {
             {editable && (
                 <SettingsSection
                     title="Delete this project"
-                    description="Removes every report, triage decision, note and setting of this project. This can't be undone."
+                    description="Removes every report, triage decision, note and setting of this project. This can't be undone. Its past reviews and activity stay in Analytics unless you choose to remove them too."
                 >
                     <FormActions>
                         <ConfirmAction
@@ -141,7 +144,12 @@ export function ProjectGeneral() {
                             confirmLabel="Delete project"
                             typeToConfirm={slug}
                             onConfirm={remove}
-                        />
+                            onOpenChange={() => setPurgeAnalytics(false)}
+                        >
+                            <CheckField label="Also remove this project's past reviews and activity from Analytics">
+                                {(p) => <Checkbox {...p} checked={purgeAnalytics} onCheckedChange={(v) => setPurgeAnalytics(v === true)} />}
+                            </CheckField>
+                        </ConfirmAction>
                     </FormActions>
                 </SettingsSection>
             )}

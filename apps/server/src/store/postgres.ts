@@ -752,6 +752,10 @@ export class PostgresStore implements Store {
                     values (${row.id}, ${row.workspaceId}, ${row.projectId}, ${row.branch}, ${row.at}, ${row.actor}, ${row.actorUserId},
                             ${row.via}, ${row.kind}, ${row.itemId}, ${json(sql, row.changes)})`;
             }),
+        removeProject: (workspaceId, projectId) =>
+            this.write(async (sql) => {
+                await sql`delete from activity where workspace_id = ${workspaceId} and project_id = ${projectId}`;
+            }),
         list: async (f, page) =>
             (
                 await this.rows(
