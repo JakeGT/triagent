@@ -23,10 +23,11 @@ import { CreateProjectForm } from "@/features/settings/projects-settings";
 import { StatusNote } from "@/features/settings/settings-page";
 import { api, errorMessage, paths } from "@/lib/api";
 import { allowanceQuery } from "@/lib/insights-queries";
+import type { Allowance } from "@/lib/insights-types";
 import { automationQuery, githubQuery, keys, membersQuery, meQuery, projectsQuery, reviewModelQuery } from "@/lib/queries";
 import { useMe, useProject, useWorkspace } from "@/lib/session";
 import { isExample, tutorialApi } from "@/lib/tutorial";
-import type { Automation, Project } from "@/lib/types";
+import type { Automation, Project, ReviewModel } from "@/lib/types";
 import type { SetupFlow, SetupStep } from "./setup-dialog";
 import { closeSetup, openSetup } from "./setup-store";
 
@@ -114,6 +115,17 @@ export function useAccountFlow(): SetupFlow {
     };
 }
 
+/** Whether reviews can run with the workspace's models as they are, in a sentence. */
+function modelStatus(model: ReviewModel, allowance: Allowance | undefined): string {
+    if (model.ready) {
+        const provider = model.providers.find((p) => p.id === model.provider)?.name ?? model.provider;
+        return `Ready: reviews use ${model.model} through ${provider}.`;
+    }
+    if (allowance?.now.ready) return `Ready: reviews use ${allowance.now.model} through the instance's key.`;
+    if (model.favourites.length) return `Not ready yet: add ${model.missing ?? "an API key"}.`;
+    return "Not ready yet: connect a provider and choose a model.";
+}
+
 // ---- workspace --------------------------------------------------------------------------------
 
 export function useWorkspaceFlow(): SetupFlow {
@@ -141,15 +153,7 @@ export function useWorkspaceFlow(): SetupFlow {
                         shown again), then choose one of its models: the first is the default that reviews use. More models, from any
                         provider, can be added now or later in Settings → Models.
                     </p>
-                    <StatusNote data-testid="setup-model-status">
-                        {model.data.ready
-                            ? `Ready: reviews use ${model.data.model} through ${model.data.providers.find((p) => p.id === model.data?.provider)?.name ?? model.data.provider}.`
-                            : allowance.data?.now.ready
-                              ? `Ready: reviews use ${allowance.data.now.model} through the instance's key.`
-                              : model.data.favourites.length
-                                ? `Not ready yet: add ${model.data.missing ?? "an API key"}.`
-                                : "Not ready yet: connect a provider and choose a model."}
-                    </StatusNote>
+                    <StatusNote data-testid="setup-model-status">{modelStatus(model.data, allowance.data)}</StatusNote>
                     <ModelLibrary data={model.data} setup />
                 </>
             ) : (
