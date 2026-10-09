@@ -114,9 +114,11 @@ for (const theme of ["light", "dark"] as const)
                 await page.keyboard.press("Escape");
                 await expect(page.getByRole(role)).toHaveCount(0);
             };
+            await page.goto(`${s.base}/start-review`);
+            await expect(page.getByRole("heading", { level: 1, name: "Start a review" })).toBeVisible();
+            await shot("start-review");
             await page.goto(`${s.base}/branches`);
             await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-            await dialog("dialog-start-review", () => page.getByRole("button", { name: "Start review" }).first().click());
             await dialog("dialog-history", () => page.getByRole("button", { name: "History of main" }).click());
             await dialog("dialog-move-branch", () => page.getByRole("button", { name: "Move main" }).click());
             await dialog(

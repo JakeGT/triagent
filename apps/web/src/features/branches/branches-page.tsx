@@ -16,6 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { NewReviewButton } from "@/features/runs/new-review-button";
 import { StartReview } from "@/features/runs/start-review";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDateTime, plural, timeAgo } from "@/lib/format";
@@ -47,7 +48,7 @@ export function BranchesPage() {
             <PageHeader
                 title="Branches & reports"
                 description="Each branch has its own report and its own triage."
-                actions={<StartReview />}
+                actions={<NewReviewButton />}
             />
             {can("upload") && <UploadReport />}
 

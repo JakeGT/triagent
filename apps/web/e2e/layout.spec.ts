@@ -124,6 +124,7 @@ test("no page is wider than a phone", async ({ page, admin }) => {
         `/p/${project}/compare`,
         `/p/${project}/runs`,
         `/p/${project}/pull-requests`,
+        `/p/${project}/start-review`,
         `/p/${project}/activity`,
         "/analytics",
         "/agents",

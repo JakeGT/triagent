@@ -57,6 +57,7 @@ test("agents and settings pages", async ({ page, admin }) => {
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
     for (const path of [
         "/agents",
+        `/p/${project}/start-review`,
         `/p/${project}/settings/general`,
         `/p/${project}/settings/automation`,
         `/p/${project}/settings/github`,

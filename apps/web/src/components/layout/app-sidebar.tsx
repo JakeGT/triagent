@@ -14,6 +14,7 @@ import {
     GitPullRequest,
     LayoutDashboard,
     ListChecks,
+    Play,
     Plus,
     ScanSearch,
     Settings,
@@ -134,6 +135,24 @@ export function AppSidebar() {
                 <nav aria-label="Project">
                     {project ? (
                         <>
+                            {can("operate") && (
+                                <SidebarGroup className="pb-0">
+                                    <SidebarMenu>
+                                        <NavItem label="New review" icon={<Play />} active={active_("/start-review")}>
+                                            {(c) => (
+                                                <Link
+                                                    to="/w/$ws/p/$project/start-review"
+                                                    params={params}
+                                                    className="border font-medium shadow-xs"
+                                                    data-testid="new-review"
+                                                >
+                                                    {c}
+                                                </Link>
+                                            )}
+                                        </NavItem>
+                                    </SidebarMenu>
+                                </SidebarGroup>
+                            )}
                             <Group title="Work">
                                 <NavItem label="Overview" icon={<LayoutDashboard />} active={active_("/overview")}>
                                     {(c) => (

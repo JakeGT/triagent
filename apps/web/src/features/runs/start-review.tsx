@@ -1,17 +1,18 @@
-// Starting a review: a pull request, a branch's changes since its base, or a full scan of a branch. Used
-// on Runs, Pull requests and Branches & reports, sometimes with the choice made already.
+// Starting a review: a pull request, a branch's changes since its base, or a full scan of a branch. The
+// form is the Start a review page's (start-review-page.tsx), and the dialog's that buttons beside a pull
+// request or branch open with the choice made already.
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Play } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { toast } from "sonner";
-import { type Choice, ChoiceField, Field, FieldError } from "@/components/field";
+import { type Choice, ChoiceField, Field, FieldError, NativeSelect } from "@/components/field";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api, errorMessage, paths } from "@/lib/api";
-import { keys } from "@/lib/queries";
+import { branchesQuery, keys, pullRequestsQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { Run, RunKind } from "@/lib/types";
 
@@ -28,6 +29,152 @@ const KINDS: readonly Choice<RunKind>[] = [
     { value: "full", label: "A whole branch", hint: "Every file: slower, and uses more of the model." },
 ];
 
+/** The select's value for "type a number instead": no pull request has number 0. */
+const OTHER = "0";
+
+/** What to review, and the button that starts it; once started, the new run opens. */
+export function StartReviewForm({
+    defaults = {},
+    actions,
+    onStarted,
+}: {
+    defaults?: StartReviewDefaults;
+    /** Buttons before Start review (the dialog's Cancel). */
+    actions?: ReactNode;
+    onStarted?: () => void;
+}) {
+    const { ws, slug, project } = useProject();
+    const queryClient = useQueryClient();
+    const navigate = useNavigate();
+    const id = useId();
+    const [kind, setKind] = useState<RunKind>(defaults.kind ?? "pr");
+    const [number, setNumber] = useState(defaults.number ? String(defaults.number) : "");
+    const [branch, setBranch] = useState(defaults.branch ?? "");
+    const [base, setBase] = useState(defaults.base ?? "");
+    const [typing, setTyping] = useState(false);
+    // Suggestions: the open pull requests, and the branches this project knows of.
+    const prs = useQuery(pullRequestsQuery(ws, slug));
+    const branches = useQuery(branchesQuery(ws, slug));
+    const open = prs.data?.connected ? prs.data.items : [];
+    const known = [
+        ...new Set([
+            project.defaultBranch,
+            ...(branches.data?.items.map((b) => b.name) ?? []),
+            ...(branches.data?.github?.notReviewed ?? []),
+        ]),
+    ];
+    // Pick from the open pull requests, unless there are none, someone chose to type a number, or the
+    // number given isn't one of them.
+    const listed = open.some((p) => String(p.number) === number);
+    const picking = open.length > 0 && !typing && (listed || number === "");
+    const pr = picking && !listed ? String(open[0]?.number ?? "") : number.trim();
+
+    const start = useMutation({
+        mutationFn: () =>
+            api.post<Run>(`${paths.project(ws, slug)}/reviews`, {
+                kind,
+                ...(kind === "pr" ? { number: Number(pr) } : {}),
+                ...(kind !== "pr" && branch.trim() ? { branch: branch.trim() } : {}),
+                ...(kind === "changes" && base.trim() ? { base: base.trim() } : {}),
+            }),
+        onSuccess: (run) => {
+            toast.success(run.status === "queued" ? `Queued: ${run.title}.` : `Already ${run.status}: ${run.title}.`);
+            void queryClient.invalidateQueries({ queryKey: keys.runs(ws) });
+            void queryClient.invalidateQueries({ queryKey: keys.pullRequests(ws, slug) });
+            onStarted?.();
+            void navigate({ to: "/w/$ws/p/$project/runs/$runId", params: { ws, project: slug, runId: run.id } });
+        },
+    });
+    const ready = kind === "pr" ? /^[1-9]\d*$/.test(pr) : kind === "changes" ? Boolean(branch.trim()) : true;
+    const branchList = `${id}-branches`;
+
+    return (
+        <form
+            className="grid gap-form"
+            onSubmit={(e) => {
+                e.preventDefault();
+                if (ready) start.mutate();
+            }}
+        >
+            <ChoiceField legend="What to review" name={`${id}-kind`} value={kind} onChange={setKind} choices={KINDS} />
+            {kind === "pr" &&
+                (picking ? (
+                    <Field label="Pull request" hint="Open pull requests on GitHub." width="lg">
+                        {(p) => (
+                            <NativeSelect
+                                {...p}
+                                value={pr}
+                                onChange={(e) => {
+                                    if (e.target.value === OTHER) {
+                                        setTyping(true);
+                                        setNumber("");
+                                    } else setNumber(e.target.value);
+                                }}
+                            >
+                                {open.map((x) => (
+                                    <option key={x.number} value={String(x.number)}>
+                                        #{x.number} {x.title}
+                                    </option>
+                                ))}
+                                <option value={OTHER}>Another pull request…</option>
+                            </NativeSelect>
+                        )}
+                    </Field>
+                ) : (
+                    <Field label="Pull request number" width="sm">
+                        {(p) => <Input {...p} inputMode="numeric" value={number} onChange={(e) => setNumber(e.target.value)} required />}
+                    </Field>
+                ))}
+            {kind !== "pr" && (
+                <Field label="Branch" hint={kind === "full" ? `Leave empty for ${project.defaultBranch}.` : undefined} width="lg">
+                    {(p) => (
+                        <Input
+                            {...p}
+                            list={branchList}
+                            value={branch}
+                            onChange={(e) => setBranch(e.target.value)}
+                            placeholder={kind === "full" ? project.defaultBranch : ""}
+                            className="font-mono"
+                            spellCheck={false}
+                            autoComplete="off"
+                            required={kind === "changes"}
+                        />
+                    )}
+                </Field>
+            )}
+            {kind === "changes" && (
+                <Field label="Compared with" hint={`Leave empty for ${project.defaultBranch}.`} width="lg">
+                    {(p) => (
+                        <Input
+                            {...p}
+                            list={branchList}
+                            value={base}
+                            onChange={(e) => setBase(e.target.value)}
+                            placeholder={project.defaultBranch}
+                            className="font-mono"
+                            spellCheck={false}
+                            autoComplete="off"
+                        />
+                    )}
+                </Field>
+            )}
+            <datalist id={branchList}>
+                {known.map((b) => (
+                    <option key={b} value={b} />
+                ))}
+            </datalist>
+            <FieldError message={start.error ? errorMessage(start.error) : null} />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+                {actions}
+                <Button type="submit" disabled={!ready || start.isPending}>
+                    <Play /> {start.isPending ? "Starting…" : "Start review"}
+                </Button>
+            </div>
+        </form>
+    );
+}
+
+/** A button that opens the form in a dialog, with the choice made already (beside a pull request or branch). */
 export function StartReview({
     defaults = {},
     trigger,
@@ -37,46 +184,12 @@ export function StartReview({
     trigger?: ReactNode;
     label?: string;
 }) {
-    const { ws, slug, project } = useProject();
+    const { project } = useProject();
     const can = useCan();
-    const queryClient = useQueryClient();
-    const navigate = useNavigate();
-    const id = useId();
     const [open, setOpen] = useState(false);
-    const [kind, setKind] = useState<RunKind>(defaults.kind ?? "pr");
-    const [number, setNumber] = useState(defaults.number ? String(defaults.number) : "");
-    const [branch, setBranch] = useState(defaults.branch ?? "");
-    const [base, setBase] = useState(defaults.base ?? "");
-    const start = useMutation({
-        mutationFn: () =>
-            api.post<Run>(`${paths.project(ws, slug)}/reviews`, {
-                kind,
-                ...(kind === "pr" ? { number: Number(number) } : {}),
-                ...(kind !== "pr" && branch.trim() ? { branch: branch.trim() } : {}),
-                ...(kind === "changes" && base.trim() ? { base: base.trim() } : {}),
-            }),
-        onSuccess: (run) => {
-            toast.success(run.status === "queued" ? `Queued: ${run.title}.` : `Already ${run.status}: ${run.title}.`);
-            void queryClient.invalidateQueries({ queryKey: keys.runs(ws) });
-            void queryClient.invalidateQueries({ queryKey: keys.pullRequests(ws, slug) });
-            setOpen(false);
-            void navigate({ to: "/w/$ws/p/$project/runs/$runId", params: { ws, project: slug, runId: run.id } });
-        },
-    });
     if (!can("operate")) return null;
-    const reset = (next: boolean) => {
-        setOpen(next);
-        if (next) {
-            setKind(defaults.kind ?? "pr");
-            setNumber(defaults.number ? String(defaults.number) : "");
-            setBranch(defaults.branch ?? "");
-            setBase(defaults.base ?? "");
-            start.reset();
-        }
-    };
-    const ready = kind === "pr" ? /^\d+$/.test(number.trim()) : kind === "changes" ? Boolean(branch.trim()) : true;
     return (
-        <Dialog open={open} onOpenChange={reset}>
+        <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
                 {trigger ?? (
                     <Button>
@@ -85,65 +198,22 @@ export function StartReview({
                 )}
             </DialogTrigger>
             <DialogContent>
-                <form
-                    className="grid gap-form"
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        if (ready) start.mutate();
-                    }}
-                >
-                    <DialogHeader>
-                        <DialogTitle>Start a review</DialogTitle>
-                        <DialogDescription>
-                            Open Code Review runs on {project.name}'s code from GitHub. The findings go to the branch's report here.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <ChoiceField legend="What to review" name={`${id}-kind`} value={kind} onChange={setKind} choices={KINDS} />
-                    {kind === "pr" ? (
-                        <Field label="Pull request number" width="sm">
-                            {(p) => (
-                                <Input {...p} inputMode="numeric" value={number} onChange={(e) => setNumber(e.target.value)} required />
-                            )}
-                        </Field>
-                    ) : (
-                        <Field label="Branch" hint={kind === "full" ? `Leave empty for ${project.defaultBranch}.` : undefined}>
-                            {(p) => (
-                                <Input
-                                    {...p}
-                                    value={branch}
-                                    onChange={(e) => setBranch(e.target.value)}
-                                    placeholder={kind === "full" ? project.defaultBranch : ""}
-                                    className="font-mono"
-                                    spellCheck={false}
-                                    required={kind === "changes"}
-                                />
-                            )}
-                        </Field>
-                    )}
-                    {kind === "changes" && (
-                        <Field label="Compared with" hint={`Leave empty for ${project.defaultBranch}.`}>
-                            {(p) => (
-                                <Input
-                                    {...p}
-                                    value={base}
-                                    onChange={(e) => setBase(e.target.value)}
-                                    placeholder={project.defaultBranch}
-                                    className="font-mono"
-                                    spellCheck={false}
-                                />
-                            )}
-                        </Field>
-                    )}
-                    <FieldError message={start.error ? errorMessage(start.error) : null} />
-                    <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={() => reset(false)}>
+                <DialogHeader>
+                    <DialogTitle>Start a review</DialogTitle>
+                    <DialogDescription>
+                        Open Code Review runs on {project.name}'s code from GitHub. The findings go to the branch's report here.
+                    </DialogDescription>
+                </DialogHeader>
+                {/* The dialog's content mounts each time it opens, so the form starts from the defaults. */}
+                <StartReviewForm
+                    defaults={defaults}
+                    onStarted={() => setOpen(false)}
+                    actions={
+                        <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={!ready || start.isPending}>
-                            {start.isPending ? "Starting…" : "Start review"}
-                        </Button>
-                    </DialogFooter>
-                </form>
+                    }
+                />
             </DialogContent>
         </Dialog>
     );

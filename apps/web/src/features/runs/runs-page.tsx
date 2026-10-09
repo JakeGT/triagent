@@ -13,8 +13,8 @@ import { formatDateTime, timeAgo } from "@/lib/format";
 import { runListQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { Run, RunList } from "@/lib/types";
+import { NewReviewButton } from "./new-review-button";
 import { CancelRun, duration, findingsText, kindText, progressText, RunStatusBadge } from "./run-bits";
-import { StartReview } from "./start-review";
 
 export function WaitingBanner({ list, ws }: { list: Pick<RunList, "ready" | "waiting">; ws: string }) {
     if (list.ready || !list.waiting) return null;
@@ -75,7 +75,7 @@ export function RunsPage() {
                         </Link>
                     </>
                 }
-                actions={<StartReview />}
+                actions={<NewReviewButton />}
             />
             <Outlet />
             {list.isPending ? (

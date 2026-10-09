@@ -70,7 +70,7 @@ test("a pull request is checked, reviewed on request, and watched live until it'
 
     await row.getByRole("button", { name: /Review now/ }).click();
     const dialog = page.getByRole("dialog", { name: "Start a review" });
-    await expect(dialog.getByLabel("Pull request number")).toHaveValue("5");
+    await expect(dialog.getByLabel("Pull request", { exact: true })).toHaveValue("5");
     await dialog.getByRole("button", { name: "Start review" }).click();
     await expect(page).toHaveURL(new RegExp(`${base}/runs/[\\w-]+$`));
 
@@ -103,6 +103,30 @@ test("a pull request is checked, reviewed on request, and watched live until it'
     await expect(page.getByTestId("branch-feature")).toContainText("Out of date: 1 commit behind");
     await expect(page.getByTestId("branch-feature").getByRole("button", { name: "Review again feature" })).toBeVisible();
     await expect(page.getByTestId("not-reviewed")).toContainText("other");
+});
+
+test("the New review button opens a page for starting one: pick what to review, and the run opens", async ({ page, admin }) => {
+    const { repo, base } = await reviewProject(admin);
+    await openPull(repo, 8, "feature-x", "Add x");
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    await page.goto(`${base}/overview`);
+    await page.getByTestId("new-review").click();
+    await expect(page).toHaveURL(new RegExp(`${base}/start-review$`));
+    await expect(page.getByRole("heading", { level: 1, name: "Start a review" })).toBeVisible();
+    await expect(page.getByTestId("review-models")).toContainText("the workspace's model, fake/model");
+
+    // Open pull requests to pick from; or a branch's changes, with the known branches suggested.
+    await expect(page.getByLabel("Pull request", { exact: true })).toHaveValue("8");
+    await page.getByLabel("A branch's changes").check();
+    await page.getByLabel("Branch", { exact: true }).fill("feature-x");
+    await page.getByRole("button", { name: "Start review" }).click();
+    await expect(page).toHaveURL(new RegExp(`${base}/runs/[\\w-]+$`));
+    await expect(page.getByTestId("run-panel").getByRole("heading", { name: /Changes on feature-x since main/ })).toBeVisible();
+
+    // A link can choose already.
+    await page.goto(`${base}/start-review?kind=full&branch=main`);
+    await expect(page.getByLabel("A whole branch")).toBeChecked();
+    await expect(page.getByLabel("Branch", { exact: true })).toHaveValue("main");
 });
 
 test("a running review can be cancelled", async ({ page, admin }) => {

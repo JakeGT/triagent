@@ -315,6 +315,25 @@ const runRoute = createRoute({
     component: lazyRouteComponent(() => import("@/features/runs/run-panel"), "RunPanel"),
 });
 
+/** What a link to Start a review can choose already: ?kind=pr&number=12, ?kind=changes&branch=x&base=main. */
+type StartReviewSearch = { kind?: "pr" | "changes" | "full"; number?: number; branch?: string; base?: string };
+
+const startReviewRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "/start-review",
+    validateSearch: (s: Record<string, unknown>): StartReviewSearch => {
+        const kind = s.kind === "pr" || s.kind === "changes" || s.kind === "full" ? s.kind : undefined;
+        const number = Number(s.number);
+        return {
+            ...(kind ? { kind } : {}),
+            ...(Number.isInteger(number) && number > 0 ? { number } : {}),
+            ...(str(s.branch) ? { branch: str(s.branch) } : {}),
+            ...(str(s.base) ? { base: str(s.base) } : {}),
+        };
+    },
+    component: lazyRouteComponent(() => import("@/features/runs/start-review-page"), "StartReviewPage"),
+});
+
 const pullRequestsRoute = createRoute({
     getParentRoute: () => projectRoute,
     path: "/pull-requests",
@@ -383,6 +402,7 @@ const routeTree = rootRoute.addChildren([
                 compareRoute,
                 activityRoute,
                 runsRoute.addChildren([runRoute]),
+                startReviewRoute,
                 pullRequestsRoute,
                 projectSettingsRoute.addChildren([projectSettingsIndexRoute, ...projectSettingsRoutes]),
             ]),

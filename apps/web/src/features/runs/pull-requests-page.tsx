@@ -17,6 +17,7 @@ import { keys, pullRequestsQuery, runListQuery } from "@/lib/queries";
 import { safeHref } from "@/lib/safe-href";
 import { useCan, useProject } from "@/lib/session";
 import type { GithubDelivery, PullRequests, RefusedDeliveries } from "@/lib/types";
+import { NewReviewButton } from "./new-review-button";
 import { RunStatusBadge } from "./run-bits";
 import { WaitingBanner } from "./runs-page";
 import { StartReview } from "./start-review";
@@ -121,7 +122,7 @@ export function PullRequestsPage() {
                                     <RefreshCw /> {check.isPending ? "Checking…" : "Check now"}
                                 </Button>
                             )}
-                            <StartReview />
+                            <NewReviewButton />
                         </>
                     )
                 }
