@@ -10,7 +10,7 @@ import { EmptyState, Page, PageHeader, PageMeta } from "@/components/page";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, timeAgo } from "@/lib/format";
-import { runListQuery } from "@/lib/queries";
+import { pullRequestsQuery, runListQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { Run, RunList } from "@/lib/types";
 import { NewReviewButton } from "./new-review-button";
@@ -56,6 +56,8 @@ export function RunsPage() {
     const all = search.all === "1";
     const list = useQuery(runListQuery(ws, all ? null : slug));
     const data = list.data;
+    // A scheduled scan that was skipped leaves no run: say so here, where it would have been.
+    const scan = useQuery({ ...pullRequestsQuery(ws, slug), enabled: !all }).data?.scheduledScan;
 
     return (
         <Page>
@@ -174,6 +176,15 @@ export function RunsPage() {
                         <h2 id="recent-heading" className="section-title">
                             Recent
                         </h2>
+                        {!all && scan?.action === "skipped" && (
+                            <p className="text-sm text-muted-foreground" data-testid="scheduled-scan">
+                                The scheduled scan{" "}
+                                <time dateTime={scan.at} title={formatDateTime(scan.at)}>
+                                    {timeAgo(scan.at)}
+                                </time>{" "}
+                                was skipped: {scan.why}.
+                            </p>
+                        )}
                         {data.recent.length === 0 ? (
                             <EmptyState title="No reviews yet">
                                 {can("operate")

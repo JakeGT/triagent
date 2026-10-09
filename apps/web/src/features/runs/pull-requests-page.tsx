@@ -1,5 +1,6 @@
-// Pull requests: what's open on GitHub, whether each head commit has been reviewed, and why the last
-// check did or didn't queue it, with Review now and Check now, plus the webhook deliveries received.
+// Pull requests: what's open on GitHub, the state of each in words (waiting for checks, reviewed and how
+// many commits since, skipped and why), and why the last check did or didn't queue it, with Review now
+// and Check now, plus the webhook deliveries received.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -79,18 +80,54 @@ export function Deliveries({ items }: { items: GithubDelivery[] }) {
     );
 }
 
+const FIRST_REVIEW: Record<PullRequests["automation"]["firstReview"], string> = {
+    checks: "a pull request is reviewed once, when it's ready and its checks have passed",
+    ready: "a pull request is reviewed once, as soon as it's ready",
+    manual: "pull requests are only reviewed when someone asks",
+};
+
 function Automation({ data, ws, slug }: { data: PullRequests; ws: string; slug: string }) {
+    const every = `every ${data.automation.pollMinutes} minute${data.automation.pollMinutes === 1 ? "" : "s"}`;
     return (
-        <p className="text-sm">
-            {data.automation.enabled
-                ? `Automatic reviews are on: new commits on open pull requests are reviewed (checked on webhook events, or every ${data.automation.pollMinutes} minute${data.automation.pollMinutes === 1 ? "" : "s"}).`
-                : "Automatic reviews are off: pull requests are only reviewed when someone asks."}{" "}
-            <Link to="/w/$ws/p/$project/settings/automation" params={{ ws, project: slug }} className="underline">
-                Automation settings
-            </Link>
-        </p>
+        <div className="grid gap-1 text-sm">
+            <p>
+                {data.automation.enabled
+                    ? `Automatic reviews are on: ${FIRST_REVIEW[data.automation.firstReview]} (checked on webhook events, or ${every}).`
+                    : "Automatic reviews are off: pull requests are only reviewed when someone uses Review now."}{" "}
+                <Link to="/w/$ws/p/$project/settings/automation" params={{ ws, project: slug }} className="underline">
+                    Automation settings
+                </Link>
+            </p>
+            {data.automation.enabled && (
+                <p className="text-muted-foreground">
+                    Later pushes aren't reviewed until someone asks: comment <code className="font-mono">/review</code> on the pull request,
+                    add the label <code className="font-mono">review</code>, or use Review now.
+                </p>
+            )}
+            {data.automation.enabled && data.automation.firstReview === "checks" && data.checksReadable === false && (
+                <p data-testid="checks-unreadable">
+                    GitHub won't show Triagent this repository's check runs, so pull requests are reviewed when ready instead.{" "}
+                    <Link to="/w/$ws/p/$project/settings/github" params={{ ws, project: slug }} className="underline">
+                        GitHub settings
+                    </Link>{" "}
+                    say what's needed.
+                </p>
+            )}
+            {data.scheduledScan?.action === "skipped" && (
+                <p className="text-muted-foreground" data-testid="scheduled-scan">
+                    The scheduled scan{" "}
+                    <time dateTime={data.scheduledScan.at} title={formatDateTime(data.scheduledScan.at)}>
+                        {timeAgo(data.scheduledScan.at)}
+                    </time>{" "}
+                    was skipped: {data.scheduledScan.why}.
+                </p>
+            )}
+        </div>
     );
 }
+
+/** A pull request's state, with the first letter capitalised: "Waiting for checks (2 of 4)". */
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export function PullRequestsPage() {
     const { ws, slug, project } = useProject();
@@ -103,6 +140,8 @@ export function PullRequestsPage() {
         onSuccess: (data) => {
             queryClient.setQueryData(keys.pullRequests(ws, slug), data);
             void queryClient.invalidateQueries({ queryKey: keys.runs(ws) });
+            // A check can find out that GitHub won't show its check runs, which the GitHub settings explain.
+            void queryClient.invalidateQueries({ queryKey: keys.projectSettings(ws, slug, "github") });
             if (data.lastCheck?.error) toast.error("GitHub couldn't be reached.");
             else toast.success("Checked GitHub.");
         },
@@ -237,14 +276,26 @@ export function PullRequestsPage() {
                                                         </Link>
                                                     ) : p.status === "waiting for approval" ? (
                                                         <span className="font-medium">Waiting for approval</span>
+                                                    ) : p.reviewedSha ? (
+                                                        // Reviewed at an earlier commit: its findings are still the branch's.
+                                                        <Link
+                                                            to="/w/$ws/p/$project/issues"
+                                                            params={{ ws, project: slug }}
+                                                            search={{ branch: p.branch }}
+                                                            className="underline"
+                                                        >
+                                                            {sentence(p.status)}
+                                                        </Link>
                                                     ) : (
-                                                        <span>{p.status}</span>
+                                                        <span>{sentence(p.status)}</span>
                                                     )}
                                                 </TableCell>
                                                 <TableCell className="max-w-md text-xs whitespace-normal">
-                                                    {p.lastDecision
-                                                        ? `${p.lastDecision.action === "queued" ? "Queued" : "Not queued"}: ${p.lastDecision.why}.`
-                                                        : ""}
+                                                    {!p.lastDecision
+                                                        ? ""
+                                                        : p.lastDecision.action === "waiting"
+                                                          ? `${sentence(p.lastDecision.why)}.`
+                                                          : `${p.lastDecision.action === "queued" ? "Queued" : "Not queued"}: ${p.lastDecision.why}.`}
                                                 </TableCell>
                                                 <TableCell className="text-end">
                                                     {!p.run && (

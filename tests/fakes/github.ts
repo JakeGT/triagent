@@ -859,7 +859,7 @@ export class FakeGitHub {
             case "/_fake/pull":
                 return json(res, 200, await this.openPull(str("fullName"), b as never));
             case "/_fake/pat":
-                this.pat(str("token"), str("login"), b.repos as string[]);
+                this.pat(str("token"), str("login"), b.repos as string[], { noChecks: b.noChecks === true });
                 return json(res, 200, { ok: true });
             case "/_fake/next-install":
                 this.nextInstall = b as never;

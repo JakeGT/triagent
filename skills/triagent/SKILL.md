@@ -31,16 +31,20 @@ Rules:
 
 ## Get a pull request reviewed
 
-When a project reviews pull requests automatically, Triagent reviews every new commit pushed to a pull request that's ready for review, and skips drafts. A review takes time and model tokens, and one that's running is never stopped, so a push during a review means the same change is reviewed twice. So:
+When a project reviews pull requests automatically, Triagent reviews each pull request **once by itself**: when it's ready for review (not a draft) and the checks on its head commit have passed. Pushes after that are **not reviewed until someone asks**. A review takes time and model tokens, and one that's running is never stopped.
 
-1. Open the pull request as a **draft** (`gh pr create --draft`).
-2. Push as often as you need: get the work finished and CI passing. Nothing is reviewed.
-3. Mark it ready (`gh pr ready <number>`). Triagent reviews it once. `list_pull_requests` shows whether it was queued and why not if it wasn't; `list_runs` and `wait_for_run` show how it's going.
-4. Don't push while its review is queued or running.
-5. The findings are on the pull request's branch: pass that branch to `list_issues`, `claim_next_issue` and the rest, and work through them as in "Fix findings".
-6. Before pushing fixes, make it a draft again (`gh pr ready <number> --undo`), and push them together. Mark it ready again only if the fixes are big enough to want another review.
+1. Open the pull request and get its checks passing. A draft is never reviewed by itself, so open it as a draft (`gh pr create --draft`) if you want to choose the moment, and mark it ready (`gh pr ready <number>`) when the work is finished.
+2. The first review starts by itself once it's ready and its checks are green. `list_pull_requests` shows where it is and why ("waiting for 2 of 4 checks", "checks failed", "skipped: opened by a bot"); `list_runs` and `wait_for_run` show how the review is going.
+3. The findings are on the pull request's branch: pass that branch to `list_issues`, `claim_next_issue` and the rest, and work through them as in "Fix findings".
+4. Push your fixes as often as you like. They aren't reviewed, and `list_pull_requests` says how many commits there have been since the review.
+5. When the fixes are big enough to want another review, ask for one, in any of these ways:
+   - `start_review` with `kind: "pr"` and the pull request's number;
+   - a comment on the pull request whose first line starts with `/review` (from someone with write access to the repository);
+   - the label `review` on the pull request (Triagent takes it off once the review is queued).
 
-A pull request that was already open when automatic reviews were switched on isn't reviewed until its next push: make sure that push is the one you want reviewed.
+Asking works at any time: for a draft, with checks still running or failed, and for pull requests Triagent skips by itself (opened by a bot, labelled `skip-review`, touching only files the project doesn't review, or already open when automatic reviews were switched on).
+
+Don't ask while a review of the same pull request is queued or running unless you want another: the new one waits for it and then runs as well. A rebase or a merge from the base that leaves the same changes isn't reviewed again, and needn't be asked for.
 
 ## Upload a report
 

@@ -1,5 +1,6 @@
 // Reviews in the browser, against the real server, a real runner with a fake `ocr`, and a fake GitHub:
-// pull requests, starting a review and watching it live, cancelling, the "reviews are waiting" banner,
+// pull requests, starting a review and watching it live, when reviews start by themselves (checks, later
+// pushes, /review, skipped pull requests) and their settings, cancelling, the "reviews are waiting" banner,
 // setting up the GitHub App and installing it, accessibility, and (with SCREENSHOT_DIR) screenshots.
 
 import { randomBytes } from "node:crypto";
@@ -35,7 +36,7 @@ async function reviewProject(admin: Api, opts: { model?: string; key?: boolean }
         await admin.put(`/api/v1/w/${ws}/settings/review-model/keys/openrouter`, { key: `sk-or-${randomBytes(12).toString("hex")}` });
         await admin.patch(`/api/v1/w/${ws}/settings/review-model`, { model: opts.model ?? "fake/model" });
     }
-    return { ws, repo, base: `/w/${ws}/p/app` };
+    return { ws, repo, token, base: `/w/${ws}/p/app` };
 }
 
 async function openPull(repo: string, number: number, branch: string, title: string) {
@@ -103,6 +104,129 @@ test("a pull request is checked, reviewed on request, and watched live until it'
     await expect(page.getByTestId("branch-feature")).toContainText("Out of date: 1 commit behind");
     await expect(page.getByTestId("branch-feature").getByRole("button", { name: "Review again feature" })).toBeVisible();
     await expect(page.getByTestId("not-reviewed")).toContainText("other");
+});
+
+test("a pull request waits for its checks, is reviewed once, and later pushes wait to be asked", async ({ page, admin }) => {
+    test.setTimeout(90_000);
+    const { ws, repo, token, base } = await reviewProject(admin);
+    await admin.patch(`/api/v1/w/${ws}/p/app/settings/automation`, { enabled: true });
+    // The baseline, with nothing open.
+    await admin.post(`/api/v1/w/${ws}/p/app/pull-requests/check`);
+    const commit = async (branch: string, files: Record<string, string>, from?: string) =>
+        (await fake<{ sha: string }>("commit", { fullName: repo, branch, ...(from ? { from } : {}), message: branch, files })).sha;
+    const first = await commit("feature", { "src/feature.ts": "// one\n" }, "main");
+    await fake("pull", { fullName: repo, number: 1, headRef: "feature", title: "Add a feature" });
+    await fake("check-run", { fullName: repo, sha: first, name: "build", status: "in_progress" });
+    // Ones Triagent doesn't review by itself: a bot's, and one labelled skip-review.
+    const deps = await commit("deps", { "package.json": "{}\n" }, "main");
+    await fake("pull", { fullName: repo, number: 2, headRef: "deps", title: "Bump a dependency", author: "dependabot[bot]" });
+    const wip = await commit("wip", { "src/wip.ts": "// wip\n" }, "main");
+    await fake("pull", { fullName: repo, number: 3, headRef: "wip", title: "Not yet", labels: ["skip-review"] });
+    for (const sha of [deps, wip])
+        await fake("check-run", { fullName: repo, sha, name: "build", status: "completed", conclusion: "success" });
+
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    await page.goto(`${base}/pull-requests`);
+    await expect(page.getByText("a pull request is reviewed once, when it's ready and its checks have passed")).toBeVisible();
+    await expect(page.getByText("Later pushes aren't reviewed until someone asks")).toBeVisible();
+    const check = async () => {
+        await page.getByRole("button", { name: "Check now" }).click();
+        await expect(page.getByText("Checked GitHub.").last()).toBeVisible();
+    };
+    await check();
+    const row = page.getByTestId("pr-1");
+    await expect(row).toContainText("Waiting for checks (1 of 1)");
+    await expect(row).toContainText("Waiting for 1 of 1 checks.");
+    await expect(row.getByRole("button", { name: /Review now/ })).toBeVisible();
+    await expect(page.getByTestId("pr-2")).toContainText("Skipped: opened by a bot");
+    await expect(page.getByTestId("pr-3")).toContainText("Skipped: label skip-review");
+    // The toast has finished fading in.
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
+    await axe(page, "pull requests with their states");
+
+    // The check fails: not reviewed, and it says which.
+    await fake("check-run", { fullName: repo, sha: first, name: "build", status: "completed", conclusion: "failure" });
+    await check();
+    await expect(row).toContainText("Checks failed");
+    await expect(row).toContainText("Not queued: checks failed (build)");
+
+    // It passes: one review, by itself.
+    await fake("check-run", { fullName: repo, sha: first, name: "build", status: "completed", conclusion: "success" });
+    await admin.post(`/api/v1/w/${ws}/p/app/pull-requests/check`, {});
+    await expect
+        .poll(
+            async () =>
+                (await admin.get(`/api/v1/w/${ws}/p/app/pull-requests`)).items.find((p: { number: number }) => p.number === 1).reviewed,
+            { timeout: 20_000 },
+        )
+        .toBe(true);
+    await page.reload();
+    await expect(row.getByRole("link", { name: "Reviewed", exact: true })).toBeVisible();
+
+    // A push after that isn't reviewed: the page and Triagent's comment say how many commits since.
+    await commit("feature", { "src/feature.ts": "// two\n" });
+    await check();
+    await expect(row.getByRole("link", { name: `Reviewed at ${first.slice(0, 7)}, 1 commit since` })).toBeVisible();
+    await expect(row).toContainText("later pushes aren't reviewed until someone asks");
+    const runs = async () => (await admin.get(`/api/v1/w/${ws}/runs`)).recent.filter((r: { kind: string }) => r.kind === "pr").length;
+    expect(await runs()).toBe(1);
+    await expect
+        .poll(async () => {
+            const state = await fake<{ comments: Record<string, { body: string }[]> }>(`repo?fullName=${encodeURIComponent(repo)}`);
+            return state.comments["1"]?.[0]?.body ?? "";
+        })
+        .toContain("**1 commit since this review**");
+
+    // Someone with write access asks, with a comment: one more.
+    await fake("comment", { fullName: repo, number: 1, body: "/review", user: "alice", association: "COLLABORATOR" });
+    await admin.post(`/api/v1/w/${ws}/p/app/pull-requests/check`, {});
+    await expect.poll(runs, { timeout: 20_000 }).toBe(2);
+    await page.reload();
+    await expect(row.getByRole("link", { name: "Reviewed", exact: true })).toBeVisible();
+
+    // A token GitHub won't show check runs: reviewed when ready, and both pages say so.
+    await fake("pat", { token, login: "octo", repos: [repo], noChecks: true });
+    await commit("blind", { "src/blind.ts": "// blind\n" }, "main");
+    await fake("pull", { fullName: repo, number: 4, headRef: "blind", title: "Unseen checks" });
+    await check();
+    await expect(page.getByTestId("pr-4")).toContainText("can't see checks, so reviewing when ready");
+    await expect(page.getByTestId("checks-unreadable")).toContainText("GitHub won't show Triagent this repository's check runs");
+    await page.getByTestId("checks-unreadable").getByRole("link", { name: "GitHub settings" }).click();
+    await expect(page.getByTestId("checks-note")).toContainText("Triagent can't see this repository's checks");
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
+    await axe(page, "GitHub settings with the checks note");
+});
+
+test("when reviews start is set on the project's Automation page", async ({ page, admin }) => {
+    const { ws, repo, base } = await reviewProject(admin);
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    await page.goto(`${base}/settings/automation`);
+    await page.getByLabel("Review pull requests automatically").click();
+    const when = page.getByRole("group", { name: "When a pull request gets its first review" });
+    await expect(when.getByLabel("When it's ready and its checks have passed")).toBeChecked();
+    await expect(when).toContainText("comment /review on it");
+    await when.getByLabel("As soon as it's ready").check();
+    await page.getByLabel("Files that don't need a review").fill("docs/**\n*.md\n");
+    await expect(page.getByLabel("Skip pull requests opened by bots")).toBeChecked();
+    await page.getByLabel("Skip pull requests opened by bots").click();
+    await axe(page, "automation settings");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByText("Automation settings saved.")).toBeVisible();
+    const saved = await admin.get(`/api/v1/w/${ws}/p/app/settings/automation`);
+    expect([saved.enabled, saved.firstReview, saved.skipPaths, saved.skipBots]).toEqual([true, "ready", ["docs/**", "*.md"], false]);
+
+    // A pull request touching only those files is skipped, and says which; a bot's is now reviewed.
+    await admin.post(`/api/v1/w/${ws}/p/app/pull-requests/check`);
+    await fake("commit", { fullName: repo, branch: "docs", from: "main", message: "Docs", files: { "docs/guide.md": "# Guide\n" } });
+    await fake("pull", { fullName: repo, number: 6, headRef: "docs", title: "Write the guide" });
+    await fake("commit", { fullName: repo, branch: "deps", from: "main", message: "Deps", files: { "package.json": "{}\n" } });
+    await fake("pull", { fullName: repo, number: 7, headRef: "deps", title: "Bump", author: "renovate[bot]" });
+    await page.goto(`${base}/pull-requests`);
+    await expect(page.getByText("a pull request is reviewed once, as soon as it's ready")).toBeVisible();
+    await page.getByRole("button", { name: "Check now" }).click();
+    await expect(page.getByTestId("pr-6")).toContainText("Skipped: only docs/**");
+    await expect(page.getByTestId("pr-6")).toContainText("it only changes files this project doesn't review (docs/**)");
+    await expect(page.getByTestId("pr-7")).toContainText("Queued: it's ready for review");
 });
 
 test("the New review button opens a page for starting one: pick what to review, and the run opens", async ({ page, admin }) => {

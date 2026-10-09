@@ -29,7 +29,7 @@ export const MODEL_SETS = ["all", "pr", "changes", "full"] as const satisfies re
 export type ModelSet = (typeof MODEL_SETS)[number];
 
 export const AutomationSchema = z.object({
-    /** Review new pull requests (and new pushes to them) automatically. */
+    /** Review pull requests automatically: each once, when `firstReview` says; later pushes when someone asks. */
     enabled: z.boolean(),
     /** How often to ask GitHub about pull requests when there's no webhook. */
     pollMinutes: z.number().int().min(1).max(60),

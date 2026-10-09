@@ -760,7 +760,7 @@ export const TOOLS: Tool[] = [
         name: "list_pull_requests",
         title: "List pull requests",
         description:
-            "A project's open pull requests: whether each head commit has been reviewed, and why the last check did or didn't queue it.",
+            "A project's open pull requests: the state of each (waiting for checks, reviewed and how many commits since, skipped and why), and why the last check did or didn't queue a review.",
         permission: "read",
         readOnly: true,
         input: z.object({ project }),
@@ -780,13 +780,14 @@ export const TOOLS: Tool[] = [
     tool({
         name: "check_pull_requests",
         title: "Check pull requests",
-        description: "Ask GitHub about the project's pull requests now, queueing reviews of new commits if automatic reviews are on.",
+        description:
+            "Ask GitHub about the project's pull requests now. With automatic reviews on, a pull request's first review is queued once it's ready and its checks have passed; later pushes aren't reviewed until asked for (start_review).",
         permission: "operate",
         input: z.object({ project }),
         async run(ctx, args) {
             const p = await projectOf(ctx, args.project);
             await ctx.services.github.githubFor(p);
-            const check = await ctx.services.automation.checkPulls(p);
+            const check = await ctx.services.automation.checkPulls(p, { fresh: true });
             const text = check?.error
                 ? `Checking failed: ${check.error}`
                 : `${check?.openPulls ?? 0} open pull request(s).\n${(check?.decisions ?? []).map((d) => `- #${d.number}: ${d.action} (${d.why})`).join("\n")}`;

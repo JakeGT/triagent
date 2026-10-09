@@ -315,7 +315,7 @@ function AutomationEssentials({ automation }: { automation: Automation }) {
         >
             <CheckField
                 label="Review pull requests automatically"
-                hint="New pull requests, and new pushes to them, are reviewed and summarised in a comment."
+                hint="Each pull request is reviewed once, when it's ready and its checks have passed, and summarised in a comment. Later pushes wait until someone asks."
             >
                 {(p) => <Switch {...p} checked={d.enabled} onCheckedChange={(enabled) => setD({ ...d, enabled })} />}
             </CheckField>

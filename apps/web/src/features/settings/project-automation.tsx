@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
-import { CheckField, Field, FieldError, NativeSelect } from "@/components/field";
+import { CheckField, ChoiceField, Field, FieldError, NativeSelect } from "@/components/field";
 import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
 import { automationQuery, keys } from "@/lib/queries";
@@ -36,6 +37,10 @@ interface Form {
     stallCheck: boolean;
     stallMinutes: string;
     reviewPullRequestsFrom: Automation["reviewPullRequestsFrom"];
+    firstReview: Automation["firstReview"];
+    /** One pattern on each line. */
+    skipPaths: string;
+    skipBots: boolean;
     models: ModelSets;
 }
 
@@ -53,6 +58,9 @@ const toForm = (a: Automation): Form => ({
     stallCheck: a.stallMinutes !== null,
     stallMinutes: String(a.stallMinutes ?? ""),
     reviewPullRequestsFrom: a.reviewPullRequestsFrom,
+    firstReview: a.firstReview ?? "checks",
+    skipPaths: (a.skipPaths ?? []).join("\n"),
+    skipBots: a.skipBots ?? true,
     models: toModelSets(a.models),
 });
 
@@ -73,8 +81,23 @@ function fromForm(f: Form): Automation {
         fullScanTimeoutMinutes: f.fullScanLimit ? whole("Full scan time limit", f.fullScanTimeoutMinutes, 5, MAX_LIMIT) : null,
         stallMinutes: f.stallCheck ? whole("Minutes without output", f.stallMinutes, 1, MAX_STALL) : null,
         reviewPullRequestsFrom: f.reviewPullRequestsFrom,
+        firstReview: f.firstReview,
+        skipPaths: skipPaths(f.skipPaths),
+        skipBots: f.skipBots,
         models: fromModelSets(f.models),
     };
+}
+
+/** The patterns typed, one on each line, within what the server takes. */
+function skipPaths(text: string): string[] {
+    const patterns = text
+        .split("\n")
+        .map((p) => p.trim())
+        .filter(Boolean);
+    if (patterns.length > 50) throw new Error("Files that don't need a review: at most 50 patterns.");
+    const long = patterns.find((p) => p.length > 200);
+    if (long) throw new Error(`Files that don't need a review: "${long.slice(0, 40)}…" is longer than 200 characters.`);
+    return patterns;
 }
 
 function Toggle({
@@ -196,10 +219,64 @@ export function ProjectAutomation() {
                     <SettingsSection title="Pull requests">
                         <Toggle
                             label="Review pull requests automatically"
-                            hint="New pull requests, and new pushes to them, are reviewed and summarised in a comment."
+                            hint="Each pull request is reviewed once by itself, and summarised in a comment. Later pushes aren't reviewed until someone asks."
                             checked={d.enabled}
                             disabled={!editable}
                             onChange={(v) => set({ enabled: v })}
+                        />
+                        <ChoiceField
+                            legend="When a pull request gets its first review"
+                            name="firstReview"
+                            value={d.firstReview}
+                            disabled={!editable}
+                            onChange={(firstReview) => set({ firstReview })}
+                            choices={[
+                                {
+                                    value: "checks",
+                                    label: "When it's ready and its checks have passed",
+                                    hint: "Drafts wait. So does a pull request whose checks are running or have failed; with no checks at all, it's reviewed after two minutes.",
+                                },
+                                { value: "ready", label: "As soon as it's ready", hint: "Drafts wait; checks are ignored." },
+                                { value: "manual", label: "Only when someone asks" },
+                            ]}
+                            hint={
+                                <>
+                                    Later pushes are never reviewed by themselves. To ask for a review of any pull request, drafts too:
+                                    comment <code className="font-mono">/review</code> on it (people with write access to the repository),
+                                    add the label <code className="font-mono">review</code>, or use Review now on the Pull requests page. A
+                                    push that changes nothing (a rebase, or a merge from the base) keeps the review it had.
+                                </>
+                            }
+                        />
+                        <Field
+                            label="Files that don't need a review"
+                            hint={
+                                <>
+                                    One pattern on each line, such as <code className="font-mono">docs/**</code>,{" "}
+                                    <code className="font-mono">*.md</code> or <code className="font-mono">**/*.lock</code>. A pull request
+                                    that changes only these isn't reviewed by itself. A pattern with no slash matches in every directory.
+                                </>
+                            }
+                            width="lg"
+                        >
+                            {(p) => (
+                                <Textarea
+                                    {...p}
+                                    rows={3}
+                                    className="font-mono text-xs"
+                                    value={d.skipPaths}
+                                    onChange={(e) => set({ skipPaths: e.target.value })}
+                                    disabled={!editable}
+                                    spellCheck={false}
+                                />
+                            )}
+                        </Field>
+                        <Toggle
+                            label="Skip pull requests opened by bots"
+                            hint="Dependabot, Renovate and the like. The label skip-review does the same for any pull request."
+                            checked={d.skipBots}
+                            disabled={!editable}
+                            onChange={(v) => set({ skipBots: v })}
                         />
                         <Toggle
                             label="Fail the check when a review finds something critical"

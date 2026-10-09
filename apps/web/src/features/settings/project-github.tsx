@@ -9,6 +9,7 @@ import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { OneTimeReveal } from "@/components/one-time-reveal";
 import { SecretField } from "@/components/secret-field";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, errorMessage, paths } from "@/lib/api";
@@ -55,12 +56,55 @@ export function ProjectGithub() {
                     {!canSecrets && <ReadOnlyNote>Only admins can set or clear secrets.</ReadOnlyNote>}
                     {/* Keyed by project, so a one-time secret or a pending result never shows on another project's page. */}
                     <GithubAppConnection key={`app-${slug}`} data={data} />
+                    <ChecksNote data={data} />
                     <TestConnection key={`test-${slug}`} data={data} />
                     <GithubTokenSection key={`token-${slug}`} data={data} />
                     <WebhookSection key={`webhook-${slug}`} data={data} />
                 </>
             )}
         </SettingsPage>
+    );
+}
+
+/**
+ * GitHub has refused to show this connection a commit's check runs, so a pull request's first review
+ * can't wait for them: what to change on GitHub.
+ */
+export function ChecksNote({ data }: { data: GithubSettings }) {
+    if (data.checksReadable !== false) return null;
+    return (
+        <Alert data-testid="checks-note">
+            <AlertTitle>Triagent can't see this repository's checks</AlertTitle>
+            <AlertDescription>
+                <p>
+                    A pull request's first review is meant to wait until its checks have passed. Until Triagent can read them, pull requests
+                    are reviewed as soon as they're ready instead.
+                </p>
+                {data.mode === "app" && data.app.available ? (
+                    <>
+                        <p>
+                            The GitHub App needs the repository permission <span className="font-medium">Checks: Read-only</span>, and the
+                            events <span className="font-medium">Check suite</span>, <span className="font-medium">Check run</span>,{" "}
+                            <span className="font-medium">Status</span> and <span className="font-medium">Issue comment</span>. Whoever owns
+                            the app can add them in{" "}
+                            <a href={`${data.app.htmlUrl}/permissions`} target="_blank" rel="noopener noreferrer" className="underline">
+                                the app's settings on GitHub<span className="sr-only"> (opens in a new tab)</span>
+                            </a>{" "}
+                            (Settings → Developer settings → GitHub Apps → {data.app.name} → Permissions & events).
+                        </p>
+                        <p>
+                            GitHub then asks an owner of each account the app is installed on to accept the new permission; it only takes
+                            effect on an installation once that's done.
+                        </p>
+                    </>
+                ) : (
+                    <p>
+                        GitHub doesn't let this access token read check runs (fine-grained tokens can't); commit statuses are still read.
+                        Connect through the GitHub App to wait for checks.
+                    </p>
+                )}
+            </AlertDescription>
+        </Alert>
     );
 }
 
@@ -140,7 +184,10 @@ export function WebhookSection({ data }: { data: GithubSettings }) {
                 <li>In the repository on GitHub, open Settings → Webhooks → Add webhook.</li>
                 <li>Paste the payload URL above, and set the content type to application/json.</li>
                 <li>Generate a secret here and paste it into the Secret box.</li>
-                <li>Choose “Let me select individual events” and tick Pull requests, Pushes, and Branch or tag creation and deletion.</li>
+                <li>
+                    Choose “Let me select individual events” and tick Pull requests, Pushes, Branch or tag creation and deletion, Check
+                    runs, Check suites, Statuses and Issue comments.
+                </li>
             </ol>
             <p className="text-sm">
                 Secret:{" "}

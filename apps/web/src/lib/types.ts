@@ -362,6 +362,11 @@ export interface Automation {
     /** Stop a review whose model has printed nothing for this long; null to never. */
     stallMinutes: number | null;
     reviewPullRequestsFrom: "collaborators" | "everyone";
+    /** When a pull request's first review happens by itself: once its checks pass, as soon as it's ready, or never. */
+    firstReview: "checks" | "ready" | "manual";
+    /** Patterns for files that don't need a review. */
+    skipPaths: string[];
+    skipBots: boolean;
     /** The models reviews run with: favourite models' ids (or "instance"), for every review and for each kind. A set left out falls through. */
     models: ProjectModels;
 }
@@ -402,6 +407,8 @@ export interface GithubSettings {
     webhook: { secretSet: boolean; setBy: string | null; setAt: string | null; url: string };
     /** How the project reaches GitHub now: the GitHub App, its own token, or not at all. */
     mode: "app" | "token" | "none";
+    /** False once GitHub has refused to show this connection a commit's check runs; null until it's been asked. */
+    checksReadable: boolean | null;
     app: { available: true; name: string; slug: string; htmlUrl: string } | { available: false };
     installations: Installation[];
     repository: { installationId: number; repositoryId: number; fullName: string } | null;
@@ -570,15 +577,28 @@ export interface PullRequest {
     status: string;
     baseline?: boolean;
     reviewed: boolean;
+    /** Commits pushed since the reviewed one, when GitHub could say. */
+    commitsSince?: number | null;
     run: { id: string; status: RunStatus } | null;
-    lastDecision: { number: number; title: string; sha: string | null; action: "queued" | "skipped"; why: string } | null;
+    lastDecision: {
+        number: number;
+        title: string;
+        sha: string | null;
+        action: "queued" | "skipped" | "waiting";
+        code?: string;
+        why: string;
+    } | null;
 }
 
 export interface PullRequests {
     connected: boolean;
     mode: "app" | "token" | null;
     repository: string | null;
-    automation: { enabled: boolean; pollMinutes: number };
+    automation: { enabled: boolean; pollMinutes: number; firstReview: Automation["firstReview"] };
+    /** False once GitHub has refused to show this connection check runs: reviews then start when ready. */
+    checksReadable: boolean | null;
+    /** What the last scheduled scan did. */
+    scheduledScan: { at: string; action: "queued" | "skipped"; why: string } | null;
     lastCheck: { at: string; openPulls?: number; error?: string; note?: string; decisions: unknown[] } | null;
     lastError: { at: string; message: string } | null;
     items: PullRequest[];

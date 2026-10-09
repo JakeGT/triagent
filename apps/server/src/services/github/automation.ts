@@ -106,6 +106,12 @@ export interface Decision {
     why: string;
 }
 
+interface CheckOptions {
+    at?: Date;
+    recheck?: readonly string[];
+    fresh?: boolean;
+}
+
 /** A `/review` comment: who wrote it, and how GitHub says they relate to the repository. */
 interface Ask {
     number: number;
@@ -275,9 +281,10 @@ export class Automation {
      * Look at the open pull requests and decide about each (domain/review-triggers.ts): queue its first
      * review once it's ready and its checks have passed, or one someone asked for; later pushes wait to be
      * asked. Switching automatic reviews on sets a baseline: pull requests already open are listed, not reviewed.
-     * `at` is the time it's taken to be (the poller's), `recheck` commits whose checks have just changed.
+     * `at` is the time it's taken to be (the poller's), `recheck` commits whose checks have just changed;
+     * `fresh` (someone asked for the check) asks again about every pull request whose checks failed.
      */
-    checkPulls(project: Project, opts: { at?: Date; recheck?: readonly string[] } = {}): Promise<GithubState["lastCheck"]> {
+    checkPulls(project: Project, opts: CheckOptions = {}): Promise<GithubState["lastCheck"]> {
         return this.serial(`pulls:${project.id}`, () => this.check(project, opts));
     }
 
@@ -301,7 +308,7 @@ export class Automation {
         );
     }
 
-    private async check(project: Project, opts: { at?: Date; recheck?: readonly string[] }): Promise<GithubState["lastCheck"]> {
+    private async check(project: Project, opts: CheckOptions): Promise<GithubState["lastCheck"]> {
         const at = (opts.at ?? new Date()).getTime();
         const automation = await this.settings.automation(this.store, project);
         let pulls: Pull[];
@@ -400,7 +407,10 @@ export class Automation {
                 !request &&
                 last?.key === key &&
                 (last.settled ||
-                    (last.code === "checks-failed" && !opts.recheck?.includes(sha) && at - Date.parse(last.at) < FAILED_RECHECK_MS));
+                    (last.code === "checks-failed" &&
+                        !opts.fresh &&
+                        !opts.recheck?.includes(sha) &&
+                        at - Date.parse(last.at) < FAILED_RECHECK_MS));
             if (stands) {
                 info.decision = last;
                 decisions.push({

@@ -103,7 +103,7 @@ export const runRoutes: Route[] = [
         scope: "project",
         permission: "read",
         tag: "Runs",
-        summary: "Open pull requests, whether each has been reviewed, and why the last check did or didn't queue it",
+        summary: "Open pull requests, the state of each in words, and why the last check did or didn't queue a review",
         async handler({ services, project: p }) {
             return json(await services.automation.pullRequests(project(p)));
         },
@@ -117,7 +117,7 @@ export const runRoutes: Route[] = [
         summary: "Check GitHub for pull requests now (and queue reviews, if automatic reviews are on)",
         async handler({ services, project: p }) {
             await services.github.githubFor(project(p));
-            await services.automation.checkPulls(project(p));
+            await services.automation.checkPulls(project(p), { fresh: true });
             await services.automation.syncBranches(project(p));
             return json(await services.automation.pullRequests(project(p)));
         },

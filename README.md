@@ -2,7 +2,7 @@
 
 Triagent runs [Open Code Review](https://www.npmjs.com/package/@alibaba-group/open-code-review) on your GitHub pull requests and gives people and AI agents one place to triage what it finds.
 
-- **Automatic reviews**: through a GitHub App (or a fine-grained token), every pull request is reviewed, summarised in a comment and reported as a commit status.
+- **Automatic reviews**: through a GitHub App (or a fine-grained token), every pull request is reviewed once it's ready and its checks have passed, summarised in a comment and reported as a commit status. Later pushes are reviewed when someone asks: a `/review` comment, the `review` label, or a button.
 - **Triage board**: filter, assign, correct ratings, mark duplicates, add notes and track the reviewer's tasks, per branch.
 - **Built for agents**: an MCP server, a REST API with OpenAPI, and Markdown views, so Claude Code, Codex and others can claim and fix findings alongside people.
 - **Workspaces**: a personal workspace for everyone, plus organisations, each with its own projects, members, keys and API tokens.
