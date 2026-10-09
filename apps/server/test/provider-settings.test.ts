@@ -77,7 +77,7 @@ describe("forRun, by protocol", () => {
         const w = await newWorkspace();
         const key = fakeKey("sk-ant-");
         assert.equal((await patch(w, { provider: "anthropic" })).status, 200);
-        assert.equal(await reason(w), "Add an Anthropic API key in Settings → Review model & keys.");
+        assert.equal(await reason(w), "Add an Anthropic API key in Settings → Models.");
         assert.equal((await putKey(w, "anthropic", key)).status, 200);
         const r = await ready(w);
         assert.deepEqual(
@@ -117,12 +117,12 @@ describe("forRun, by protocol", () => {
         const id = accessKeyId();
         const secret = fakeKey();
         await patch(w, { provider: "bedrock" });
-        assert.equal(await reason(w), "Add an AWS region for Amazon Bedrock in Settings → Review model & keys.");
+        assert.equal(await reason(w), "Add an AWS region for Amazon Bedrock in Settings → Models.");
         assert.equal((await patch(w, { region: "eu-west-2" })).status, 200);
-        assert.equal(await reason(w), "Add an AWS access key ID for Amazon Bedrock in Settings → Review model & keys.");
+        assert.equal(await reason(w), "Add an AWS access key ID for Amazon Bedrock in Settings → Models.");
         assert.equal((await putKey(w, "bedrock", "not-an-id", "/access-key-id")).status, 400);
         assert.equal((await putKey(w, "bedrock", id, "/access-key-id")).status, 200);
-        assert.equal(await reason(w), "Add an AWS secret access key for Amazon Bedrock in Settings → Review model & keys.");
+        assert.equal(await reason(w), "Add an AWS secret access key for Amazon Bedrock in Settings → Models.");
         assert.equal((await putKey(w, "bedrock", secret)).status, 200);
         const r = await ready(w);
         assert.deepEqual(
@@ -149,7 +149,7 @@ describe("forRun, by protocol", () => {
     test("Azure OpenAI: the resource's endpoint, the deployment as the model", async () => {
         const w = await newWorkspace();
         await patch(w, { provider: "azure" });
-        assert.equal(await reason(w), "Add the Azure OpenAI endpoint in Settings → Review model & keys.");
+        assert.equal(await reason(w), "Add the Azure OpenAI endpoint in Settings → Models.");
         assert.equal((await patch(w, { url: "https://res.openai.azure.com/", model: "my-review-deployment" })).status, 200);
         await putKey(w, "azure", fakeKey());
         const r = await ready(w);
@@ -162,13 +162,13 @@ describe("forRun, by protocol", () => {
     test("a custom server: its URL, key and protocol", async () => {
         const w = await newWorkspace();
         await patch(w, { provider: "custom", url: "https://llm.example.com/v1", model: "qwen3:32b", protocol: "anthropic" });
-        assert.equal(await reason(w), "Add an API key for your server in Settings → Review model & keys.");
+        assert.equal(await reason(w), "Add an API key for your server in Settings → Models.");
         await putKey(w, "custom", fakeKey());
         const r = await ready(w);
         assert.deepEqual([r.protocol, r.url, r.model, r.userUrl], ["anthropic", "https://llm.example.com/v1", "qwen3:32b", true]);
         // Clearing the URL makes it wait again.
         assert.equal((await patch(w, { url: null })).status, 200);
-        assert.equal(await reason(w), "Add your server's base URL in Settings → Review model & keys.");
+        assert.equal(await reason(w), "Add your server's base URL in Settings → Models.");
     });
 
     test("moving the address a stored key is sent to takes the secrets permission and a recent sign-in", async () => {

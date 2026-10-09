@@ -48,7 +48,7 @@ async function spend(workspace: Workspace, at: string, total: number, keySource:
 test("with no key and no allowance, reviews wait for a key", async () => {
     const w = await newWorkspace();
     const r = await t.services.models.forRun(w);
-    assert.deepEqual(r, { ready: false, reason: "Add an OpenRouter API key in Settings → Review model & keys." });
+    assert.deepEqual(r, { ready: false, reason: "Add an OpenRouter API key in Settings → Models." });
 });
 
 test("the workspace's own key wins over the instance key, even with an allowance", async () => {

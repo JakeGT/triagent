@@ -7,8 +7,10 @@ import { notFound } from "../errors.ts";
 import { json, type Route, route } from "../http/route.ts";
 import type { Access } from "../services/accounts.ts";
 import type { LiveEvent } from "../services/events.ts";
+import { MAX_FAVOURITE_NAME, MAX_FAVOURITES } from "../services/model-setup.ts";
+import { PROVIDER_IDS } from "../services/providers.ts";
 import { PagingQuery, pageOf, RoleSchema, ScopeSchema, W } from "./common.ts";
-import { guardKeyDestination, ModelChoiceBody } from "./instance-models.ts";
+import { guardKeyDestination, ModelChoiceBody, ProviderSettingsBody } from "./instance-models.ts";
 
 const HEARTBEAT_MS = 25_000;
 
@@ -269,14 +271,14 @@ export const workspaceRoutes: Route[] = [
         },
     }),
 
-    // ---- settings: review model and keys ---------------------------------------------------------
+    // ---- settings: models (providers, their keys, and the favourites) ---------------------------------
     route({
         method: "GET",
         path: `${W}/settings/review-model`,
         scope: "workspace",
         permission: "read",
         tag: "Settings",
-        summary: "The provider and model reviews use, and which providers have a key (never the keys)",
+        summary: "The default model reviews use, the favourite models, and which providers have a key (never the keys)",
         async handler({ services, access, can }) {
             const model = await services.settings.reviewModel((access as Access).workspace);
             if (can("configure")) return json(model);
@@ -303,12 +305,29 @@ export const workspaceRoutes: Route[] = [
         scope: "workspace",
         permission: "configure",
         tag: "Settings",
-        summary: "Choose the provider and model reviews use, and that provider's protocol, endpoint URL or AWS region",
+        summary: "Choose the provider and model reviews use by default, and that provider's protocol, endpoint URL or AWS region",
+        description: "The default favourite becomes this model; other favourites are left as they are.",
         body: ModelChoiceBody,
         async handler({ services, access, body, actor, principal, can }) {
             guardKeyDestination({ services, principal, can }, body, await services.settings.reviewModel((access as Access).workspace));
             await services.settings.setReviewModel(actor, (access as Access).workspace, body);
             return json(await services.settings.reviewModel((access as Access).workspace));
+        },
+    }),
+    route({
+        method: "PATCH",
+        path: `${W}/settings/review-model/providers/{provider}`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "Change one provider's protocol, endpoint URL or AWS region, whichever model is the default",
+        body: ProviderSettingsBody,
+        async handler({ services, access, params, body, actor, principal, can }) {
+            const ws = (access as Access).workspace;
+            const provider = params.provider as string;
+            guardKeyDestination({ services, principal, can }, { ...body, provider }, await services.settings.reviewModel(ws));
+            await services.settings.setProviderSettings(actor, ws, provider, body);
+            return json(await services.settings.reviewModel(ws));
         },
     }),
     route({
@@ -374,6 +393,100 @@ export const workspaceRoutes: Route[] = [
             );
             if (!view) throw notFound("No such provider.");
             return json(view);
+        },
+    }),
+
+    route({
+        method: "GET",
+        path: `${W}/settings/models/favourites`,
+        scope: "workspace",
+        permission: "read",
+        tag: "Settings",
+        summary: "The favourite models, in order, each ready or saying what it still needs, and which is the default",
+        async handler({ services, access }) {
+            return json(await services.settings.favourites((access as Access).workspace));
+        },
+    }),
+    route({
+        method: "POST",
+        path: `${W}/settings/models/favourites`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "Add a favourite model: a provider's model, with a nickname if you like",
+        description: `Up to ${MAX_FAVOURITES}. The first is the default; later ones only with \`makeDefault\`.`,
+        body: z.object({
+            provider: z.enum(PROVIDER_IDS as [string, ...string[]]),
+            model: z.string().max(150),
+            name: z.string().max(MAX_FAVOURITE_NAME).nullable().optional(),
+            makeDefault: z.boolean().optional(),
+        }),
+        async handler({ services, access, body, actor }) {
+            const { name, makeDefault, ...rest } = body;
+            return json(
+                await services.settings.addFavourite(actor, (access as Access).workspace, {
+                    ...rest,
+                    ...(name !== undefined ? { name } : {}),
+                    ...(makeDefault !== undefined ? { makeDefault } : {}),
+                }),
+                201,
+            );
+        },
+    }),
+    route({
+        method: "PUT",
+        path: `${W}/settings/models/favourites/order`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "Put the favourite models in a new order (every favourite's id, once)",
+        body: z.object({ ids: z.array(z.string().max(64)).max(MAX_FAVOURITES) }),
+        async handler({ services, access, body, actor }) {
+            return json(await services.settings.reorderFavourites(actor, (access as Access).workspace, body.ids));
+        },
+    }),
+    route({
+        method: "PATCH",
+        path: `${W}/settings/models/favourites/{id}`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "Rename a favourite model, or change which of its provider's models it is",
+        body: z.object({ name: z.string().max(MAX_FAVOURITE_NAME).nullable().optional(), model: z.string().max(150).optional() }),
+        async handler({ services, access, params, body, actor }) {
+            const { name, model } = body;
+            return json(
+                await services.settings.updateFavourite(actor, (access as Access).workspace, params.id as string, {
+                    ...(name !== undefined ? { name } : {}),
+                    ...(model !== undefined ? { model } : {}),
+                }),
+            );
+        },
+    }),
+    route({
+        method: "DELETE",
+        path: `${W}/settings/models/favourites/{id}`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "Remove a favourite model",
+        description:
+            "The last favourite can't be removed. Removing the default needs `defaultId`: the favourite that becomes the default instead.",
+        query: z.object({ defaultId: z.string().max(64).optional() }),
+        async handler({ services, access, params, query, actor }) {
+            return json(await services.settings.removeFavourite(actor, (access as Access).workspace, params.id as string, query.defaultId));
+        },
+    }),
+    route({
+        method: "PUT",
+        path: `${W}/settings/models/default`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "Make a favourite model the default: the one reviews use when nothing else is chosen",
+        body: z.object({ id: z.string().max(64) }),
+        async handler({ services, access, body, actor }) {
+            return json(await services.settings.setDefaultFavourite(actor, (access as Access).workspace, body.id));
         },
     }),
 

@@ -63,7 +63,7 @@ describe("taking turns, caps and readiness", () => {
         const list = (await env.t.request("/api/v1/w/gamma/runs", { session: env.admin })).body;
         assert.equal(list.queued[0].id, c1.id);
         assert.equal(list.ready, false);
-        assert.match(list.waiting, /Add an OpenRouter API key in Settings → Review model & keys/);
+        assert.match(list.waiting, /Add an OpenRouter API key in Settings → Models/);
         assert.match(list.queued[0].waiting, /OpenRouter API key/);
         // Once it has a key, it runs.
         await env.t.request("/api/v1/w/gamma/settings/review-model/keys/openrouter", {

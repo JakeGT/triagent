@@ -21,6 +21,9 @@ export const ModelChoiceBody = z.object({
     region: z.string().max(40).nullable().optional(),
 });
 
+/** One provider's settings, without choosing it. */
+export const ProviderSettingsBody = ModelChoiceBody.pick({ protocol: true, url: true, region: true });
+
 interface ModelView {
     provider: string;
     providers: { id: string; endpoint: string | null; key: { set: boolean }; accessKeyId: { set: boolean } | null }[];

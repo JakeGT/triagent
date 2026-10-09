@@ -1,7 +1,7 @@
 // Which model a workspace's reviews run with, and whose key pays for it, so the review scheduler only
 // ever asks `forRun`:
 //
-// 1. The workspace's own settings and key for its chosen provider (Settings → Review model & keys).
+// 1. The workspace's own settings and key for its chosen provider (Settings → Models).
 // 2. Otherwise, if the instance admin granted the workspace a monthly allowance and this month's
 //    instance-key tokens are under it: the instance's provider, model and key.
 // 3. Otherwise, not ready, with the reason (no key, no instance key set up, or the allowance used up).
@@ -36,7 +36,7 @@ export interface RunModel extends ResolvedModel {
 
 export interface NotReady {
     ready: false;
-    /** Why reviews must wait, for people: e.g. "Add an OpenRouter API key in Settings → Review model & keys." */
+    /** Why reviews must wait, for people: e.g. "Add an OpenRouter API key in Settings → Models." */
     reason: string;
 }
 
@@ -63,7 +63,7 @@ export class Models {
         const own = await this.setup.resolve(repos, { kind: "workspace", workspace });
         if (own.ready) return { ...own.model, ready: true, label: own.model.model, keySource: "workspace" };
 
-        const addKey = `Add ${own.missing} in Settings → Review model & keys.`;
+        const addKey = `Add ${own.missing} in Settings → Models.`;
         if (!this.allowances || !this.history) return { ready: false, reason: addKey };
         const grant = await repos.modelGrants.get(workspace.id);
         if (!grant) return { ready: false, reason: addKey };
@@ -76,7 +76,7 @@ export class Models {
             };
         const now = this.allowances.now();
         const used = await this.history.tokensThisMonth(workspace.id, "instance", now);
-        const ownKey = `To keep reviewing before then, add ${own.missing.replace(/^an? /, "your own ")} in Settings → Review model & keys.`;
+        const ownKey = `To keep reviewing before then, add ${own.missing.replace(/^an? /, "your own ")} in Settings → Models.`;
         const exhausted = this.allowances.exhausted(grant.monthlyTokens, used, now);
         if (exhausted) return { ready: false, reason: `${exhausted} ${ownKey}` };
         const reserved = (await repos.jobs.active())
@@ -123,7 +123,7 @@ export class Models {
             if (!r.ready)
                 return {
                     ready: false,
-                    reason: `Add ${r.missing} in Settings → Review model & keys: this project's reviews use ${labels[i]}. Or take it out of the project's review settings.`,
+                    reason: `Add ${r.missing} in Settings → Models: this project's reviews use ${labels[i]}. Or take it out of the project's review settings.`,
                 };
             models.push({ ...r.model, ready: true, label: labels[i] as string, keySource: "workspace" });
         }

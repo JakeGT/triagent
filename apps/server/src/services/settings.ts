@@ -8,7 +8,7 @@ import { MAX_MODELS } from "../domain/merge.ts";
 import { badRequest } from "../errors.ts";
 import type { Project, Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
-import { MODEL_NAME, type ModelChoice, ModelSetup, type SecretKind } from "./model-setup.ts";
+import { MODEL_NAME, type ModelChoice, ModelSetup, type NewFavourite, type ProviderSettings, type SecretKind } from "./model-setup.ts";
 import { PROVIDER_IDS, providerById } from "./providers.ts";
 import type { SecretScope } from "./secrets.ts";
 
@@ -215,7 +215,43 @@ export class Settings {
         return this.setup.choose(actor, { kind: "workspace", workspace }, input);
     }
 
+    /** One provider's settings, whichever model is the default. */
+    setProviderSettings(actor: Actor, workspace: Workspace, provider: string, input: ProviderSettings) {
+        return this.setup.configure(actor, { kind: "workspace", workspace }, provider, input);
+    }
+
     setModelKey(actor: Actor, workspace: Workspace, provider: string, key: string | null, kind: SecretKind = "key") {
         return this.setup.setSecret(actor, { kind: "workspace", workspace }, provider, kind, key);
+    }
+
+    // ---- favourite models (per workspace; see services/model-setup.ts) ----------------------------
+
+    favourites(workspace: Workspace) {
+        return this.setup.favourites(this.core.store, { kind: "workspace", workspace });
+    }
+
+    /** What a favourite would run with now, or what it needs; null for none such. Reveals secrets: never return it as is. */
+    resolveFavourite(workspace: Workspace, id: string, repos: Repos = this.core.store) {
+        return this.setup.resolveFavourite(repos, workspace, id);
+    }
+
+    addFavourite(actor: Actor, workspace: Workspace, input: NewFavourite) {
+        return this.setup.addFavourite(actor, workspace, input);
+    }
+
+    updateFavourite(actor: Actor, workspace: Workspace, id: string, input: { name?: string | null; model?: string }) {
+        return this.setup.updateFavourite(actor, workspace, id, input);
+    }
+
+    removeFavourite(actor: Actor, workspace: Workspace, id: string, defaultId?: string) {
+        return this.setup.removeFavourite(actor, workspace, id, defaultId);
+    }
+
+    reorderFavourites(actor: Actor, workspace: Workspace, ids: string[]) {
+        return this.setup.reorderFavourites(actor, workspace, ids);
+    }
+
+    setDefaultFavourite(actor: Actor, workspace: Workspace, id: string) {
+        return this.setup.setDefaultFavourite(actor, workspace, id);
     }
 }
