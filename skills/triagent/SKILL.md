@@ -1,6 +1,6 @@
 ---
 name: triagent
-description: Work through Open Code Review findings tracked in Triagent. Use when asked to fix code review findings, triage issues, claim the next issue, upload an OCR report, or check what's left to fix in this repository.
+description: Work through Open Code Review findings tracked in Triagent. Use when asked to fix code review findings, triage issues, claim the next issue, upload an OCR report, open a pull request that Triagent will review, or check what's left to fix in this repository.
 ---
 
 # Triagent
@@ -37,7 +37,7 @@ When a project reviews pull requests automatically, Triagent reviews every new c
 2. Push as often as you need: get the work finished and CI passing. Nothing is reviewed.
 3. Mark it ready (`gh pr ready <number>`). Triagent reviews it once. `list_pull_requests` shows whether it was queued and why not if it wasn't; `list_runs` and `wait_for_run` show how it's going.
 4. Don't push while its review is queued or running.
-5. The findings are on the pull request's branch: pass that branch to `list_issues`, `claim_next_issue` and the rest, and work through them as below.
+5. The findings are on the pull request's branch: pass that branch to `list_issues`, `claim_next_issue` and the rest, and work through them as in "Fix findings".
 6. Before pushing fixes, make it a draft again (`gh pr ready <number> --undo`), and push them together. Mark it ready again only if the fixes are big enough to want another review.
 
 A pull request that was already open when automatic reviews were switched on isn't reviewed until its next push: make sure that push is the one you want reviewed.
