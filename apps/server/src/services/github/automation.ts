@@ -23,6 +23,8 @@ const MAX_COMPARES = 25;
 /** The most open pull requests a check looks at (the most recently updated); ten pages from GitHub. */
 export const MAX_OPEN_PULLS = 1000;
 const TICK_MS = 30_000;
+/** How many projects one pass checks at once. */
+const TICK_CONCURRENCY = 4;
 
 export interface PullState {
     number: number;
@@ -688,18 +690,34 @@ export class Automation {
 
     // ---- the timer ------------------------------------------------------------------------------------
 
-    /** One pass over every connected project: due checks, branch syncs and nightly scans. */
+    /**
+     * One pass over every connected project: due checks, branch syncs and nightly scans. A few projects are
+     * checked at once, so one slow repository doesn't hold up the rest, but never two for the same
+     * repository (projects sharing one, in any workspace, take turns).
+     */
     async tick(at = new Date()): Promise<void> {
         if (!(await this.store.holdLock("github-automation"))) return;
-        for (const workspace of await this.store.workspaces.list()) {
-            for (const project of await this.store.projects.forWorkspace(workspace.id)) {
+        const waiting: Project[] = [];
+        for (const workspace of await this.store.workspaces.list()) waiting.push(...(await this.store.projects.forWorkspace(workspace.id)));
+        const repository = (p: Project) => p.repoUrl?.toLowerCase() ?? `project:${p.id}`;
+        const inHand = new Set<string>();
+        const work = async () => {
+            for (;;) {
+                // The next project whose repository nobody is on. If each one left is in hand, whoever has it takes the next.
+                const next = waiting.findIndex((p) => !inHand.has(repository(p)));
+                if (next === -1) return;
+                const [project] = waiting.splice(next, 1) as [Project];
+                inHand.add(repository(project));
                 try {
                     await this.tickProject(project, at);
                 } catch (err) {
                     if (!(err instanceof NotConnected)) console.error(`[${project.slug}] Automatic reviews: ${(err as Error).message}`);
+                } finally {
+                    inHand.delete(repository(project));
                 }
             }
-        }
+        };
+        await Promise.all(Array.from({ length: TICK_CONCURRENCY }, work));
     }
 
     private async tickProject(project: Project, at: Date): Promise<void> {

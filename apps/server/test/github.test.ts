@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import { COMMENT_MARKER } from "../src/services/github/service.ts";
 import { specForBranch } from "../src/services/runs.ts";
-import { ADMIN_PASSWORD, type Session } from "./helpers.ts";
+import { ADMIN_PASSWORD, type Session, testApp } from "./helpers.ts";
 import { eventually, finished, PAT, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
 
 const later = (minutes: number) => new Date(Date.now() + minutes * 60_000);
@@ -983,4 +983,53 @@ describe("MCP tools for reviews", () => {
         );
         void ADMIN_PASSWORD;
     });
+});
+
+test("the poller checks up to four projects at once, and never two for the same repository", async () => {
+    const t = await testApp();
+    const admin = await t.signIn("admin", ADMIN_PASSWORD);
+    await t.request("/api/v1/workspaces", { method: "POST", session: admin, body: { slug: "acme" } });
+    const add = async (ws: string, slug: string, repo: string | null) => {
+        const body = { slug, ...(repo ? { repoUrl: `https://github.com/${repo}` } : {}) };
+        assert.equal((await t.request(`/api/v1/w/${ws}/projects`, { method: "POST", session: admin, body })).status, 201);
+    };
+    // Three projects on one repository (in two workspaces, written differently), five on their own, two with none.
+    await add("acme", "shared-1", "acme/shared");
+    await add("acme", "shared-2", "Acme/Shared");
+    await add("admin", "shared-3", "acme/shared");
+    for (const n of [1, 2, 3, 4, 5]) await add("acme", `own-${n}`, `acme/own-${n}`);
+    await add("acme", "none-1", null);
+    await add("admin", "none-2", null);
+
+    // Each check takes a moment, and one fails: the pass carries on.
+    const running = new Map<string, string | null>();
+    const seen: string[] = [];
+    let most = 0;
+    let shared = 0;
+    (t.services.automation as unknown as { tickProject(p: { slug: string; repoUrl: string | null }): Promise<void> }).tickProject = async (
+        p,
+    ) => {
+        const repo = p.repoUrl?.toLowerCase() ?? null;
+        assert.ok(repo === null || ![...running.values()].includes(repo), `two checks of ${repo} at once`);
+        running.set(p.slug, repo);
+        most = Math.max(most, running.size);
+        if (repo?.endsWith("/shared")) shared++;
+        await new Promise((r) => setTimeout(r, 20));
+        running.delete(p.slug);
+        seen.push(p.slug);
+        if (p.slug === "own-2") throw new Error("GitHub is away");
+    };
+    const errors: unknown[] = [];
+    const log = console.error;
+    console.error = (...args: unknown[]) => errors.push(args.join(" "));
+    try {
+        await t.services.automation.tick();
+    } finally {
+        console.error = log;
+    }
+    assert.equal(seen.length, 10, "every project was checked once");
+    assert.equal(new Set(seen).size, 10);
+    assert.equal(shared, 3);
+    assert.equal(most, 4);
+    assert.deepEqual(errors, ["[own-2] Automatic reviews: GitHub is away"]);
 });
