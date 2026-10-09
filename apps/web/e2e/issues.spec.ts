@@ -158,6 +158,54 @@ test("a half-typed note stays with its issue when another issue is opened", asyn
     expect(after?.noteCount ?? 0).toBe(0);
 });
 
+test("a selection kept across filters says how much of it isn't shown, and can be shown or cleared", async ({ page, admin }) => {
+    const { ws, project } = await seedProject(admin);
+    await page.goto(`/w/${ws}/p/${project}/issues?severity=low`);
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^4 issues/);
+    await page.getByRole("checkbox", { name: "Select all issues on this page" }).click();
+    const bar = page.getByRole("region", { name: "Change selected issues" });
+    await expect(bar).toContainText("4 issues selected");
+    await expect(bar).not.toContainText("not shown");
+    await expect(bar.getByRole("button", { name: "Show selected" })).toHaveCount(0);
+
+    // Another filter: the selection is kept, and the bar says none of it is in the list now.
+    await page.getByRole("button", { name: "Severity" }).click();
+    await page.getByRole("checkbox", { name: "Low" }).click();
+    await page.getByRole("checkbox", { name: "Critical" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^1 issue:/);
+    await expect(bar).toContainText("4 issues selected, 4 not shown");
+
+    // x selects the open issue, which is in the list.
+    await page.locator("[data-issue-row]").getByRole("link").first().click();
+    await expect(page.getByTestId("issue-panel").getByRole("heading", { level: 2 })).toBeVisible();
+    await page.keyboard.press("x");
+    await expect(bar).toContainText("5 issues selected, 4 not shown");
+
+    await bar.getByRole("button", { name: "Show selected" }).click();
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^5 issues: 1 critical, 4 low/);
+    await expect(page.locator("[data-issue-row]")).toHaveCount(5);
+    await expect(bar).toContainText("5 issues selected");
+    await expect(bar).not.toContainText("not shown");
+    await expect(page.getByTestId("showing-selected")).toContainText("5 selected issues only");
+
+    // Back to the filtered list, then to the low ones: the open issue (critical) isn't among them, so x leaves it be.
+    await bar.getByRole("button", { name: "Back to the filtered list" }).click();
+    await expect(page.locator("[data-issue-row]")).toHaveCount(1);
+    await page.getByRole("button", { name: "Severity" }).click();
+    await page.getByRole("checkbox", { name: "Critical" }).click();
+    await page.getByRole("checkbox", { name: "Low" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^4 issues/);
+    await expect(bar).toContainText("5 issues selected, 1 not shown");
+    await page.keyboard.press("x");
+    await expect(bar).toContainText("5 issues selected, 1 not shown");
+
+    await bar.getByRole("button", { name: "Clear selection" }).click();
+    await expect(bar).toHaveCount(0);
+    await expect(page.getByRole("checkbox", { name: "Select all issues on this page" })).not.toBeChecked();
+});
+
 test("bulk changes apply to every selected issue", async ({ page, admin }) => {
     const { ws, project } = await seedProject(admin);
     await page.goto(`/w/${ws}/p/${project}/issues?severity=low`);

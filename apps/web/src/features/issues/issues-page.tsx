@@ -82,8 +82,21 @@ export function IssuesPage() {
     const shortcuts = useShortcutsEnabled();
     const searchRef = useRef<HTMLInputElement>(null);
     const [selection, setSelection] = useState<RowSelectionState>({});
+    // "Show selected": the ids the list is narrowed to, in place of the filters. They're the selection as it
+    // was when asked for, so an issue unticked there stays in view.
+    const [shown, setShown] = useState<string[] | null>(null);
 
-    const query = useQuery(issuesQuery(ws, slug, branch, issueApiQuery(search)));
+    const apiQuery = useMemo(
+        () =>
+            shown
+                ? {
+                      ...issueApiQuery({ ...(search.sort ? { sort: search.sort } : {}), ...(search.page ? { page: search.page } : {}) }),
+                      ids: shown.join(","),
+                  }
+                : issueApiQuery(search),
+        [shown, search],
+    );
+    const query = useQuery(issuesQuery(ws, slug, branch, apiQuery));
     const data = query.data;
     const items = useMemo(() => data?.items ?? [], [data]);
     const modelCount = data?.models?.length ?? 0;
@@ -92,7 +105,10 @@ export function IssuesPage() {
 
     // Moving to another branch starts a fresh selection.
     // biome-ignore lint/correctness/useExhaustiveDependencies: reset when the branch changes
-    useEffect(() => setSelection({}), [branch]);
+    useEffect(() => {
+        setSelection({});
+        setShown(null);
+    }, [branch]);
 
     // Say what the filters found, once the list for them has arrived.
     const summary = data ? summaryText(data.total, data.counts.severity) : "";
@@ -104,6 +120,15 @@ export function IssuesPage() {
         (next: IssueSearch, options?: { replace?: boolean }) =>
             void navigate({ to: ".", search: { ...next, branch: branchParam } as never, replace: options?.replace ?? false }),
         [navigate, branchParam],
+    );
+
+    // Filtering again goes back to the filtered list.
+    const filter = useCallback(
+        (next: IssueSearch, options?: { replace?: boolean }) => {
+            setShown(null);
+            setSearch(next, options);
+        },
+        [setSearch],
     );
 
     const detailSearch = useMemo(() => ({ ...search, branch: branchParam }) as never, [search, branchParam]);
@@ -211,7 +236,20 @@ export function IssuesPage() {
         manualSorting: true,
         manualFiltering: true,
     });
+    // The selection outlives the filters and pages it was made on, so some of it may not be in the list now.
     const selectedIds = Object.keys(selection).filter((id) => selection[id]);
+    const notShown = selectedIds.filter((id) => !items.some((x) => x.id === id)).length;
+    const firstPage = () => {
+        if (search.page) setSearch({ ...search, page: undefined }, { replace: true });
+    };
+    const showSelected = (show: boolean) => {
+        setShown(show ? selectedIds : null);
+        firstPage();
+    };
+    const clearSelection = () => {
+        setSelection({});
+        if (shown) showSelected(false);
+    };
 
     // Where j/k last went. The URL (and so `issueId`) catches up a render later, and a second press in
     // between must move on from where the first one went, not from where the page was.
@@ -237,7 +275,8 @@ export function IssuesPage() {
                     cursor.current = target.id;
                     open(target.id);
                 }
-            } else if (e.key === "x" && issueId && canTriage) {
+            } else if (e.key === "x" && issueId && canTriage && items.some((x) => x.id === issueId)) {
+                // Only an issue in the list as it is now: one filtered out of it would be selected unseen.
                 setSelection((s) => ({ ...s, [issueId]: !s[issueId] }));
             }
         };
@@ -275,16 +314,37 @@ export function IssuesPage() {
                         {summary && <span className="sr-only"> on branch {branch}</span>}
                     </p>
                 </div>
-                <IssueFilters search={search} counts={data?.counts} models={data?.models} onChange={setSearch} searchRef={searchRef} />
+                <IssueFilters search={search} counts={data?.counts} models={data?.models} onChange={filter} searchRef={searchRef} />
                 {selectedIds.length > 0 && canTriage && (
-                    <BulkBar ids={selectedIds} onClear={() => setSelection({})} refs={{ ws, project: slug, branch }} />
+                    <BulkBar
+                        ids={selectedIds}
+                        notShown={notShown}
+                        showingSelected={shown !== null}
+                        onShowSelected={showSelected}
+                        onClear={clearSelection}
+                        refs={{ ws, project: slug, branch }}
+                    />
+                )}
+                {shown && (
+                    <p className="text-sm text-muted-foreground" data-testid="showing-selected">
+                        Showing the {plural(shown.length, "selected issue")} only; the filters above aren't applied.
+                    </p>
                 )}
                 {query.isPending ? (
                     <LoadingRows rows={10} />
                 ) : query.isError ? (
                     <LoadError error={query.error} onRetry={() => query.refetch()} title="Couldn't load the issues" />
                 ) : items.length === 0 ? (
-                    filtered ? (
+                    shown ? (
+                        <EmptyState
+                            title="None of the selected issues are on this branch now"
+                            action={
+                                <Button variant="outline" size="sm" onClick={() => showSelected(false)}>
+                                    Back to the filtered list
+                                </Button>
+                            }
+                        />
+                    ) : filtered ? (
                         <EmptyState
                             title="No issues match these filters"
                             action={

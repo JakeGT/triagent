@@ -1,7 +1,7 @@
 // One change to every selected issue: status, assignee, a rating correction or the discussion flag.
 
 import { SEVERITIES, STATUSES } from "@triagent/shared";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, Eye, ListFilter, X } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { FieldError } from "@/components/field";
@@ -22,7 +22,23 @@ import { plural, SEVERITY_LABEL, STATUS_LABEL } from "@/lib/format";
 import { useMe } from "@/lib/session";
 import { type IssueChange, useBulkUpdate } from "./use-issue-actions";
 
-export function BulkBar({ ids, onClear, refs }: { ids: string[]; onClear(): void; refs: { ws: string; project: string; branch: string } }) {
+export function BulkBar({
+    ids,
+    notShown,
+    showingSelected,
+    onShowSelected,
+    onClear,
+    refs,
+}: {
+    ids: string[];
+    /** How many of them aren't in the list as it's filtered and paged now. */
+    notShown: number;
+    /** The list is narrowed to the selection. */
+    showingSelected: boolean;
+    onShowSelected(show: boolean): void;
+    onClear(): void;
+    refs: { ws: string; project: string; branch: string };
+}) {
     const me = useMe();
     const bulk = useBulkUpdate(refs);
     const [assignee, setAssignee] = useState("");
@@ -46,7 +62,9 @@ export function BulkBar({ ids, onClear, refs }: { ids: string[]; onClear(): void
             aria-label="Change selected issues"
             className="flex flex-wrap items-center gap-2 rounded-md border bg-accent/60 px-3 py-1.5 text-sm"
         >
-            <span className="font-medium">{plural(ids.length, "issue")} selected</span>
+            <span className="font-medium">
+                {plural(ids.length, "issue")} selected{notShown > 0 && `, ${notShown} not shown`}
+            </span>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                     <Button size="sm" variant="outline" disabled={bulk.isPending}>
@@ -137,9 +155,16 @@ export function BulkBar({ ids, onClear, refs }: { ids: string[]; onClear(): void
                     </DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>
-            <Button size="sm" variant="ghost" className="ms-auto" onClick={onClear}>
-                <X /> Clear selection
-            </Button>
+            <span className="ms-auto flex flex-wrap items-center gap-2">
+                {(notShown > 0 || showingSelected) && (
+                    <Button size="sm" variant="ghost" aria-pressed={showingSelected} onClick={() => onShowSelected(!showingSelected)}>
+                        {showingSelected ? <ListFilter /> : <Eye />} {showingSelected ? "Back to the filtered list" : "Show selected"}
+                    </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={onClear}>
+                    <X /> Clear selection
+                </Button>
+            </span>
             <FieldError message={bulk.error ? errorMessage(bulk.error) : null} className="w-full" />
         </section>
     );
