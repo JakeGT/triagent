@@ -344,8 +344,11 @@ export class Github {
         return { items: out };
     }
 
-    /** Where to send a workspace admin to install the app (on GitHub), with a signed state for the way back. */
-    async startInstall(actor: Actor, workspace: Workspace, project: string) {
+    /**
+     * Where to send a workspace admin to install the app (on GitHub), with a signed state for the way back:
+     * to the project's GitHub settings, or (`setup`) into its guided setup.
+     */
+    async startInstall(actor: Actor, workspace: Workspace, project: string, setup = false) {
         const app = await this.app.info();
         if (!app) throw badRequest("No GitHub App is set up on this instance yet. Ask an instance admin to create one.");
         if (!actor.userId) throw forbidden("Sign in through the browser to install the GitHub App.");
@@ -355,6 +358,7 @@ export class Github {
             workspaceId: workspace.id,
             ws: workspace.slug,
             project,
+            ...(setup ? { setup: true } : {}),
         });
         return { url: this.app.installUrl(app.slug, state) };
     }
@@ -367,13 +371,16 @@ export class Github {
      * send them next.
      */
     async completeInstall(user: User, query: { code?: string; installation_id?: string; state?: string; setup_action?: string }) {
-        const state = this.app.readState<{ userId: string; workspaceId: string; ws: string; project: string }>(query.state, "install");
+        const state = this.app.readState<{ userId: string; workspaceId: string; ws: string; project: string; setup?: boolean }>(
+            query.state,
+            "install",
+        );
         if (!state) {
             // Changed on GitHub without starting from Triagent (e.g. repositories added): nothing to link.
             return { redirect: "/", outcome: "ignored" as const };
         }
         const back = (outcome: string) =>
-            `/w/${encodeURIComponent(state.ws)}/p/${encodeURIComponent(state.project)}/settings/github?github=${outcome}`;
+            `/w/${encodeURIComponent(state.ws)}/p/${encodeURIComponent(state.project)}/settings/github?github=${outcome}${state.setup === true ? "&setup=project" : ""}`;
         if (state.userId !== user.id) return { redirect: back("not-you"), outcome: "refused" as const };
         // Still allowed to manage the workspace's secrets (the installation grants access to code).
         const workspace = await this.store.workspaces.get(state.workspaceId);

@@ -60,13 +60,38 @@ function forbidOutside(services: Services): string[] {
 test("new accounts start the tutorial pending, or done when the instance turns it off", async () => {
     const t = await testApp();
     const admin = await t.signIn("admin", ADMIN_PASSWORD);
-    assert.deepEqual((await t.request("/api/v1/me", { session: admin })).body.tutorial, { status: "pending", step: 0, example: null });
+    assert.deepEqual((await t.request("/api/v1/me", { session: admin })).body.tutorial, {
+        status: "pending",
+        step: 0,
+        example: null,
+        setup: "pending",
+    });
     const sam = await person(t, admin, "sam");
-    assert.deepEqual((await t.request("/api/v1/me/tutorial", { session: sam })).body, { status: "pending", step: 0, example: null });
+    assert.deepEqual((await t.request("/api/v1/me/tutorial", { session: sam })).body, {
+        status: "pending",
+        step: 0,
+        example: null,
+        setup: "pending",
+    });
 
     const off = await testApp(undefined, { env: { TUTORIAL_AUTO_START: "false" } });
     const offAdmin = await off.signIn("admin", ADMIN_PASSWORD);
     assert.equal((await off.request("/api/v1/me/tutorial", { session: offAdmin })).body.status, "completed");
+    assert.equal((await off.request("/api/v1/me/tutorial", { session: offAdmin })).body.setup, "done");
+});
+
+test("account setup is offered until it's done", async () => {
+    const t = await testApp();
+    const admin = await t.signIn("admin", ADMIN_PASSWORD);
+    const patch = (body: unknown) => t.request("/api/v1/me/tutorial", { method: "PATCH", session: admin, body });
+    assert.equal((await patch({ setup: "done" })).body.setup, "done");
+    assert.equal((await t.request("/api/v1/me", { session: admin })).body.tutorial.setup, "done");
+    assert.equal((await patch({ setup: "pending" })).body.setup, "pending");
+    assert.equal((await patch({ setup: "dismissed" })).status, 400);
+    // Accounts made before account setup existed have no record of it: they're offered it.
+    const user = await t.services.store.users.byUsername("admin");
+    if (user) await t.services.store.users.put({ ...user, tutorial: { status: "completed", step: 0, exampleProject: null } });
+    assert.equal((await t.request("/api/v1/me", { session: admin })).body.tutorial.setup, "pending");
 });
 
 test("the tutorial moves through its states and remembers its step", async () => {
@@ -74,14 +99,29 @@ test("the tutorial moves through its states and remembers its step", async () =>
     const admin = await t.signIn("admin", ADMIN_PASSWORD);
     const patch = (body: unknown) => t.request("/api/v1/me/tutorial", { method: "PATCH", session: admin, body });
 
-    assert.deepEqual((await patch({ status: "in_progress", step: 0 })).body, { status: "in_progress", step: 0, example: null });
+    assert.deepEqual((await patch({ status: "in_progress", step: 0 })).body, {
+        status: "in_progress",
+        step: 0,
+        example: null,
+        setup: "pending",
+    });
     assert.equal((await patch({ step: 4 })).body.step, 4);
     // Closing the browser mid-tour: the next visit finds the same step.
     const again = await t.signIn("admin", ADMIN_PASSWORD);
-    assert.deepEqual((await t.request("/api/v1/me", { session: again })).body.tutorial, { status: "in_progress", step: 4, example: null });
+    assert.deepEqual((await t.request("/api/v1/me", { session: again })).body.tutorial, {
+        status: "in_progress",
+        step: 4,
+        example: null,
+        setup: "pending",
+    });
     assert.equal((await patch({ status: "dismissed" })).body.status, "dismissed");
     // Shown again from Settings, then finished.
-    assert.deepEqual((await patch({ status: "in_progress", step: 0 })).body, { status: "in_progress", step: 0, example: null });
+    assert.deepEqual((await patch({ status: "in_progress", step: 0 })).body, {
+        status: "in_progress",
+        step: 0,
+        example: null,
+        setup: "pending",
+    });
     assert.equal((await patch({ status: "completed", step: 13 })).body.status, "completed");
 
     for (const bad of [{}, { status: "done" }, { step: -1 }, { step: 51 }, { step: 1.5 }])

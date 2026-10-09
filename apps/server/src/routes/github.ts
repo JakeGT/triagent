@@ -68,11 +68,14 @@ export const githubRoutes: Route[] = [
         tag: "Settings",
         summary: "Start installing the GitHub App: returns the address on GitHub to go to",
         description: "GitHub sends you back to Triagent, which links the installation once GitHub confirms you can see it.",
-        body: z.object({ project: z.string().max(40).describe("The project whose settings to come back to") }),
+        body: z.object({
+            project: z.string().max(40).describe("The project whose settings to come back to"),
+            setup: z.boolean().optional().describe("Come back into the project's guided setup instead"),
+        }),
         async handler({ services, access, body, actor }) {
             const workspace = (access as Access).workspace;
             await services.projects.get(services.store, workspace, body.project);
-            return json(await services.github.startInstall(actor, workspace, body.project));
+            return json(await services.github.startInstall(actor, workspace, body.project, body.setup === true));
         },
     }),
     route({

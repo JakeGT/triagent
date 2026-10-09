@@ -178,9 +178,25 @@ function AddMember() {
     );
 }
 
-export function MembersSettings() {
+/** Adding people: by username (local accounts), or by inviting an email address (an identity provider). */
+export function AddPeople() {
     const me = useMe();
-    const { ws, workspace, can, role: myRole } = useWorkspace();
+    const { ws, workspace, role: myRole } = useWorkspace();
+    return me.authMode === "local" ? (
+        <AddMember />
+    ) : (
+        <Invites
+            queryKey={keys.wsSettings(ws, "invites")}
+            url={`${paths.workspace(ws)}/settings/invites`}
+            roles={assignable(myRole)}
+            roleInfo={ROLE_INFO}
+            description={`Invite someone by email address to join ${workspace.name}. They join with this role when they next sign in with that address, and get an account here if they don't have one.`}
+        />
+    );
+}
+
+export function MembersSettings() {
+    const { ws, workspace, can } = useWorkspace();
     const query = useQuery(membersQuery(ws));
     const manage = can("members");
     const personal = workspace.kind === "personal";
@@ -226,16 +242,7 @@ export function MembersSettings() {
                     </div>
                 ))}
             </dl>
-            {manage && !personal && me.authMode === "local" && <AddMember />}
-            {manage && !personal && me.authMode === "oidc" && (
-                <Invites
-                    queryKey={keys.wsSettings(ws, "invites")}
-                    url={`${paths.workspace(ws)}/settings/invites`}
-                    roles={assignable(myRole)}
-                    roleInfo={ROLE_INFO}
-                    description={`Invite someone by email address to join ${workspace.name}. They join with this role when they next sign in with that address, and get an account here if they don't have one.`}
-                />
-            )}
+            {manage && !personal && <AddPeople />}
         </SettingsPage>
     );
 }

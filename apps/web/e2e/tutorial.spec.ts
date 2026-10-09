@@ -55,7 +55,12 @@ async function newcomer(admin: Api, baseURL: string) {
 }
 
 async function tutorialOf(page: Page) {
-    return (await (await page.request.get("/api/v1/me/tutorial")).json()) as { status: string; step: number; example: unknown };
+    return (await (await page.request.get("/api/v1/me/tutorial")).json()) as {
+        status: string;
+        step: number;
+        example: unknown;
+        setup: string;
+    };
 }
 
 test("the first sign-in starts the tour, after the new password, and every step finds its part of the page", async ({ page, admin }) => {
@@ -165,6 +170,12 @@ test("skipping (or Escape) closes the tour for good, and Settings can show it ag
     await page.keyboard.press("Escape");
     await expect(card(page)).toHaveCount(0);
     await expect.poll(async () => (await tutorialOf(page)).status).toBe("dismissed");
+    // Account setup follows the tour; closing it counts as done.
+    const setup = page.getByTestId("setup-dialog");
+    await expect(setup.getByRole("heading", { name: /^Welcome to Triagent/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(setup).toHaveCount(0);
+    await expect.poll(async () => (await tutorialOf(page)).setup).toBe("done");
 
     // The next sign-in doesn't nag.
     await page.context().clearCookies();
@@ -173,6 +184,7 @@ test("skipping (or Escape) closes the tour for good, and Settings can show it ag
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await page.waitForTimeout(1500);
     await expect(card(page)).toHaveCount(0);
+    await expect(page.getByTestId("setup-dialog")).toHaveCount(0);
 
     // Settings → Tutorial: remove the example, then show the tour again, which makes a new one.
     await page.goto(`/w/${username}/settings/tutorial`);
@@ -247,4 +259,32 @@ test("on a phone, steps whose part of the page is folded away show in the middle
     );
     expect(await page.evaluate(() => document.documentElement.scrollWidth), wide.join("\n")).toBeLessThanOrEqual(390);
     await shot(page, "7-phone");
+});
+
+test("after the tour, account setup: notifications, appearance, then the workspace's own setup", async ({ page, admin, baseURL }) => {
+    const username = await newcomer(admin, baseURL as string);
+    await signInPage(page, username, PASSWORD);
+    await page.goto("/");
+    await at(page, "welcome");
+    await page.getByRole("button", { name: "Skip tour" }).click();
+
+    const setup = page.getByTestId("setup-dialog");
+    await expect(setup.getByRole("heading", { name: `Welcome to Triagent, ${username}` })).toBeVisible();
+    await axe(page, "account setup");
+    await expect(setup.getByRole("heading", { name: "Notifications", level: 3 })).toBeVisible();
+    await setup.getByLabel("Every review in my workspaces").check();
+    await setup.getByRole("button", { name: "Save" }).click();
+    await expect.poll(async () => (await (await page.request.get("/api/v1/me")).json()).notify.scope).toBe("all");
+    await setup.getByRole("button", { name: "Next" }).click();
+    await expect(setup.getByRole("heading", { name: "Appearance", level: 3 })).toBeVisible();
+    await setup.getByLabel("Dark").check();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await setup.getByRole("button", { name: "Next" }).click();
+    await setup.getByRole("button", { name: "Set up my personal workspace" }).click();
+    await expect.poll(async () => (await tutorialOf(page)).setup).toBe("done");
+
+    // On to the workspace's setup, at its model key; the example project doesn't count as a project.
+    await expect(setup.getByRole("heading", { name: "Review model & key", level: 3 })).toBeVisible();
+    await expect(setup.getByRole("button", { name: /First project\s*Required/ })).toBeVisible();
+    await axe(page, "workspace setup");
 });

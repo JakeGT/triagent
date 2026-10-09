@@ -5,6 +5,7 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SkipToMain } from "@/components/skip-to-main";
 import { Separator } from "@/components/ui/separator";
 import { SIDEBAR_PREF, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { FinishSetupButton, SetupHost } from "@/features/setup/setup-host";
 import { type LiveStatus, useLiveUpdates } from "@/lib/live";
 import { prefs } from "@/lib/prefs";
 import { keys } from "@/lib/queries";
@@ -58,13 +59,15 @@ export function AppShell() {
                     <SidebarTrigger />
                     <Separator orientation="vertical" className="h-5" />
                     <span className="truncate text-sm text-muted-foreground">{workspace.name}</span>
-                    <span className="ms-auto">
+                    <span className="ms-auto flex items-center gap-3">
+                        <FinishSetupButton />
                         <LiveIndicator status={status} />
                     </span>
                 </header>
                 <main id="content" tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
                     <Outlet />
                 </main>
+                <SetupHost />
             </SidebarInset>
         </SidebarProvider>
     );

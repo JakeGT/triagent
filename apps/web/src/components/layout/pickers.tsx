@@ -4,11 +4,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { Building2, Check, ChevronsUpDown, FolderGit2, GitBranch, Plus, User } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { ExampleBadge } from "@/components/example-badge";
 import { Field, FieldError } from "@/components/field";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar";
+import { openSetup } from "@/features/setup/setup-store";
 import { api, errorMessage, paths } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { branchesQuery, keys, projectsQuery } from "@/lib/queries";
@@ -93,60 +94,76 @@ export function WorkspaceSwitcher() {
     );
 }
 
-function CreateOrganisation({ open, onOpenChange }: { open: boolean; onOpenChange(open: boolean): void }) {
+/**
+ * A new organisation's name and id. Once it's made, it opens (a new workspace's guided setup follows:
+ * `onCreated` decides).
+ */
+export function CreateOrganisationForm({
+    onCreated,
+    actions,
+}: {
+    onCreated(workspace: WorkspaceSummary): void | Promise<void>;
+    /** Buttons before Create organisation (a dialog's Cancel). */
+    actions?: ReactNode;
+}) {
     const queryClient = useQueryClient();
-    const navigate = useNavigate();
     const [slug, setSlug] = useState("");
     const [name, setName] = useState("");
     const create = useMutation({
         mutationFn: () => api.post<WorkspaceSummary>(paths.workspaces, { slug: slug.trim().toLowerCase(), name: name.trim() || undefined }),
         onSuccess: async (w) => {
             await queryClient.invalidateQueries({ queryKey: keys.me });
-            onOpenChange(false);
             setSlug("");
             setName("");
-            await navigate({ to: "/w/$ws", params: { ws: w.slug } });
+            await onCreated(w);
         },
     });
     return (
+        <form
+            className="grid gap-form"
+            onSubmit={(e) => {
+                e.preventDefault();
+                create.mutate();
+            }}
+        >
+            <Field label="Name">{(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
+            <Field label="Id" hint="Used in addresses: lower-case letters, numbers and dashes.">
+                {(p) => (
+                    <Input {...p} value={slug} onChange={(e) => setSlug(e.target.value)} required spellCheck={false} autoComplete="off" />
+                )}
+            </Field>
+            <FieldError message={create.error ? errorMessage(create.error) : null} />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+                {actions}
+                <Button type="submit" disabled={create.isPending || !slug.trim()}>
+                    Create organisation
+                </Button>
+            </div>
+        </form>
+    );
+}
+
+function CreateOrganisation({ open, onOpenChange }: { open: boolean; onOpenChange(open: boolean): void }) {
+    const navigate = useNavigate();
+    return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent>
-                <form
-                    className="grid gap-form"
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        create.mutate();
+                <DialogHeader>
+                    <DialogTitle>Create an organisation</DialogTitle>
+                    <DialogDescription>A workspace to share with others. You'll be its owner; setting it up comes next.</DialogDescription>
+                </DialogHeader>
+                <CreateOrganisationForm
+                    onCreated={async (w) => {
+                        onOpenChange(false);
+                        await navigate({ to: "/w/$ws", params: { ws: w.slug } });
+                        openSetup({ kind: "workspace", ws: w.slug });
                     }}
-                >
-                    <DialogHeader>
-                        <DialogTitle>Create an organisation</DialogTitle>
-                        <DialogDescription>
-                            A workspace to share with others. You'll be its owner and can add members in Settings.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <Field label="Name">{(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-                    <Field label="Id" hint="Used in addresses: lower-case letters, numbers and dashes.">
-                        {(p) => (
-                            <Input
-                                {...p}
-                                value={slug}
-                                onChange={(e) => setSlug(e.target.value)}
-                                required
-                                spellCheck={false}
-                                autoComplete="off"
-                            />
-                        )}
-                    </Field>
-                    <FieldError message={create.error ? errorMessage(create.error) : null} />
-                    <DialogFooter>
+                    actions={
                         <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={create.isPending || !slug.trim()}>
-                            Create organisation
-                        </Button>
-                    </DialogFooter>
-                </form>
+                    }
+                />
             </DialogContent>
         </Dialog>
     );

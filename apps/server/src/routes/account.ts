@@ -100,6 +100,7 @@ export const accountRoutes: Route[] = [
                 tutorial: {
                     status: user.tutorial.status,
                     step: user.tutorial.step,
+                    setup: user.tutorial.setup ?? "pending",
                     // Where the example project is, so pages can mark it as one.
                     example:
                         personal && user.tutorial.exampleProject

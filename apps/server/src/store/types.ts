@@ -12,11 +12,19 @@ export interface NotifyPrefs {
 export const TUTORIAL_STATUSES = ["pending", "in_progress", "completed", "dismissed"] as const;
 export type TutorialStatus = (typeof TUTORIAL_STATUSES)[number];
 
-/** How far someone has got through the first-run tutorial, and their example project (by slug, in their personal workspace). */
+export const SETUP_STATUSES = ["pending", "done"] as const;
+export type SetupStatus = (typeof SETUP_STATUSES)[number];
+
+/**
+ * Someone's first run: how far they've got through the tutorial, their example project (by slug, in their
+ * personal workspace), and whether they've been through account setup (missing for accounts made before
+ * it: pending).
+ */
 export interface TutorialState {
     status: TutorialStatus;
     step: number;
     exampleProject: string | null;
+    setup?: SetupStatus;
 }
 
 export interface User {

@@ -12,10 +12,19 @@ const THEMES: readonly Choice<Theme>[] = [
 
 /** Kept in this browser only. */
 export function AppearanceSettings() {
+    return (
+        <SettingsPage title="Appearance" description="How Triagent looks and behaves in this browser.">
+            <AppearanceSections />
+        </SettingsPage>
+    );
+}
+
+/** The theme and keyboard shortcuts. */
+export function AppearanceSections() {
     const { theme, setTheme } = useTheme();
     const shortcuts = useShortcutsEnabled();
     return (
-        <SettingsPage title="Appearance" description="How Triagent looks and behaves in this browser.">
+        <>
             <SettingsSection title="Theme">
                 <ChoiceField legend="Theme" hideLegend name="theme" value={theme} onChange={setTheme} choices={THEMES} />
             </SettingsSection>
@@ -33,6 +42,6 @@ export function AppearanceSettings() {
                     {(p) => <Switch {...p} checked={shortcuts} onCheckedChange={(on) => prefs.set(PREF.shortcuts, on ? null : "off")} />}
                 </CheckField>
             </SettingsSection>
-        </SettingsPage>
+        </>
     );
 }

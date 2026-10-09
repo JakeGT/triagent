@@ -457,8 +457,12 @@ describe("the GitHub App", () => {
         assert.equal((await env.t.request("/api/v1/instance/github-app", { session: mallory })).status, 403);
     });
 
-    async function link(session: Session, ws: string, installation: number, login: string, opts: { state?: string } = {}) {
-        const started = await env.t.request(`/api/v1/w/${ws}/github/installations`, { method: "POST", session, body: { project: "app" } });
+    async function link(session: Session, ws: string, installation: number, login: string, opts: { state?: string; setup?: boolean } = {}) {
+        const started = await env.t.request(`/api/v1/w/${ws}/github/installations`, {
+            method: "POST",
+            session,
+            body: { project: "app", ...(opts.setup ? { setup: true } : {}) },
+        });
         assert.equal(started.status, 200, started.text);
         const url = new URL(started.body.url);
         assert.equal(url.pathname, `/apps/${env.fake.app?.slug}/installations/new`);
@@ -498,8 +502,9 @@ describe("the GitHub App", () => {
         r = await link(env.admin, "acme", acme.id, "alice");
         assert.equal(r.location, "/w/acme/p/app/settings/github?github=linked");
         assert.equal((await env.t.services.store.githubInstallations.get(acme.id))?.accountLogin, "acme");
-        r = await link(mallory, "evil", evil.id, "mal");
-        assert.match(r.location, /github=linked$/);
+        // Started from the project's guided setup: back into it.
+        r = await link(mallory, "evil", evil.id, "mal", { setup: true });
+        assert.equal(r.location, "/w/evil/p/app/settings/github?github=linked&setup=project");
         // An installation already linked to a workspace can't be taken by another, even by an admin of it.
         env.fake.installations.get(acme.id)?.users.add("mal");
         env.fake.orgRole("acme", "mal", "admin");

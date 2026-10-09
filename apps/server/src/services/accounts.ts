@@ -34,9 +34,9 @@ export interface Access {
 
 export const DEFAULT_NOTIFY: NotifyPrefs = { scope: "mine", problemsOnly: false };
 
-/** Where a new account starts in the first-run tutorial. */
+/** Where a new account starts in the first-run tutorial and account setup (both offered, or neither). */
 export function newTutorial(autoStart: boolean): TutorialState {
-    return { status: autoStart ? "pending" : "completed", step: 0, exampleProject: null };
+    return { status: autoStart ? "pending" : "completed", step: 0, exampleProject: null, setup: autoStart ? "pending" : "done" };
 }
 
 export function publicUser(u: User) {

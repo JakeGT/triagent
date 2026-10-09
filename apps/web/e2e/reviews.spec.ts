@@ -129,6 +129,56 @@ test("the New review button opens a page for starting one: pick what to review, 
     await expect(page.getByLabel("Branch", { exact: true })).toHaveValue("main");
 });
 
+test("a project's guided setup: GitHub with a token, the webhook, automatic reviews, then the first review", async ({ page, admin }) => {
+    const ws = unique("setup");
+    const repo = `acme/${ws}`;
+    await fake("git-repo", { fullName: repo, files: { "src/app.ts": "export const app = 1;\n" } });
+    const token = `github_pat_${randomBytes(16).toString("hex")}`;
+    await fake("pat", { token, login: "octo", repos: [repo] });
+    await admin.post("/api/v1/workspaces", { slug: ws, name: `Org ${ws}` });
+    await admin.post(`/api/v1/w/${ws}/projects`, { slug: "app", name: "App", repoUrl: `https://github.com/${repo}` });
+    await admin.put(`/api/v1/w/${ws}/settings/review-model/keys/openrouter`, { key: `sk-or-${randomBytes(12).toString("hex")}` });
+    await admin.patch(`/api/v1/w/${ws}/settings/review-model`, { model: "fake/model" });
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    await page.goto(`/w/${ws}/p/app/overview`);
+
+    // Only the GitHub connection is left: Finish setup opens the project's setup there.
+    const finish = page.getByTestId("finish-setup");
+    await expect(finish).toContainText("1");
+    await finish.click();
+    const setup = page.getByTestId("setup-dialog");
+    await expect(setup.getByRole("heading", { name: "Connect GitHub", level: 3 })).toBeVisible();
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
+    const found = await new AxeBuilder({ page }).include('[data-testid="setup-dialog"]').withTags(TAGS).analyze();
+    expect(found.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
+    await setup.getByLabel("GitHub token").fill(token);
+    await setup.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(setup.getByTestId("setup-progress")).toHaveText("Everything required is done.");
+    await expect(finish).toHaveCount(0);
+
+    // A token needs the webhook set up by hand.
+    await setup.getByRole("button", { name: "Next" }).click();
+    await expect(setup.getByRole("heading", { name: "GitHub webhook", level: 3 })).toBeVisible();
+    await setup.getByRole("button", { name: "Generate a secret" }).click();
+    await expect(setup.getByLabel("Webhook secret")).toBeVisible();
+    await expect(setup.getByRole("button", { name: /GitHub webhook\s*Done/ })).toBeVisible();
+
+    await setup.getByRole("button", { name: "Next" }).click();
+    await expect(setup.getByRole("heading", { name: "Automatic reviews", level: 3 })).toBeVisible();
+    await setup.getByLabel("Review pull requests automatically").click();
+    await setup.getByRole("button", { name: "Save" }).click();
+    await expect.poll(async () => (await admin.get(`/api/v1/w/${ws}/p/app/settings/automation`)).enabled).toBe(true);
+
+    await setup.getByRole("button", { name: "Next" }).click();
+    await setup.getByRole("link", { name: "Start your first review" }).click();
+    await expect(setup).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`/w/${ws}/p/app/start-review$`));
+
+    // Coming back from installing the GitHub App (started in the setup) opens it again, at GitHub.
+    await page.goto(`/w/${ws}/p/app/settings/github?github=linked&setup=project`);
+    await expect(setup.getByRole("heading", { name: "Connect GitHub", level: 3 })).toBeVisible();
+});
+
 test("a running review can be cancelled", async ({ page, admin }) => {
     const { ws, base } = await reviewProject(admin, { model: "fake/sleep-30" });
     const run = await admin.post(`/api/v1/w/${ws}/p/app/reviews`, { kind: "full" });

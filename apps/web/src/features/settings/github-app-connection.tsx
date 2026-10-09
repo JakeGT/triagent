@@ -49,7 +49,8 @@ const OUTCOMES: Record<string, { ok: boolean; text: string }> = {
     failed: { ok: false, text: "GitHub couldn't confirm the installation. Try again in a moment." },
 };
 
-export function GithubAppConnection({ data }: { data: GithubSettings }) {
+/** `setup`: installing the app comes back into the project's guided setup rather than to its settings. */
+export function GithubAppConnection({ data, setup = false }: { data: GithubSettings; setup?: boolean }) {
     const { ws, slug } = useProject();
     const can = useCan();
     const me = useMe();
@@ -66,7 +67,8 @@ export function GithubAppConnection({ data }: { data: GithubSettings }) {
     };
 
     const install = useMutation({
-        mutationFn: () => api.post<{ url: string }>(`${paths.workspace(ws)}/github/installations`, { project: slug }),
+        mutationFn: () =>
+            api.post<{ url: string }>(`${paths.workspace(ws)}/github/installations`, { project: slug, ...(setup ? { setup: true } : {}) }),
         onSuccess: (r) => window.location.assign(r.url),
     });
     const pick = useMutation({

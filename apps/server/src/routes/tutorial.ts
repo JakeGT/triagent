@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { forbidden } from "../errors.ts";
 import { json, type RequestContext, type Route, route } from "../http/route.ts";
-import { TUTORIAL_STATUSES } from "../store/types.ts";
+import { SETUP_STATUSES, TUTORIAL_STATUSES } from "../store/types.ts";
 
 /** The signed-in person, as the actor for their own example's changes. */
 function person(ctx: Pick<RequestContext<undefined, undefined>, "principal" | "actor">) {
@@ -29,9 +29,14 @@ export const tutorialRoutes: Route[] = [
         scope: "user",
         browserOnly: true,
         tag: "Account",
-        summary: "Start, move through, finish or skip the tutorial",
-        description: "`status` is pending, in_progress, completed or dismissed; `step` is where to pick it up again.",
-        body: z.object({ status: z.enum(TUTORIAL_STATUSES).optional(), step: z.number().int().min(0).max(50).optional() }),
+        summary: "Start, move through, finish or skip the tutorial, or finish account setup",
+        description:
+            "`status` is pending, in_progress, completed or dismissed; `step` is where to pick it up again; `setup` is account setup's: pending or done.",
+        body: z.object({
+            status: z.enum(TUTORIAL_STATUSES).optional(),
+            step: z.number().int().min(0).max(50).optional(),
+            setup: z.enum(SETUP_STATUSES).optional(),
+        }),
         async handler(ctx) {
             return json(await ctx.services.tutorial.update(person(ctx).userId, ctx.body));
         },

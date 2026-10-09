@@ -54,7 +54,13 @@ export interface Me {
     mustChangePassword: boolean;
     notify: NotifyPrefs;
     /** The first-run tutorial: where the person is in it, and where their example project is. */
-    tutorial: { status: TutorialStatus; step: number; example: { workspace: string; project: string } | null };
+    tutorial: {
+        status: TutorialStatus;
+        step: number;
+        example: { workspace: string; project: string } | null;
+        /** Account setup: offered after the tutorial until it's done. */
+        setup: "pending" | "done";
+    };
     workspaces: WorkspaceSummary[];
 }
 

@@ -16,15 +16,38 @@ test("create an organisation and a project, then upload a report after previewin
     await dialog.getByLabel("Id").fill(slug);
     await dialog.getByRole("button", { name: "Create organisation" }).click();
     await expect(page).toHaveURL(new RegExp(`/w/${slug}$`));
-    await expect(page.getByRole("heading", { name: "No projects yet" })).toBeVisible();
 
-    await page.getByRole("link", { name: "Create a project" }).first().click();
-    await page.getByLabel("Name").fill("Web app");
-    await page.getByLabel("Project id").fill("web");
-    await page.getByLabel("Repository URL").fill("https://github.com/acme/web");
-    await page.getByRole("button", { name: "Create project" }).click();
-    await expect(page).toHaveURL(new RegExp(`/w/${slug}/p/web/branches`));
+    // The new workspace's guided setup opens, at what it needs first: a review model and key.
+    const setup = page.getByTestId("setup-dialog");
+    await expect(setup.getByRole("heading", { name: "Set up Acme" })).toBeVisible();
+    await expect(setup.getByRole("heading", { name: "Review model & key", level: 3 })).toBeVisible();
+    await expect(setup.getByTestId("setup-progress")).toHaveText("0 of 2 required steps done.");
+    await setup.getByRole("button", { name: "Do this later" }).click();
+    await expect(setup.getByRole("heading", { name: "People", level: 3 })).toBeVisible();
+    await setup.getByRole("button", { name: "Skip" }).click();
 
+    // Its first project, whose own setup follows.
+    await setup.getByLabel("Name").fill("Web app");
+    await setup.getByLabel("Project id").fill("web");
+    await setup.getByLabel("Repository URL").fill("https://github.com/acme/web");
+    await setup.getByRole("button", { name: "Create project" }).click();
+    await expect(page).toHaveURL(new RegExp(`/w/${slug}/p/web/overview`));
+    await expect(setup.getByRole("heading", { name: "Set up Web app" })).toBeVisible();
+    // The repository is known already, so it starts at connecting GitHub.
+    await expect(setup.getByRole("heading", { name: "Connect GitHub", level: 3 })).toBeVisible();
+    await expect(setup.getByRole("button", { name: /Repository\s*Done/ })).toBeVisible();
+    await setup.getByRole("button", { name: "Finish later" }).click();
+    await expect(setup).toHaveCount(0);
+
+    // Finish setup, at the top, brings it back while something required is left.
+    const finish = page.getByTestId("finish-setup");
+    await expect(finish).toContainText("2");
+    await finish.click();
+    await expect(setup.getByRole("heading", { name: "Connect GitHub", level: 3 })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(setup).toHaveCount(0);
+
+    await page.getByRole("navigation", { name: "Project" }).getByRole("link", { name: "Branches & reports" }).click();
     // Upload: preview first, nothing changes until confirmed.
     await page.getByLabel("Report file").setInputFiles(path.join(import.meta.dirname, "fixtures/report.json"));
     await page.getByRole("button", { name: "Preview upload" }).click();

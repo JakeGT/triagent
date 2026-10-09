@@ -13,6 +13,8 @@ import {
     type Project,
     type Repos,
     type ReviewRecord,
+    SETUP_STATUSES,
+    type SetupStatus,
     TUTORIAL_STATUSES,
     type TutorialState,
     type TutorialStatus,
@@ -52,6 +54,8 @@ export interface TutorialView {
     status: TutorialStatus;
     step: number;
     example: ExampleProject | null;
+    /** Account setup: offered after the tutorial until it's done. */
+    setup: SetupStatus;
 }
 
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
@@ -100,7 +104,7 @@ export class Tutorial {
                 issue: main.review.issues.find((x) => x.path === EXAMPLE_ISSUE_PATH)?.id ?? null,
             };
         }
-        return { status: user.tutorial.status, step: user.tutorial.step, example };
+        return { status: user.tutorial.status, step: user.tutorial.step, example, setup: user.tutorial.setup ?? "pending" };
     }
 
     private async user(tx: Repos, userId: string): Promise<User> {
@@ -120,7 +124,7 @@ export class Tutorial {
     }
 
     /** Move through the tutorial: start it, remember the step, finish or skip it, or start again. */
-    async update(userId: string, input: { status?: unknown; step?: unknown }): Promise<TutorialView> {
+    async update(userId: string, input: { status?: unknown; step?: unknown; setup?: unknown }): Promise<TutorialView> {
         const patch: Partial<TutorialState> = {};
         if (input.status !== undefined) {
             if (!TUTORIAL_STATUSES.includes(input.status as TutorialStatus))
@@ -132,7 +136,12 @@ export class Tutorial {
                 throw badRequest(`step must be a whole number from 0 to ${MAX_STEP}.`);
             patch.step = input.step as number;
         }
-        if (!Object.keys(patch).length) throw badRequest("Send a status, a step, or both.");
+        if (input.setup !== undefined) {
+            if (!SETUP_STATUSES.includes(input.setup as SetupStatus))
+                throw badRequest(`setup must be one of ${SETUP_STATUSES.join(", ")}.`);
+            patch.setup = input.setup as SetupStatus;
+        }
+        if (!Object.keys(patch).length) throw badRequest("Send a status, a step or setup.");
         return this.core.store.transaction(async (tx) => {
             const user = await this.user(tx, userId);
             return this.view(tx, await this.save(tx, user, { ...user.tutorial, ...patch }));

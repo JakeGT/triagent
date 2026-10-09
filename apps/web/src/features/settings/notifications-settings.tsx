@@ -20,7 +20,8 @@ const SCOPES: readonly Choice<NotifyPrefs["scope"]>[] = [
     { value: "none", label: "None", hint: "No notifications about finished reviews." },
 ];
 
-export function NotificationsSettings() {
+/** Which finished reviews you hear about: saved to your account. */
+export function NotificationsForm() {
     const me = useMe();
     const queryClient = useQueryClient();
     const form = useDraft<NotifyPrefs>(me.notify);
@@ -34,7 +35,7 @@ export function NotificationsSettings() {
     });
     const d = form.draft ?? me.notify;
     return (
-        <SettingsPage title="Notifications" description="Which finished reviews you hear about.">
+        <>
             <ChangedElsewhere show={form.changedElsewhere} onReload={form.reload} what="Your notification settings" />
             <SettingsSection title="Finished reviews">
                 <form
@@ -69,13 +70,21 @@ export function NotificationsSettings() {
                     </FormActions>
                 </form>
             </SettingsSection>
+        </>
+    );
+}
+
+export function NotificationsSettings() {
+    return (
+        <SettingsPage title="Notifications" description="Which finished reviews you hear about.">
+            <NotificationsForm />
             <DesktopNotifications />
         </SettingsPage>
     );
 }
 
 /** Desktop notifications are a choice for this browser, so they're kept here rather than on the account. */
-function DesktopNotifications() {
+export function DesktopNotifications() {
     const on = usePref(PREF.desktopNotify) === "on";
     const supported = typeof window !== "undefined" && "Notification" in window;
     const [denied, setDenied] = useState(supported && Notification.permission === "denied");

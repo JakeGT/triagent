@@ -15,26 +15,14 @@ import { api, errorMessage, paths } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { githubQuery, keys } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
+import type { GithubSettings } from "@/lib/types";
 import { GithubAppConnection, TestConnection } from "./github-app-connection";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
 export function ProjectGithub() {
     const { ws, slug, project } = useProject();
     const can = useCan();
-    const queryClient = useQueryClient();
     const query = useQuery({ ...githubQuery(ws, slug), enabled: can("configure") });
-    const [secret, setSecret] = useState<string | null>(null);
-    const dismiss = useCallback(() => setSecret(null), []);
-    const base = `${paths.project(ws, slug)}/settings/github`;
-    const refresh = () => queryClient.invalidateQueries({ queryKey: keys.projectSettings(ws, slug, "github") });
-
-    const generate = useMutation({
-        mutationFn: () => api.post<{ webhookSecret: string; url: string }>(`${base}/webhook-secret`),
-        onSuccess: (r) => {
-            setSecret(r.webhookSecret);
-            void refresh();
-        },
-    });
 
     if (!can("configure"))
         return (
@@ -67,109 +55,139 @@ export function ProjectGithub() {
                     {!canSecrets && <ReadOnlyNote>Only admins can set or clear secrets.</ReadOnlyNote>}
                     <GithubAppConnection data={data} />
                     <TestConnection data={data} />
-                    <SettingsSection
-                        title={data.app.available ? "Access token (instead of the app)" : "Access token"}
-                        description={
-                            <>
-                                A fine-grained personal access token limited to{" "}
-                                {data.repoUrl ? <span className="font-mono">{data.repoUrl}</span> : "the repository"}, with read access to
-                                contents and read and write access to pull requests and commit statuses. It's stored encrypted and never
-                                shown again.
-                            </>
-                        }
-                    >
-                        <SecretField
-                            label="GitHub token"
-                            secret={data.connection.token}
-                            canEdit={canSecrets}
-                            onSave={async (token) => {
-                                await api.put(`${base}/token`, { token });
-                                await refresh();
-                                toast.success("GitHub token saved.");
-                            }}
-                            onClear={async () => {
-                                await api.delete(`${base}/token`);
-                                await refresh();
-                                toast.success("GitHub token cleared.");
-                            }}
-                        />
-                    </SettingsSection>
-
-                    <SettingsSection
-                        title={data.app.available ? "Webhook for the token" : "Webhook"}
-                        description={
-                            data.app.available
-                                ? "Only needed with an access token: the GitHub App has its own webhook. Lets GitHub tell Triagent about new pull requests and pushes straight away."
-                                : "Lets GitHub tell Triagent about new pull requests and pushes straight away, instead of Triagent checking every few minutes."
-                        }
-                    >
-                        <Field label="Payload URL">
-                            {(p) => (
-                                <ControlGroup>
-                                    <Input {...p} readOnly value={data.webhook.url} className="font-mono text-xs" />
-                                    <CopyButton value={data.webhook.url} />
-                                </ControlGroup>
-                            )}
-                        </Field>
-                        <ol className="list-decimal space-y-1 ps-5 text-sm text-muted-foreground">
-                            <li>In the repository on GitHub, open Settings → Webhooks → Add webhook.</li>
-                            <li>Paste the payload URL above, and set the content type to application/json.</li>
-                            <li>Generate a secret here and paste it into the Secret box.</li>
-                            <li>
-                                Choose “Let me select individual events” and tick Pull requests, Pushes, and Branch or tag creation and
-                                deletion.
-                            </li>
-                        </ol>
-                        <p className="text-sm">
-                            Secret:{" "}
-                            {data.webhook.secretSet
-                                ? `set${data.webhook.setBy ? ` by ${data.webhook.setBy}` : ""}${data.webhook.setAt ? ` on ${formatDate(data.webhook.setAt)}` : ""}`
-                                : "not set (the webhook is off)"}
-                        </p>
-                        {secret && (
-                            <OneTimeReveal
-                                value={secret}
-                                label="Webhook secret"
-                                hint="Paste it into the Secret box of the webhook's settings on GitHub."
-                                onDismiss={dismiss}
-                            />
-                        )}
-                        {canSecrets && (
-                            <FormActions>
-                                {data.webhook.secretSet ? (
-                                    <ConfirmAction
-                                        trigger={<Button variant="outline">Generate a new secret</Button>}
-                                        title="Replace the webhook secret?"
-                                        description="The current secret stops working at once. GitHub's deliveries fail until you paste the new one into the webhook's settings."
-                                        confirmLabel="Generate a new secret"
-                                        destructive={false}
-                                        onConfirm={() => generate.mutateAsync()}
-                                    />
-                                ) : (
-                                    <Button variant="outline" onClick={() => generate.mutate()} disabled={generate.isPending}>
-                                        Generate a secret
-                                    </Button>
-                                )}
-                                {data.webhook.secretSet && (
-                                    <ConfirmAction
-                                        trigger={<Button variant="ghost">Turn the webhook off</Button>}
-                                        title="Turn the webhook off?"
-                                        description="The secret is deleted and deliveries from GitHub are refused. Triagent goes back to checking for pull requests on a timer."
-                                        confirmLabel="Turn off"
-                                        onConfirm={async () => {
-                                            await api.delete(`${base}/webhook-secret`);
-                                            setSecret(null);
-                                            await refresh();
-                                            toast.success("Webhook turned off.");
-                                        }}
-                                    />
-                                )}
-                            </FormActions>
-                        )}
-                        <FieldError message={generate.error ? errorMessage(generate.error) : null} />
-                    </SettingsSection>
+                    <GithubTokenSection data={data} />
+                    <WebhookSection data={data} />
                 </>
             )}
         </SettingsPage>
+    );
+}
+
+/** The project's own fine-grained token: instead of the GitHub App, or where there's none. */
+export function GithubTokenSection({ data }: { data: GithubSettings }) {
+    const { ws, slug } = useProject();
+    const can = useCan();
+    const canSecrets = can("secrets");
+    const queryClient = useQueryClient();
+    const base = `${paths.project(ws, slug)}/settings/github`;
+    const refresh = () => queryClient.invalidateQueries({ queryKey: keys.projectSettings(ws, slug, "github") });
+    return (
+        <SettingsSection
+            title={data.app.available ? "Access token (instead of the app)" : "Access token"}
+            description={
+                <>
+                    A fine-grained personal access token limited to{" "}
+                    {data.repoUrl ? <span className="font-mono">{data.repoUrl}</span> : "the repository"}, with read access to contents and
+                    read and write access to pull requests and commit statuses. It's stored encrypted and never shown again.
+                </>
+            }
+        >
+            <SecretField
+                label="GitHub token"
+                secret={data.connection.token}
+                canEdit={canSecrets}
+                onSave={async (token) => {
+                    await api.put(`${base}/token`, { token });
+                    await refresh();
+                    toast.success("GitHub token saved.");
+                }}
+                onClear={async () => {
+                    await api.delete(`${base}/token`);
+                    await refresh();
+                    toast.success("GitHub token cleared.");
+                }}
+            />
+        </SettingsSection>
+    );
+}
+
+/** GitHub's webhook for a project connected with a token (the app has its own). */
+export function WebhookSection({ data }: { data: GithubSettings }) {
+    const { ws, slug } = useProject();
+    const can = useCan();
+    const canSecrets = can("secrets");
+    const queryClient = useQueryClient();
+    const [secret, setSecret] = useState<string | null>(null);
+    const dismiss = useCallback(() => setSecret(null), []);
+    const base = `${paths.project(ws, slug)}/settings/github`;
+    const refresh = () => queryClient.invalidateQueries({ queryKey: keys.projectSettings(ws, slug, "github") });
+    const generate = useMutation({
+        mutationFn: () => api.post<{ webhookSecret: string; url: string }>(`${base}/webhook-secret`),
+        onSuccess: (r) => {
+            setSecret(r.webhookSecret);
+            void refresh();
+        },
+    });
+    return (
+        <SettingsSection
+            title={data.app.available ? "Webhook for the token" : "Webhook"}
+            description={
+                data.app.available
+                    ? "Only needed with an access token: the GitHub App has its own webhook. Lets GitHub tell Triagent about new pull requests and pushes straight away."
+                    : "Lets GitHub tell Triagent about new pull requests and pushes straight away, instead of Triagent checking every few minutes."
+            }
+        >
+            <Field label="Payload URL">
+                {(p) => (
+                    <ControlGroup>
+                        <Input {...p} readOnly value={data.webhook.url} className="font-mono text-xs" />
+                        <CopyButton value={data.webhook.url} />
+                    </ControlGroup>
+                )}
+            </Field>
+            <ol className="list-decimal space-y-1 ps-5 text-sm text-muted-foreground">
+                <li>In the repository on GitHub, open Settings → Webhooks → Add webhook.</li>
+                <li>Paste the payload URL above, and set the content type to application/json.</li>
+                <li>Generate a secret here and paste it into the Secret box.</li>
+                <li>Choose “Let me select individual events” and tick Pull requests, Pushes, and Branch or tag creation and deletion.</li>
+            </ol>
+            <p className="text-sm">
+                Secret:{" "}
+                {data.webhook.secretSet
+                    ? `set${data.webhook.setBy ? ` by ${data.webhook.setBy}` : ""}${data.webhook.setAt ? ` on ${formatDate(data.webhook.setAt)}` : ""}`
+                    : "not set (the webhook is off)"}
+            </p>
+            {secret && (
+                <OneTimeReveal
+                    value={secret}
+                    label="Webhook secret"
+                    hint="Paste it into the Secret box of the webhook's settings on GitHub."
+                    onDismiss={dismiss}
+                />
+            )}
+            {canSecrets && (
+                <FormActions>
+                    {data.webhook.secretSet ? (
+                        <ConfirmAction
+                            trigger={<Button variant="outline">Generate a new secret</Button>}
+                            title="Replace the webhook secret?"
+                            description="The current secret stops working at once. GitHub's deliveries fail until you paste the new one into the webhook's settings."
+                            confirmLabel="Generate a new secret"
+                            destructive={false}
+                            onConfirm={() => generate.mutateAsync()}
+                        />
+                    ) : (
+                        <Button variant="outline" onClick={() => generate.mutate()} disabled={generate.isPending}>
+                            Generate a secret
+                        </Button>
+                    )}
+                    {data.webhook.secretSet && (
+                        <ConfirmAction
+                            trigger={<Button variant="ghost">Turn the webhook off</Button>}
+                            title="Turn the webhook off?"
+                            description="The secret is deleted and deliveries from GitHub are refused. Triagent goes back to checking for pull requests on a timer."
+                            confirmLabel="Turn off"
+                            onConfirm={async () => {
+                                await api.delete(`${base}/webhook-secret`);
+                                setSecret(null);
+                                await refresh();
+                                toast.success("Webhook turned off.");
+                            }}
+                        />
+                    )}
+                </FormActions>
+            )}
+            <FieldError message={generate.error ? errorMessage(generate.error) : null} />
+        </SettingsSection>
     );
 }

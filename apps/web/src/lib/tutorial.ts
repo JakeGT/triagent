@@ -9,7 +9,8 @@ export const tutorialPath = `${paths.me}/tutorial`;
 
 export const tutorialApi = {
     get: () => api.get<TutorialView>(tutorialPath),
-    update: (patch: { status?: TutorialStatus; step?: number }) => api.patch<TutorialView>(tutorialPath, patch),
+    /** `setup`: account setup's state (offered after the tutorial until it's done). */
+    update: (patch: { status?: TutorialStatus; step?: number; setup?: "pending" | "done" }) => api.patch<TutorialView>(tutorialPath, patch),
     /** Make the example project, or return the one there is. */
     createExample: () => api.post<TutorialView>(`${tutorialPath}/example`),
     removeExample: () => api.delete<TutorialView>(`${tutorialPath}/example`),
