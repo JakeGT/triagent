@@ -76,6 +76,13 @@ const inviteRequiredRoute = createRoute({
     component: lazyRouteComponent(() => import("@/features/auth/invite-required-page"), "InviteRequiredPage"),
 });
 
+/** The confirm-it's-you window comes back here (components/reauth-dialog.tsx). */
+const reauthenticatedRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/reauthenticated",
+    component: lazyRouteComponent(() => import("@/features/auth/reauthenticated-page"), "ReauthenticatedPage"),
+});
+
 const changePasswordRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/change-password",
@@ -384,6 +391,7 @@ const projectSettingsRoutes = [
 const routeTree = rootRoute.addChildren([
     signInRoute,
     inviteRequiredRoute,
+    reauthenticatedRoute,
     changePasswordRoute,
     authedRoute.addChildren([
         homeRoute,

@@ -1,19 +1,24 @@
 // Confirming it's you before a step that needs a recent sign-in (changing secrets, members, API tokens or
 // the workspace, and the instance's accounts and keys). The API client asks
 // through `requestReauth` when the server answers 401 reauth_required; this dialog explains why and
-// either takes the password (local accounts), after which the step is sent again, or sends the person
-// to sign in at the identity provider and back to the same page.
+// either takes the password (local accounts), or has the person sign in at the identity provider in a
+// window of its own, which comes back to /reauthenticated and says so here. Either way the page stays as
+// it was and the step is sent again. If the window can't open (a popup blocker), the whole page goes to
+// the identity provider and back instead, and what was typed is lost.
 
-import { useQuery } from "@tanstack/react-query";
-import { useState, useSyncExternalStore } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FieldError } from "@/components/field";
 import { PasswordInput } from "@/components/password-input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { errorMessage, request } from "@/lib/api";
-import { authConfigQuery } from "@/lib/queries";
-import type { ApiErrorBody } from "@/lib/types";
+import { errorMessage, request, setCsrfToken } from "@/lib/api";
+import { authConfigQuery, meQuery } from "@/lib/queries";
+import type { ApiErrorBody, Me } from "@/lib/types";
+
+/** How the sign-in window tells this page it's done (features/auth/reauthenticated-page.tsx). */
+export const REAUTH_CHANNEL = "triagent-reauth";
 
 /** What asks: the server's RECENT_SIGN_IN permissions, and the instance's accounts and keys. */
 const WHY = "Changing secrets, members, API tokens or the workspace needs a recent sign-in.";
@@ -70,13 +75,62 @@ export function ReauthDialog() {
     const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    // The sign-in window is open: waiting for it to say it's done.
+    const [waiting, setWaiting] = useState(false);
+    const queryClient = useQueryClient();
     const provider = pending?.body.method === "provider";
     const providerName = config.data?.providerName ?? "your identity provider";
 
     const close = (ok: boolean) => {
         setPassword("");
         setError(null);
+        setWaiting(false);
         settle(ok);
+    };
+
+    // Signing in again starts a new session, with a new CSRF token: fetch it before the step is sent again.
+    const signedIn = async () => {
+        setBusy(true);
+        try {
+            const me = await request<Me>("/api/v1/me", { quiet401: true, noReauth: true });
+            setCsrfToken(me.csrf);
+            queryClient.setQueryData(meQuery.queryKey, me);
+            close(true);
+        } catch (err) {
+            setError(errorMessage(err));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // The latest signedIn, for the channel's listener (set up once per wait).
+    const onSignedIn = useRef(signedIn);
+    onSignedIn.current = signedIn;
+    useEffect(() => {
+        if (!waiting) return;
+        let channel: BroadcastChannel | null = null;
+        try {
+            channel = new BroadcastChannel(REAUTH_CHANNEL);
+            channel.onmessage = (e: MessageEvent) => {
+                if ((e.data as { type?: string } | null)?.type === "reauthenticated") void onSignedIn.current();
+            };
+        } catch {
+            // No BroadcastChannel: "I've signed in" below does the same.
+        }
+        return () => channel?.close();
+    }, [waiting]);
+
+    const openSignIn = () => {
+        const back = reauthHref(pending?.body.reauthUrl, "/reauthenticated");
+        const opened = window.open(back, "triagent-reauth", "popup,width=520,height=720");
+        if (opened) {
+            setError(null);
+            setWaiting(true);
+            return;
+        }
+        // Blocked: the whole page goes, and comes back here.
+        const here = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        window.location.assign(reauthHref(pending?.body.reauthUrl, here));
     };
 
     const confirm = async (e: React.FormEvent) => {
@@ -101,25 +155,35 @@ export function ReauthDialog() {
                     <DialogTitle>Confirm it's you</DialogTitle>
                     <DialogDescription>
                         {provider
-                            ? `${WHY} Sign in with ${providerName} again and you'll come back to this page. Anything you typed here will need entering again.`
+                            ? waiting
+                                ? `Sign in with ${providerName} in the window that opened. This carries on by itself once you have.`
+                                : `${WHY} Sign in with ${providerName} again in a new window; this page stays as it is, and what you asked for carries on once you have.`
                             : `${WHY} Enter your password to carry on.`}
                     </DialogDescription>
                 </DialogHeader>
                 {provider ? (
-                    <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => close(false)}>
-                            Cancel
-                        </Button>
-                        <Button
-                            type="button"
-                            onClick={() => {
-                                const here = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-                                window.location.assign(reauthHref(pending?.body.reauthUrl, here));
-                            }}
-                        >
-                            Sign in with {providerName}
-                        </Button>
-                    </DialogFooter>
+                    <>
+                        <FieldError message={error} />
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => close(false)}>
+                                Cancel
+                            </Button>
+                            {waiting ? (
+                                <>
+                                    <Button type="button" variant="outline" onClick={openSignIn}>
+                                        Open the window again
+                                    </Button>
+                                    <Button type="button" onClick={() => void signedIn()} disabled={busy}>
+                                        {busy ? "Checking…" : "I've signed in"}
+                                    </Button>
+                                </>
+                            ) : (
+                                <Button type="button" onClick={openSignIn}>
+                                    Sign in with {providerName}
+                                </Button>
+                            )}
+                        </DialogFooter>
+                    </>
                 ) : (
                     <form onSubmit={confirm} className="grid gap-form" noValidate>
                         <div className="grid gap-1.5">

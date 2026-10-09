@@ -106,9 +106,12 @@ test("someone without an invite gets nothing, and an invite lets them in", async
     await expect(page.getByRole("cell", { name: /Kim Invitee/ })).toBeVisible();
 });
 
-test("changing a secret after an old sign-in asks you to confirm it's you, then carries on where you were", async ({ page, request }) => {
+test("with popups blocked, confirming it's you goes there and back in the same page", async ({ page, request }) => {
     // The provider says Ada authenticated an hour ago (an old single sign-on session).
     await provide(request, ADMIN, { authAgo: 3600 });
+    await page.addInitScript(() => {
+        window.open = () => null;
+    });
     await signIn(page, /\/w\/ada$/);
     await page.goto("/w/ada/settings/review-model");
     const field = page.getByTestId("secret-field").first();
@@ -144,13 +147,20 @@ test("creating an API token after an old sign-in asks you to confirm it's you to
     await expect(dialog).toBeVisible();
     await expect(page.getByTestId("one-time-reveal")).toHaveCount(0);
 
+    // Signing in again happens in a window of its own: this page stays as it is, and the token is made
+    // once it's done, without typing anything again.
     await provide(request, ADMIN);
-    await dialog.getByRole("button", { name: "Sign in with Test ID" }).click();
-    await expect(page).toHaveURL(/\/w\/ada\/settings\/tokens$/);
-    await page.getByLabel("Name").fill("CI uploads");
-    await page.getByRole("button", { name: "Create token" }).click();
+    const [popup] = await Promise.all([page.waitForEvent("popup"), dialog.getByRole("button", { name: "Sign in with Test ID" }).click()]);
+    await expect(dialog).toContainText("in the window that opened");
+    await popup.waitForEvent("close");
     await expect(page.getByTestId("one-time-reveal")).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/w\/ada\/settings\/tokens$/);
+    await expect(page.getByRole("cell", { name: /^CI uploads/ })).toBeVisible();
+    // The new session's CSRF token is in use: other changes go through without asking again.
+    await page.getByLabel("Name").fill("Second");
+    await page.getByRole("button", { name: "Create token" }).click();
+    await expect(page.getByRole("cell", { name: /^Second/ })).toBeVisible();
 });
 
 test("signing out ends the session here and at the provider, then comes back to sign-in", async ({ page, request }) => {
