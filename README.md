@@ -73,11 +73,11 @@ PUBLIC_ORIGIN=http://localhost:5173 TRIAGENT_ADMIN_USER=me TRIAGENT_ADMIN_PASSWO
 TRIAGENT_SERVER_URL=http://localhost:8080 pnpm dev:runner    # in another terminal, with the same secret
 ```
 
-Then connect a project to GitHub (Project settings → GitHub: the GitHub App, set up under Settings → GitHub App by an instance admin, or a fine-grained token), add a model key (Settings → Review model & keys), and start a review from Runs, Pull requests or Branches & reports. `apps/runner/.env.example` lists the runner's settings; `REVIEW_CONCURRENCY` (default 1) and `REVIEW_CONCURRENCY_PER_WORKSPACE` (default 1) cap reviews on the server. The tests use a fake GitHub and a fake `ocr` (`tests/fakes`), so they need `git` but nothing else.
+Then connect a project to GitHub (Project settings → GitHub: the GitHub App, set up under Settings → GitHub App by an instance admin, or a fine-grained token), connect a model provider with its key and choose a model (Settings → Models), and start a review from Runs, Pull requests or Branches & reports. `apps/runner/.env.example` lists the runner's settings; `REVIEW_CONCURRENCY` (default 1) and `REVIEW_CONCURRENCY_PER_WORKSPACE` (default 1) cap reviews on the server. The tests use a fake GitHub and a fake `ocr` (`tests/fakes`), so they need `git` but nothing else.
 
 ### Model providers
 
-Reviews can use any of these. Each workspace chooses one under Settings → Review model & keys (and an instance admin chooses one for the instance key); keys are stored encrypted, per provider, and never shown again. The model list comes from the provider itself, with your key, where it offers one; you can always type any model id. [docs/architecture.md](docs/architecture.md#model-providers) says how each is reached and where each address is documented.
+Reviews can use any of these. Each workspace connects as many as it likes under Settings → Models, keeps a list of favourite models from them, and marks one the default that reviews use (an instance admin chooses one provider and model for the instance key); keys are stored encrypted, per provider, and never shown again. The model list comes from the provider itself, with your key, where it offers one; you can always type any model id. [docs/architecture.md](docs/architecture.md#model-providers) says how each is reached and where each address is documented.
 
 | Provider | Open Code Review protocol | Address | What it needs |
 |---|---|---|---|
