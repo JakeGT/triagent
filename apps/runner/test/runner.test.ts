@@ -264,6 +264,52 @@ describe("process groups", () => {
         assert.equal(exit.timedOut, false);
     });
 
+    test("without a time limit it runs until it ends", async () => {
+        const exit = await start("sh", ["-c", "sleep 0.5; echo done"], { env: { PATH: process.env.PATH ?? "" } }).done;
+        assert.equal(exit.code, 0);
+        assert.deepEqual([exit.timedOut, exit.stalled, exit.killed, exit.stdout.trim()], [false, false, false, "done"]);
+    });
+
+    test("one that goes quiet is stopped as stalled, which isn't the time limit", async () => {
+        const lines: string[] = [];
+        const t0 = Date.now();
+        const exit = await start("sh", ["-c", "echo first >&2; sleep 30"], {
+            env: { PATH: process.env.PATH ?? "" },
+            stallMs: 300,
+            timeoutMs: 20_000,
+            onLine: (l) => lines.push(l),
+        }).done;
+        assert.deepEqual([exit.stalled, exit.timedOut, exit.killed], [true, false, true]);
+        assert.deepEqual(lines, ["first"]);
+        assert.ok(Date.now() - t0 < 5000);
+    });
+
+    test("one that keeps printing isn't stalled, however long it runs", async () => {
+        // Two seconds of work, a line every 100ms: several times the quiet it's allowed.
+        const exit = await start(
+            "sh",
+            ["-c", "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do echo $i >&2; sleep 0.1; done"],
+            {
+                env: { PATH: process.env.PATH ?? "" },
+                stallMs: 600,
+            },
+        ).done;
+        assert.equal(exit.code, 0);
+        assert.deepEqual([exit.stalled, exit.killed], [false, false]);
+    });
+
+    test("cancelled while quiet: it was stopped, not stalled", async () => {
+        const stop = new AbortController();
+        const p = start("sh", ["-c", "trap '' TERM; sleep 30"], {
+            env: { PATH: process.env.PATH ?? "" },
+            stallMs: 300,
+            signal: stop.signal,
+        });
+        setTimeout(() => stop.abort(), 50);
+        const exit = await p.done;
+        assert.deepEqual([exit.killed, exit.stalled], [true, false]);
+    });
+
     test("a character split across stderr chunks arrives whole", async () => {
         const lines: string[] = [];
         await start("sh", ["-c", "printf '\\303' >&2; sleep 0.2; printf '\\251 done\\n' >&2"], {
@@ -701,5 +747,154 @@ describe("a job's life", () => {
             http.close();
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("time limits and stalled reviews", () => {
+    const FAKE_OCR = path.resolve(import.meta.dirname, "../../../tests/fakes/ocr.ts");
+    const token = `github_pat_${"s".repeat(30)}`;
+    let fake: FakeGitHub;
+    let dir: string;
+    let runner: Runner;
+    let http: ReturnType<typeof createServer>;
+    /** What the runner told the server: each job's log, and how it ended. */
+    const logs = new Map<string, string[]>();
+    const outcomes = new Map<string, { status: string; error?: string | null; report?: { comments?: unknown[] }; parts?: unknown[] }>();
+
+    before(async () => {
+        fake = await new FakeGitHub().start();
+        await fake.gitRepo("acme/app", { "src/a.ts": "export const a = 1;\n" });
+        fake.pat(token, "octo", ["acme/app"]);
+        http = createServer((req, res) => {
+            let body = "";
+            req.on("data", (d) => {
+                body += d;
+            });
+            req.on("end", () => {
+                const [, id, what] = /\/jobs\/([^/]+)\/(\w+)$/.exec(req.url ?? "") ?? [];
+                const sent = JSON.parse(body || "{}");
+                if (id && what === "events")
+                    logs.set(id, [...(logs.get(id) ?? []), ...(sent.lines as { line: string }[]).map((l) => l.line)]);
+                if (id && what === "finish") outcomes.set(id, sent);
+                res.writeHead(200, { "content-type": "application/json" });
+                res.end(JSON.stringify({ cancel: false, ok: true }));
+            });
+        });
+        await new Promise<void>((r) => http.listen(0, "127.0.0.1", () => r()));
+        dir = mkdtempSync(path.join(tmpdir(), "runner-limits-"));
+        runner = new Runner({
+            serverUrl: `http://127.0.0.1:${(http.address() as AddressInfo).port}`,
+            secret: "s".repeat(40),
+            name: "test",
+            concurrency: 1,
+            cacheDir: path.join(dir, "cache"),
+            workDir: path.join(dir, "work"),
+            pollMs: 1000,
+            healthPort: null,
+            ocrBin: FAKE_OCR,
+            gitBin: "git",
+            llmTimeout: null,
+            path: process.env.PATH ?? "",
+            warnings: [],
+        });
+    });
+    after(async () => {
+        http.close();
+        await fake.stop();
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** Run a full scan with the fake `ocr` behaving as `model` says, and return how the runner said it went. */
+    const scan = async (id: string, model: string, limits: { timeoutMinutes?: number | null; stallMinutes?: number | null }) => {
+        await runner.execute({
+            id,
+            kind: "full",
+            title: "t",
+            leaseSeconds: 60,
+            repository: { fullName: "acme/app", cloneUrl: `${fake.url}/acme/app.git` },
+            git: { username: "x-access-token", token },
+            pr: null,
+            gitRef: "main",
+            baseRef: null,
+            headSha: null,
+            maxTokensBudget: null,
+            model: { url: "https://llm.test/v1", model, apiKey: "k".repeat(20), protocol: "openai", provider: "openrouter" },
+            ...limits,
+        });
+        const outcome = outcomes.get(id);
+        assert.ok(outcome, `${id} was reported`);
+        return { outcome, log: (logs.get(id) ?? []).join("\n") };
+    };
+
+    test("with no limits a review runs to the end, and a server that sends none means none", async () => {
+        const { outcome, log } = await scan("none", "fake/silent-1", { timeoutMinutes: null, stallMinutes: null });
+        assert.equal(outcome.status, "done", outcome.error ?? "");
+        assert.equal(outcome.report?.comments?.length, 1);
+        assert.match(log, /with fake\/silent-1 via openrouter\. No time limit\.$/m);
+        const absent = await scan("absent", "fake/model", {});
+        assert.equal(absent.outcome.status, "done", absent.outcome.error ?? "");
+        assert.match(absent.log, /No time limit\.$/m);
+    });
+
+    test("a review that prints nothing for the stall time is stopped as stalled, not as over its time limit", async () => {
+        const t0 = Date.now();
+        // 0.01 minutes: 600ms of silence, in a review allowed 5 minutes.
+        const { outcome, log } = await scan("silent", "fake/silent-30", { timeoutMinutes: 5, stallMinutes: 0.01 });
+        assert.equal(outcome.status, "failed");
+        assert.match(outcome.error ?? "", /^Stalled: Open Code Review printed nothing for 0\.01 minutes, so it was stopped/);
+        assert.doesNotMatch(outcome.error ?? "", /time limit/);
+        assert.equal(outcome.report, undefined);
+        assert.match(log, /Time limit: 5 minutes\. Stopped as stalled if it prints nothing for 0\.01 minutes\.$/m);
+        assert.match(log, /\[triagent\] Stalled: /);
+        assert.ok(Date.now() - t0 < 10_000, `took ${Date.now() - t0}ms`);
+    });
+
+    test("a review that keeps printing isn't stalled, however long it takes", async () => {
+        // Two seconds of work, a few lines every 100ms, with 600ms of silence allowed.
+        const { outcome } = await scan("chatty", "fake/sleep-2", { timeoutMinutes: null, stallMinutes: 0.01 });
+        assert.equal(outcome.status, "done", outcome.error ?? "");
+        assert.equal(outcome.report?.comments?.length, 1);
+    });
+
+    test("the time limit still stops a review that keeps printing", async () => {
+        const { outcome } = await scan("slow", "fake/sleep-30", { timeoutMinutes: 0.01, stallMinutes: 30 });
+        assert.equal(outcome.status, "failed");
+        assert.match(outcome.error ?? "", /^Stopped after 0\.01 minutes, the project's time limit/);
+    });
+
+    test("with several models, a stalled one fails and the others' findings are kept", async () => {
+        const model = (name: string) => ({
+            url: "https://llm.test/v1",
+            model: name,
+            apiKey: "k".repeat(20),
+            protocol: "openai" as const,
+            provider: "openrouter",
+            label: name,
+        });
+        await runner.execute({
+            id: "several",
+            kind: "full",
+            title: "t",
+            leaseSeconds: 60,
+            repository: { fullName: "acme/app", cloneUrl: `${fake.url}/acme/app.git` },
+            git: { username: "x-access-token", token },
+            pr: null,
+            gitRef: "main",
+            baseRef: null,
+            headSha: null,
+            maxTokensBudget: null,
+            timeoutMinutes: null,
+            stallMinutes: 0.01,
+            model: model("fake/silent-30"),
+            models: [model("fake/silent-30"), model("fake/model")],
+        });
+        const outcome = outcomes.get("several");
+        assert.equal(outcome?.status, "done");
+        const parts = outcome?.parts as { status: string; error?: string }[];
+        assert.deepEqual(
+            parts.map((p) => p.status),
+            ["failed", "done"],
+        );
+        assert.match(parts[0]?.error ?? "", /^Stalled: /);
     });
 });

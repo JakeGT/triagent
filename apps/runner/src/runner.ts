@@ -125,6 +125,8 @@ export function ocrArgs(job: Pick<ClaimedJob, "kind" | "maxTokensBudget">, base:
 
 class Stop extends Error {}
 
+const minutes = (n: number) => `${n} minute${n === 1 ? "" : "s"}`;
+
 /** The models a job reviews with, in order: those it lists, or its one model. */
 export function modelsOf(job: Pick<ClaimedJob, "model" | "models">): (RunnerModel & { label: string })[] {
     return job.models?.length ? job.models : [{ ...job.model, label: job.model.model }];
@@ -448,6 +450,10 @@ export class Runner {
             const args = ocrArgs(job, fetched.base, fetched.head);
             const models = modelsOf(job);
             const parts: FinishPart[] = [];
+            const limit = job.timeoutMinutes ?? null;
+            const stall = job.stallMinutes ?? null;
+            /** A model's review was stopped at the time limit, or as stalled. */
+            let stopped = false;
             for (const [i, model] of models.entries()) {
                 run.check();
                 const one = { ...job, model };
@@ -459,7 +465,7 @@ export class Runner {
                     run.nextModel(`${model.label} (${i + 1} of ${models.length})`);
                 } else run.setProgress({ phase: "starting" });
                 run.say(
-                    `Running ocr ${args.join(" ")} with ${model.model} via ${model.provider}. Time limit: ${job.timeoutMinutes} minutes.`,
+                    `Running ocr ${args.join(" ")} with ${model.model} via ${model.provider}. ${limit ? `Time limit: ${minutes(limit)}.` : "No time limit."}${stall ? ` Stopped as stalled if it prints nothing for ${minutes(stall)}.` : ""}`,
                 );
                 writeOcrConfig(own, one);
                 ocrStarted = true;
@@ -467,7 +473,8 @@ export class Runner {
                 const ocr = start(this.config.ocrBin, args, {
                     cwd: tree,
                     env: ocrEnv(this.config, own, one, fetched.base),
-                    timeoutMs: job.timeoutMinutes * 60_000,
+                    ...(limit ? { timeoutMs: limit * 60_000 } : {}),
+                    ...(stall ? { stallMs: stall * 60_000 } : {}),
                     onLine: (line) => run.ocrLine(line),
                 });
                 run.attach(ocr.stop);
@@ -482,12 +489,19 @@ export class Runner {
                 const timing = { tokens: run.modelTokens || null, seconds: Math.round((Date.now() - began) / 1000) };
                 let part: FinishPart;
                 if (run.cancelled) part = { status: "cancelled", ...(report ? { report } : {}) };
-                else if (exit.timedOut)
+                else if (exit.timedOut) {
+                    stopped = true;
                     part = {
                         status: "failed",
-                        error: `Stopped after ${job.timeoutMinutes} minutes, the project's time limit for this kind of review. An admin can raise it in the project's Automation settings.`,
+                        error: `Stopped after ${minutes(limit as number)}, the project's time limit for this kind of review. An admin can raise it in the project's Automation settings.`,
                     };
-                else if (exit.code !== 0)
+                } else if (exit.stalled) {
+                    stopped = true;
+                    part = {
+                        status: "failed",
+                        error: `Stalled: Open Code Review printed nothing for ${minutes(stall as number)}, so it was stopped (the model may have stopped answering). An admin can change how long it waits in the project's Automation settings.`,
+                    };
+                } else if (exit.code !== 0)
                     part = {
                         status: "failed",
                         error: run.redactLine(failureReason(exit.stderr, exit.code ?? exit.signal)),
@@ -513,7 +527,7 @@ export class Runner {
             } else {
                 // One model: as it always was.
                 const [part] = parts as [FinishPart];
-                if (part.status === "failed" && /^Stopped after \d+ minutes/.test(part.error ?? "")) throw new Error(part.error as string);
+                if (stopped && part.status === "failed") throw new Error(part.error as string);
                 if (part.status === "done") {
                     run.setProgress({ ...run.currentProgress, phase: "uploading" });
                     run.say("Review finished; sending the findings to Triagent…");

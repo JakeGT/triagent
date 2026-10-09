@@ -1,4 +1,4 @@
-// Child processes in a process group of their own, so stopping one (on cancel or timeout) stops
+// Child processes in a process group of their own, so stopping one (on cancel, timeout or stall) stops
 // everything it started too.
 
 import { spawn } from "node:child_process";
@@ -13,6 +13,8 @@ export interface Exit {
     /** The end of stderr, for error messages. */
     stderr: string;
     timedOut: boolean;
+    /** Stopped for printing nothing for `stallMs`. */
+    stalled: boolean;
     killed: boolean;
 }
 
@@ -27,7 +29,10 @@ export interface SpawnOptions {
     cwd?: string;
     /** The whole environment the child gets: nothing is inherited. */
     env: Record<string, string>;
+    /** Stop it after this long. Without one it runs until it ends. */
     timeoutMs?: number;
+    /** Stop it when it has written nothing (to stdout or stderr) for this long. */
+    stallMs?: number;
     /** Each complete stderr line, as it arrives. */
     onLine?: (line: string) => void;
     /** Stops the process group when aborted (a cancelled or lost review). */
@@ -50,6 +55,7 @@ function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
 export function start(cmd: string, args: string[], options: SpawnOptions): Running {
     const child = spawn(cmd, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let timedOut = false;
+    let stalled = false;
     let killed = false;
     /** Once it has exited, its pid may belong to something else: never signal it again. */
     let exited = false;
@@ -72,6 +78,19 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
           }, options.timeoutMs)
         : null;
     timer?.unref();
+    // Started again by everything the child writes; if it ever runs out, the child has gone quiet.
+    let quiet: ReturnType<typeof setTimeout> | null = null;
+    const heard = () => {
+        if (!options.stallMs || exited) return;
+        if (quiet) clearTimeout(quiet);
+        quiet = setTimeout(() => {
+            if (killed) return;
+            stalled = true;
+            stop();
+        }, options.stallMs);
+        quiet.unref();
+    };
+    heard();
     const out: Buffer[] = [];
     let outSize = 0;
     let errTail = "";
@@ -79,10 +98,12 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
     // Decoded as a stream, so a character split across chunks arrives whole.
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (d: Buffer) => {
+        heard();
         outSize += d.length;
         if (outSize <= MAX_STDOUT) out.push(d);
     });
     child.stderr.on("data", (text: string) => {
+        heard();
         errTail = (errTail + text).slice(-STDERR_TAIL);
         if (!options.onLine) return;
         const lines = (partial + text).split(/\r?\n/);
@@ -94,6 +115,7 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
             // A failure to start can be followed by "close" too.
             if (exited) return;
             if (timer) clearTimeout(timer);
+            if (quiet) clearTimeout(quiet);
             options.signal?.removeEventListener("abort", stop);
             if (partial.trim()) options.onLine?.(partial);
             partial = "";
@@ -101,7 +123,7 @@ export function start(cmd: string, args: string[], options: SpawnOptions): Runni
             signalGroup(child.pid, "SIGKILL");
             exited = true;
             if (hardKill) clearTimeout(hardKill);
-            resolve({ code, signal, stdout: Buffer.concat(out).toString("utf8"), stderr: errTail, timedOut, killed });
+            resolve({ code, signal, stdout: Buffer.concat(out).toString("utf8"), stderr: errTail, timedOut, stalled, killed });
         };
         child.on("error", (err: NodeJS.ErrnoException) => {
             errTail += err.code === "ENOENT" ? `${cmd} isn't installed.` : err.message;
@@ -118,9 +140,11 @@ export async function run(cmd: string, args: string[], options: SpawnOptions): P
     if (exit.code !== 0) {
         const why = exit.timedOut
             ? "took too long and was stopped"
-            : exit.killed
-              ? "was stopped"
-              : `failed (exit ${exit.code ?? exit.signal})`;
+            : exit.stalled
+              ? "went quiet and was stopped"
+              : exit.killed
+                ? "was stopped"
+                : `failed (exit ${exit.code ?? exit.signal})`;
         throw new Error(
             `${cmd} ${args[0] === "--git-dir" ? (args[2] ?? "") : (args[0] ?? "")} ${why}: ${exit.stderr.trim().split("\n").slice(-3).join(" ")}`,
         );

@@ -13,7 +13,10 @@ export interface ClaimedJob {
     gitRef: string | null;
     baseRef: string | null;
     headSha: string | null;
-    timeoutMinutes: number;
+    /** The project's time limit, or null (or absent) for none. */
+    timeoutMinutes?: number | null;
+    /** Stop a model's review that has printed nothing for this long; null (or absent) to never. */
+    stallMinutes?: number | null;
     maxTokensBudget: number | null;
     /** The protocol OCR speaks to the model, and this job's credentials for it: the first of `models`. */
     model: RunnerModel;

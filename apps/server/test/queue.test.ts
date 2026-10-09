@@ -103,7 +103,83 @@ describe("per-workspace cap", () => {
         assert.equal(first?.git.token, PAT(1));
         assert.equal(first?.model.apiKey, MODEL_KEY);
         assert.equal(first?.repository.cloneUrl, `${env.fake.url}/acme/app.git`);
-        assert.equal(first?.timeoutMinutes, 120);
+        // No time limit unless the project sets one; a review that goes quiet for half an hour is stopped.
+        assert.equal(first?.timeoutMinutes, null);
+        assert.equal(first?.stallMinutes, 30);
+    });
+});
+
+describe("time limits", () => {
+    let env: ReviewEnv;
+    before(async () => {
+        env = await reviewEnv({ env: { REVIEW_CONCURRENCY: "5", REVIEW_CONCURRENCY_PER_WORKSPACE: "5" } });
+        await patProject(env, "acme");
+    });
+    after(() => env.close());
+    const settings = (body?: Record<string, unknown>) =>
+        env.t.request("/api/v1/w/acme/p/app/settings/automation", { session: env.admin, ...(body ? { method: "PATCH", body } : {}) });
+
+    test("a project has no time limits until it sets them, and stops stalled reviews after 30 minutes", async () => {
+        const fresh = (await settings()).body;
+        assert.deepEqual(
+            [fresh.reviewTimeoutMinutes, fresh.fullScanTimeoutMinutes, fresh.stallMinutes],
+            [null, null, 30],
+            JSON.stringify(fresh),
+        );
+    });
+
+    test("limits are whole minutes within bounds, or null for none", async () => {
+        for (const bad of [
+            { reviewTimeoutMinutes: 4 },
+            { reviewTimeoutMinutes: 10_081 },
+            { reviewTimeoutMinutes: 7.5 },
+            { reviewTimeoutMinutes: "60" },
+            { fullScanTimeoutMinutes: 0 },
+            { fullScanTimeoutMinutes: 10_081 },
+            { stallMinutes: 0 },
+            { stallMinutes: 1441 },
+            { stallMinutes: 2.5 },
+            { stallMinutes: false },
+        ])
+            assert.equal((await settings(bad)).status, 400, JSON.stringify(bad));
+        // The edges, and longer than the old maximum of 720.
+        for (const good of [
+            { reviewTimeoutMinutes: 5, fullScanTimeoutMinutes: 10_080, stallMinutes: 1 },
+            { reviewTimeoutMinutes: 10_080, fullScanTimeoutMinutes: 5, stallMinutes: 1440 },
+            { reviewTimeoutMinutes: null, fullScanTimeoutMinutes: null, stallMinutes: null },
+        ]) {
+            const res = await settings(good);
+            assert.equal(res.status, 200, res.text);
+            assert.deepEqual(
+                {
+                    reviewTimeoutMinutes: res.body.reviewTimeoutMinutes,
+                    fullScanTimeoutMinutes: res.body.fullScanTimeoutMinutes,
+                    stallMinutes: res.body.stallMinutes,
+                },
+                good,
+            );
+        }
+        // Null is kept as "no limit", not replaced by a default, when the settings are read again.
+        const read = (await settings()).body;
+        assert.deepEqual([read.reviewTimeoutMinutes, read.fullScanTimeoutMinutes, read.stallMinutes], [null, null, null]);
+    });
+
+    test("a runner is given the limit for its kind of review, and the stall time", async () => {
+        const runs = env.t.services.runs;
+        const project = await projectOf(env, "acme");
+        const claimed = async (kind: "full" | "changes") => {
+            const queued = await runs.enqueue(ADMIN, project, specForBranch(kind, `limits-${kind}`, kind === "full" ? null : "main"));
+            const job = await runs.claim(runner("r1", 4));
+            assert.equal(job?.id, queued.id);
+            await runs.finish(runner("r1", 4), queued.id, { status: "failed", error: "test" });
+            return [job?.timeoutMinutes, job?.stallMinutes];
+        };
+        await settings({ reviewTimeoutMinutes: 90, fullScanTimeoutMinutes: 1000, stallMinutes: 10 });
+        assert.deepEqual(await claimed("full"), [1000, 10]);
+        assert.deepEqual(await claimed("changes"), [90, 10]);
+        await settings({ reviewTimeoutMinutes: null, stallMinutes: null });
+        assert.deepEqual(await claimed("changes"), [null, null]);
+        assert.deepEqual(await claimed("full"), [1000, null]);
     });
 });
 

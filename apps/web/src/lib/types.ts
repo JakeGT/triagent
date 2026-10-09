@@ -356,8 +356,11 @@ export interface Automation {
     failOnCritical: boolean;
     maxTokensBudget: number | null;
     archiveDeletedBranches: boolean;
-    reviewTimeoutMinutes: number;
-    fullScanTimeoutMinutes: number;
+    /** Null: no time limit. */
+    reviewTimeoutMinutes: number | null;
+    fullScanTimeoutMinutes: number | null;
+    /** Stop a review whose model has printed nothing for this long; null to never. */
+    stallMinutes: number | null;
     reviewPullRequestsFrom: "collaborators" | "everyone";
     /** The models reviews run with, in order; empty for the workspace's model. */
     models: ModelRef[];

@@ -126,6 +126,37 @@ test("a token can only have the access of the member it acts for", async ({ page
     await expect(page.getByRole("cell", { name: /^viewer bot/ })).toBeVisible();
 });
 
+test("time limits are switches: off means no limit, on shows the minutes", async ({ page, admin }) => {
+    const { ws, project } = await seedProject(admin);
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    await page.goto(`/w/${ws}/p/${project}/settings/automation`);
+    const review = page.getByRole("switch", { name: "Limit how long a pull request review can run" });
+    const scan = page.getByRole("switch", { name: "Limit how long a full scan can run" });
+    const stall = page.getByRole("switch", { name: "Limit how long a review can go without output" });
+    // A new project: no time limits, and stalled reviews stopped after 30 minutes.
+    await expect(review).not.toBeChecked();
+    await expect(scan).not.toBeChecked();
+    await expect(stall).toBeChecked();
+    await expect(page.getByLabel("Review time limit (minutes)")).toHaveCount(0);
+    await expect(page.getByLabel("Full scan time limit (minutes)")).toHaveCount(0);
+    await expect(page.getByLabel("Minutes without output")).toHaveValue("30");
+
+    await review.click();
+    await expect(page.getByLabel("Review time limit (minutes)")).toHaveValue("45");
+    await page.getByLabel("Review time limit (minutes)").fill("1000");
+    await stall.click();
+    await expect(page.getByLabel("Minutes without output")).toHaveCount(0);
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByText("Automation settings saved.")).toBeVisible();
+    const saved = await admin.get(`/api/v1/w/${ws}/p/${project}/settings/automation`);
+    expect([saved.reviewTimeoutMinutes, saved.fullScanTimeoutMinutes, saved.stallMinutes]).toEqual([1000, null, null]);
+
+    await page.reload();
+    await expect(review).toBeChecked();
+    await expect(page.getByLabel("Review time limit (minutes)")).toHaveValue("1000");
+    await expect(stall).not.toBeChecked();
+});
+
 test("deleting a project keeps its past reviews in Analytics unless asked to remove them", async ({ page, admin }) => {
     const ws = unique("del");
     await admin.post("/api/v1/workspaces", { slug: ws });

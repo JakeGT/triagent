@@ -3,7 +3,7 @@
 // each file the change touches, or every file for a scan) and progress on stderr, like the real one.
 //
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
-// (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5", "fake/orphan" (leaves a process behind
+// (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5" (five seconds of work, saying so all the while), "fake/silent-5" (five seconds without a word), "fake/orphan" (leaves a process behind
 // in its group), and for reviews with several models "wordy" (the same findings, put another way, two lines
 // lower) and "extra" (one more finding, at line 40 of the first file). It also prints what tests check: its arguments, which environment variables it got,
 // the model key (the server must redact it), its user config (~/.opencodereview/config.json, which the
@@ -105,6 +105,9 @@ if (m) {
         await sleep(100);
     }
 }
+// A model call that hangs: nothing is printed until it's over.
+const silent = /silent-(\d+)/.exec(model);
+if (silent) await sleep(Number(silent[1]) * 1000);
 if (model.includes("fail")) {
     say('[ocr] Subtask error for group "src": LLM completion error: POST "https://llm.test/chat/completions": 503 Service Unavailable');
     process.stdout.write(

@@ -15,6 +15,9 @@ import type { SecretScope } from "./secrets.ts";
 /** The smallest token budget a review can run with. */
 export const MIN_TOKENS_BUDGET = 10_000;
 
+/** The longest time limit a review can be given: a week. */
+const MAX_TIMEOUT_MINUTES = 10_080;
+
 export const AutomationSchema = z.object({
     /** Review new pull requests (and new pushes to them) automatically. */
     enabled: z.boolean(),
@@ -28,8 +31,15 @@ export const AutomationSchema = z.object({
     maxTokensBudget: z.number().int().min(MIN_TOKENS_BUDGET).nullable(),
     /** Archive a branch here when it's deleted on GitHub. */
     archiveDeletedBranches: z.boolean(),
-    reviewTimeoutMinutes: z.number().int().min(5).max(720),
-    fullScanTimeoutMinutes: z.number().int().min(5).max(720),
+    /** Stop a pull request or branch review that runs longer than this, or null for no limit. */
+    reviewTimeoutMinutes: z.number().int().min(5).max(MAX_TIMEOUT_MINUTES).nullable(),
+    /** The same, for a full scan. */
+    fullScanTimeoutMinutes: z.number().int().min(5).max(MAX_TIMEOUT_MINUTES).nullable(),
+    /**
+     * Stop a model's review as stalled when Open Code Review has printed nothing for this long, or null to
+     * never. Without a time limit it's what stops a hung model call holding a review's place for good.
+     */
+    stallMinutes: z.number().int().min(1).max(1440).nullable(),
     /**
      * Whose pull requests are reviewed automatically: "collaborators" (from a branch of the repository,
      * or by its owners, organisation members and collaborators), or "everyone" (forks by anyone too,
@@ -54,8 +64,9 @@ export const AUTOMATION_DEFAULTS: Automation = {
     failOnCritical: true,
     maxTokensBudget: null,
     archiveDeletedBranches: false,
-    reviewTimeoutMinutes: 45,
-    fullScanTimeoutMinutes: 120,
+    reviewTimeoutMinutes: null,
+    fullScanTimeoutMinutes: null,
+    stallMinutes: 30,
     reviewPullRequestsFrom: "collaborators",
     models: [],
 };

@@ -113,7 +113,10 @@ export interface ClaimedJob {
     gitRef: string | null;
     baseRef: string | null;
     headSha: string | null;
-    timeoutMinutes: number;
+    /** The project's time limit for this kind of review, or null for none. */
+    timeoutMinutes: number | null;
+    /** Stop a model's review that has printed nothing for this long, or null to never. */
+    stallMinutes: number | null;
     maxTokensBudget: number | null;
     /** The protocol OCR speaks to the model and this job's credentials for it: the first of `models`. */
     model: RunnerModel;
@@ -757,6 +760,7 @@ export class Runs {
             baseRef: job.baseRef,
             headSha: job.headSha,
             timeoutMinutes: job.kind === "full" ? automation.fullScanTimeoutMinutes : automation.reviewTimeoutMinutes,
+            stallMinutes: automation.stallMinutes,
             maxTokensBudget,
             model: forRunner(models[0] as RunModel),
             models: models.map((m) => ({ ...forRunner(m), label: m.label })),

@@ -16,6 +16,9 @@ import { ProjectModels } from "./project-models";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
+/** A week, and a day, in minutes. */
+const MAX_LIMIT = 10_080;
+const MAX_STALL = 1440;
 
 /** Number inputs are edited as text, so a half-typed value isn't forced into a number. */
 interface Form {
@@ -25,8 +28,13 @@ interface Form {
     pollMinutes: string;
     nightlyHourUtc: string;
     maxTokensBudget: string;
+    /** Each limit is a switch and, when it's on, a number. */
+    reviewLimit: boolean;
     reviewTimeoutMinutes: string;
+    fullScanLimit: boolean;
     fullScanTimeoutMinutes: string;
+    stallCheck: boolean;
+    stallMinutes: string;
     reviewPullRequestsFrom: Automation["reviewPullRequestsFrom"];
     models: ModelRef[];
 }
@@ -38,8 +46,12 @@ const toForm = (a: Automation): Form => ({
     pollMinutes: String(a.pollMinutes),
     nightlyHourUtc: a.nightlyHourUtc === null ? "" : String(a.nightlyHourUtc),
     maxTokensBudget: a.maxTokensBudget === null ? "" : String(a.maxTokensBudget),
-    reviewTimeoutMinutes: String(a.reviewTimeoutMinutes),
-    fullScanTimeoutMinutes: String(a.fullScanTimeoutMinutes),
+    reviewLimit: a.reviewTimeoutMinutes !== null,
+    reviewTimeoutMinutes: String(a.reviewTimeoutMinutes ?? ""),
+    fullScanLimit: a.fullScanTimeoutMinutes !== null,
+    fullScanTimeoutMinutes: String(a.fullScanTimeoutMinutes ?? ""),
+    stallCheck: a.stallMinutes !== null,
+    stallMinutes: String(a.stallMinutes ?? ""),
     reviewPullRequestsFrom: a.reviewPullRequestsFrom,
     models: a.models ?? [],
 });
@@ -57,8 +69,9 @@ function fromForm(f: Form): Automation {
         pollMinutes: whole("Check for pull requests every", f.pollMinutes, 1, 60),
         nightlyHourUtc: f.nightlyHourUtc === "" ? null : whole("Nightly scan hour", f.nightlyHourUtc, 0, 23),
         maxTokensBudget: f.maxTokensBudget.trim() === "" ? null : whole("Token budget", f.maxTokensBudget, 10_000, 1_000_000_000),
-        reviewTimeoutMinutes: whole("Review time limit", f.reviewTimeoutMinutes, 5, 720),
-        fullScanTimeoutMinutes: whole("Full scan time limit", f.fullScanTimeoutMinutes, 5, 720),
+        reviewTimeoutMinutes: f.reviewLimit ? whole("Review time limit", f.reviewTimeoutMinutes, 5, MAX_LIMIT) : null,
+        fullScanTimeoutMinutes: f.fullScanLimit ? whole("Full scan time limit", f.fullScanTimeoutMinutes, 5, MAX_LIMIT) : null,
+        stallMinutes: f.stallCheck ? whole("Minutes without output", f.stallMinutes, 1, MAX_STALL) : null,
         reviewPullRequestsFrom: f.reviewPullRequestsFrom,
         models: f.models.map((m, i) => {
             const model = m.model.trim();
@@ -85,6 +98,60 @@ function Toggle({
         <CheckField label={label} hint={hint}>
             {(p) => <Switch {...p} checked={checked} onCheckedChange={onChange} disabled={disabled} />}
         </CheckField>
+    );
+}
+
+/** A limit that's off (none) or on with a number of minutes, shown only while it's on. */
+function Limit({
+    label,
+    hint,
+    field,
+    min,
+    max,
+    initial,
+    on,
+    value,
+    disabled,
+    onChange,
+}: {
+    label: string;
+    hint: string;
+    /** The number field's own label. */
+    field: string;
+    min: number;
+    max: number;
+    /** What the number starts at when the limit is switched on. */
+    initial: string;
+    on: boolean;
+    value: string;
+    disabled: boolean;
+    onChange(on: boolean, value: string): void;
+}) {
+    return (
+        <>
+            <Toggle
+                label={label}
+                hint={hint}
+                checked={on}
+                disabled={disabled}
+                onChange={(v) => onChange(v, v && !value ? initial : value)}
+            />
+            {on && (
+                <Field label={field} hint={`${min.toLocaleString("en")} to ${max.toLocaleString("en")}.`} width="xs">
+                    {(p) => (
+                        <Input
+                            {...p}
+                            type="number"
+                            min={min}
+                            max={max}
+                            value={value}
+                            onChange={(e) => onChange(true, e.target.value)}
+                            disabled={disabled}
+                        />
+                    )}
+                </Field>
+            )}
+        </>
     );
 }
 
@@ -172,23 +239,47 @@ export function ProjectAutomation() {
                                 />
                             )}
                         </Field>
-                        <Field
-                            label="Review time limit (minutes)"
-                            hint="A pull request review that runs longer is stopped. 5 to 720."
-                            width="xs"
-                        >
-                            {(p) => (
-                                <Input
-                                    {...p}
-                                    type="number"
-                                    min={5}
-                                    max={720}
-                                    value={d.reviewTimeoutMinutes}
-                                    onChange={(e) => set({ reviewTimeoutMinutes: e.target.value })}
-                                    disabled={!editable}
-                                />
-                            )}
-                        </Field>
+                    </SettingsSection>
+                    <SettingsSection
+                        title="Time limits"
+                        description="Reviews run for as long as they need unless you limit them. A limit applies to each model's review."
+                    >
+                        <Limit
+                            label="Limit how long a pull request review can run"
+                            hint="A review of a pull request, or of a branch's changes, that runs longer is stopped."
+                            field="Review time limit (minutes)"
+                            min={5}
+                            max={MAX_LIMIT}
+                            initial="45"
+                            on={d.reviewLimit}
+                            value={d.reviewTimeoutMinutes}
+                            disabled={!editable}
+                            onChange={(on, value) => set({ reviewLimit: on, reviewTimeoutMinutes: value })}
+                        />
+                        <Limit
+                            label="Limit how long a full scan can run"
+                            hint="A full scan that runs longer is stopped."
+                            field="Full scan time limit (minutes)"
+                            min={5}
+                            max={MAX_LIMIT}
+                            initial="120"
+                            on={d.fullScanLimit}
+                            value={d.fullScanTimeoutMinutes}
+                            disabled={!editable}
+                            onChange={(on, value) => set({ fullScanLimit: on, fullScanTimeoutMinutes: value })}
+                        />
+                        <Limit
+                            label="Limit how long a review can go without output"
+                            hint="A review whose model has produced nothing for this long is stopped and marked as stalled, so a model that stops answering doesn't hold up other reviews."
+                            field="Minutes without output"
+                            min={1}
+                            max={MAX_STALL}
+                            initial="30"
+                            on={d.stallCheck}
+                            value={d.stallMinutes}
+                            disabled={!editable}
+                            onChange={(on, value) => set({ stallCheck: on, stallMinutes: value })}
+                        />
                     </SettingsSection>
                     <SettingsSection title="Full scans and branches">
                         <Field label="Nightly full scan of the default branch" hint="The hour it starts, in UTC." width="sm">
@@ -206,19 +297,6 @@ export function ProjectAutomation() {
                                         </option>
                                     ))}
                                 </NativeSelect>
-                            )}
-                        </Field>
-                        <Field label="Full scan time limit (minutes)" hint="5 to 720." width="xs">
-                            {(p) => (
-                                <Input
-                                    {...p}
-                                    type="number"
-                                    min={5}
-                                    max={720}
-                                    value={d.fullScanTimeoutMinutes}
-                                    onChange={(e) => set({ fullScanTimeoutMinutes: e.target.value })}
-                                    disabled={!editable}
-                                />
                             )}
                         </Field>
                         <Field
