@@ -56,7 +56,7 @@ export const authRoutes: Route[] = [
         tag: "Account",
         summary: "Sign in through the identity provider (AUTH_MODE=oidc): redirects there and back to `next`",
         description:
-            "`next` must be a path on this site. `prompt=login&max_age=0` asks the provider to check who you are again, for steps that need a recent sign-in.",
+            "`next` must be a path on this site. `prompt=login&max_age=60` asks the provider to check who you are again, for steps that need a recent sign-in.",
         query: z.object({
             next: z.string().max(2000).optional(),
             prompt: z.enum(["login", "consent", "select_account", "none"]).optional(),
@@ -130,7 +130,7 @@ export const authRoutes: Route[] = [
         browserOnly: true,
         tag: "Account",
         summary: "Confirm it's you with your password, for steps that need a recent sign-in (AUTH_MODE=local)",
-        description: "With an identity provider, sign in again through `/auth/login?prompt=login&max_age=0` instead.",
+        description: "With an identity provider, sign in again through `/auth/login?prompt=login&max_age=60` instead.",
         body: z.object({ password: z.string().min(1).max(1024) }),
         async handler({ services, principal, body, ip }) {
             if (services.config.authMode !== "local")

@@ -115,21 +115,24 @@ test("with an identity provider, confirming it's you is signing in there again, 
     const reauth = new URL(refused.body.reauthUrl, "http://x");
     assert.equal(reauth.pathname, "/auth/login");
     assert.equal(reauth.searchParams.get("prompt"), "login");
-    assert.equal(reauth.searchParams.get("max_age"), "0");
+    assert.equal(reauth.searchParams.get("max_age"), "60");
     reauth.searchParams.set("next", "/w/ada/settings/review-model");
 
-    // A provider that doesn't actually check again (an old auth_time despite max_age=0) isn't believed.
+    // A provider that doesn't actually check again (an old auth_time despite max_age=60) isn't believed.
     const stale = await t.signIn(ada, { query: reauth.search.slice(1), from: session, tamper: { authAgo: 3600 } });
     assert.equal(stale.location, "/sign-in?error=failed");
 
     const again = await t.signIn(ada, { query: reauth.search.slice(1), from: session });
     assert.equal(again.authorization.get("prompt"), "login");
-    assert.equal(again.authorization.get("max_age"), "0");
+    assert.equal(again.authorization.get("max_age"), "60");
     assert.equal(again.location, "/w/ada/settings/review-model");
     const fresh = again.session as Session;
     assert.equal((await t.request(url, { method: "PUT", session: fresh, body: { key: "sk-or-key-1234" } })).status, 200);
     // The old session was replaced, not left behind.
     assert.equal((await t.request("/api/v1/me", { session })).status, 401);
+    // Signed in at the provider within the last minute: it needn't ask again, and that counts.
+    const recent = await t.signIn(ada, { query: reauth.search.slice(1), from: fresh, tamper: { authAgo: 45 } });
+    assert.equal(recent.location, "/w/ada/settings/review-model");
 });
 
 test("a sign-in whose ID token doesn't say when the person authenticated isn't a recent one", async () => {

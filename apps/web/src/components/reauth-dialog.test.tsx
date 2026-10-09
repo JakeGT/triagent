@@ -55,7 +55,7 @@ describe("ReauthDialog", () => {
             error: "Confirm it's you first.",
             code: "reauth_required",
             method: "provider",
-            reauthUrl: "/auth/login?prompt=login&max_age=0&next=%2F",
+            reauthUrl: "/auth/login?prompt=login&max_age=60&next=%2F",
         };
         let first: Promise<boolean> = Promise.resolve(true);
         let second: Promise<boolean> = Promise.resolve(true);
@@ -71,10 +71,10 @@ describe("ReauthDialog", () => {
     });
 
     it("sends people back to the page they were on, and only ever to this site's sign-in", () => {
-        expect(reauthHref("/auth/login?prompt=login&max_age=0&next=%2F", "/w/acme/settings/review-model?x=1")).toBe(
-            "/auth/login?prompt=login&max_age=0&next=%2Fw%2Facme%2Fsettings%2Freview-model%3Fx%3D1",
+        expect(reauthHref("/auth/login?prompt=login&max_age=60&next=%2F", "/w/acme/settings/review-model?x=1")).toBe(
+            "/auth/login?prompt=login&max_age=60&next=%2Fw%2Facme%2Fsettings%2Freview-model%3Fx%3D1",
         );
-        expect(reauthHref("https://evil.example/auth/login", "/w/acme")).toBe("/auth/login?prompt=login&max_age=0&next=%2Fw%2Facme");
-        expect(reauthHref("/auth/login?prompt=login&max_age=0", "//evil.example")).toBe("/auth/login?prompt=login&max_age=0&next=%2F");
+        expect(reauthHref("https://evil.example/auth/login", "/w/acme")).toBe("/auth/login?prompt=login&max_age=60&next=%2Fw%2Facme");
+        expect(reauthHref("/auth/login?prompt=login&max_age=60", "//evil.example")).toBe("/auth/login?prompt=login&max_age=60&next=%2F");
     });
 });

@@ -121,7 +121,8 @@ export function reauthRequired(services: Services): ApiError {
         code: "reauth_required",
         details:
             services.config.authMode === "oidc"
-                ? { method: "provider", reauthUrl: "/auth/login?prompt=login&max_age=0&next=%2F" }
+                ? // max_age=60, not 0: Authentik ignores 0 (and forces prompt=login only once a session), handing back an old auth_time.
+                  { method: "provider", reauthUrl: "/auth/login?prompt=login&max_age=60&next=%2F" }
                 : { method: "password" },
     });
 }

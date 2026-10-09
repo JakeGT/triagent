@@ -67,10 +67,10 @@ Changes that need a recent sign-in, one from the last `REAUTH_MINUTES` (15 by de
 
 Reading these settings (the token list, invites, the audit log) doesn't need one. A new route opts in with `recentSignIn: true` when it handles a secret, or gives access to one, without those permissions; a test checks every such route does. An older session gets `401` with `code: "reauth_required"`. The web app then explains and asks:
 
-- **With a provider:** it sends the person to `reauthUrl` (`/auth/login?prompt=login&max_age=0&next=…`), so the provider asks them to authenticate again (including MFA, if the provider requires it). Triagent checks `auth_time` in the new ID token, so a provider that skips the check isn't believed. The person comes back to the same page; anything typed there has to be entered again.
+- **With a provider:** it sends the person to `reauthUrl` (`/auth/login?prompt=login&max_age=60&next=…`), so the provider asks them to authenticate again (including MFA, if the provider requires it). Triagent checks `auth_time` in the new ID token, so a provider that skips the check isn't believed. The web app opens it in a window of its own, which comes back to `/reauthenticated` and tells the page (over a `BroadcastChannel`); the page fetches the new session's CSRF token and sends the step again, so nothing typed is lost. With popups blocked, the whole page goes there and back instead.
 - **With passwords:** `POST /auth/reauth {password}` (slowed like signing in), and the original request is sent again.
 
-The time comes from the ID token's `auth_time`, so signing in through a long-lived single sign-on session at the provider counts from when the person actually authenticated there. A provider may leave `auth_time` out when it isn't asked for `max_age`. Then nothing shows the sign-in was recent, so it isn't treated as one: the first step that needs a recent sign-in asks, and that step-up does ask for `max_age=0`, which makes `auth_time` required (a sign-in without it fails). Triagent doesn't ask for `max_age` on every sign-in, because a provider that never sends `auth_time` would then let nobody in at all; ordinary sign-ins work without it, and only the step-up needs it.
+The time comes from the ID token's `auth_time`, so signing in through a long-lived single sign-on session at the provider counts from when the person actually authenticated there. A provider may leave `auth_time` out when it isn't asked for `max_age`. Then nothing shows the sign-in was recent, so it isn't treated as one: the first step that needs a recent sign-in asks, and that step-up does ask for `max_age=60`, which makes `auth_time` required (a sign-in without it fails). Triagent doesn't ask for `max_age` on every sign-in, because a provider that never sends `auth_time` would then let nobody in at all; ordinary sign-ins work without it, and only the step-up needs it.
 
 ### When access changes take effect
 
@@ -139,6 +139,6 @@ Check against your real provider when you deploy:
 
 - the `groups` claim is present in the ID token, with group names as you expect;
 - `email_verified`: whether it's sent and true, which decides `OIDC_TRUST_EMAIL`;
-- `prompt=login` and `max_age=0` make the provider authenticate again and send a fresh `auth_time`;
+- `prompt=login` and `max_age=60` make the provider authenticate again (unless the person did within the last minute) and send a fresh `auth_time`. Not `max_age=0`: Authentik treats 0 as not asked, and its `prompt=login` only forces a new sign-in once per session, so with 0 it handed back the old `auth_time`, which Triagent (rightly) refused;
 - the sign-out redirect comes back to `PUBLIC_ORIGIN` (Authentik may need it registered);
 - a person outside the application's bound groups is stopped at the provider.
