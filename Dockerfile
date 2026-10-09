@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Two images from one Dockerfile:
 #
 #   docker build --target server -t triagent-server .   the API, MCP endpoint and webhooks, serving the web app
