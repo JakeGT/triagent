@@ -3,7 +3,7 @@
 // still contains, and reopens resolved findings it still reports.
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { CATEGORIES, type Category, ROLE_PERMISSIONS, SCOPE_PERMISSIONS, SEVERITIES, type Severity } from "@triagent/shared";
+import { CATEGORIES, type Category, permissionsOf, ROLE_PERMISSIONS, SEVERITIES, type Severity } from "@triagent/shared";
 import { BranchView, compareBranches } from "../domain/branch.ts";
 import { COMMIT, cleanText, isValidBranch } from "../domain/names.ts";
 import { EMPTY_REVIEW, parseReport, type RawComment, type RawReport, type Review, sameFinding, type UploadMeta } from "../domain/report.ts";
@@ -554,7 +554,9 @@ export class Reports {
         if (p.actorTokenId) {
             const t = await tx.tokens.get(p.actorTokenId);
             if (!t || t.workspaceId !== project.workspaceId || (t.expiresAt && Date.parse(t.expiresAt) < Date.now())) return false;
-            return SCOPE_PERMISSIONS[t.scope].includes("upload");
+            // As for the token itself: its scope, capped by its owner's role now.
+            const m = t.ownerUserId ? await tx.memberships.get(project.workspaceId, t.ownerUserId) : null;
+            return Boolean(m && permissionsOf({ kind: "token", scope: t.scope, role: m.role }).has("upload"));
         }
         if (p.actorUserId) {
             const m = await tx.memberships.get(project.workspaceId, p.actorUserId);

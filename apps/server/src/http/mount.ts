@@ -104,9 +104,10 @@ export function actorOf(principal: Principal | null, via: Actor["via"], ip: stri
 
 function refuse(principal: Principal, access: Access, permission: string): ApiError {
     if (principal.kind === "token") {
-        const scope = access.grant.kind === "scope" ? access.grant.scope : "read";
+        const scope = access.grant.kind === "token" ? access.grant.scope : "read";
+        const role = access.grant.kind === "token" ? access.grant.role : "viewer";
         return forbidden(
-            `This token has "${scope}" access (${SCOPE_INFO[scope]}), which doesn't include ${permission}. Ask an admin for a token with more access.`,
+            `This token has "${scope}" access (${SCOPE_INFO[scope]}) and acts for ${principal.owner.displayName}, whose role here is ${role}: together they don't allow ${permission}. A token never has more access than the person it acts for.`,
         );
     }
     return forbidden(`Your role in this workspace doesn't allow ${permission}.`);
@@ -151,7 +152,11 @@ export function mount(app: Hono, services: Services, routes: Route[]): void {
             let principal: Principal | null = null;
             if (r.scope !== "public") {
                 const auth = await authenticate(c, services);
-                if (auth === "invalid") throw new ApiError(401, "Invalid or expired API token.");
+                if (auth === "invalid")
+                    throw new ApiError(
+                        401,
+                        "Invalid or expired API token, or the person it acts for is no longer a member of its workspace.",
+                    );
                 if (!auth) throw new ApiError(401, "Sign in, or send Authorization: Bearer <token>.");
                 principal = auth;
                 if (principal.kind === "token" && needsBrowser(r)) {

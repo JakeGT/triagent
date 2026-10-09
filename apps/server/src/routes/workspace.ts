@@ -62,9 +62,7 @@ export const workspaceRoutes: Route[] = [
             const stillValid = async () => {
                 const current =
                     principal?.kind === "token"
-                        ? (await services.accounts.tokenStillValid(principal.token.id))
-                            ? principal
-                            : null
+                        ? await services.accounts.tokenNow(principal.token.id)
                         : principal?.kind === "session"
                           ? await services.accounts.validSession(principal.session, { touch: false })
                           : null;

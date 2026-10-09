@@ -1,7 +1,7 @@
 // Settings: API tokens shown once, write-only secrets, and what a viewer can and can't do.
 
 import { ADMIN_PASSWORD, ADMIN_USER, PASSWORD } from "./constants";
-import { Api, addMember, expect, issuesOf, seedProject, signInPage, test } from "./fixtures";
+import { Api, addMember, createUser, expect, issuesOf, seedProject, signInPage, test, unique } from "./fixtures";
 
 test("a new API token is shown once, works, and is gone after navigating away", async ({ page, admin }) => {
     const { ws, project } = await seedProject(admin);
@@ -101,4 +101,27 @@ test("a viewer sees settings and issues but can't change them", async ({ page, a
         /403/,
     );
     await direct.ctx.dispose();
+});
+
+test("a token can only have the access of the member it acts for", async ({ page, admin, baseURL }) => {
+    const ws = unique("tok");
+    await admin.post("/api/v1/workspaces", { slug: ws });
+    const username = unique("viewer");
+    await createUser(admin, baseURL as string, username);
+    await admin.post(`/api/v1/w/${ws}/settings/members`, { username, role: "viewer" });
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    await page.goto(`/w/${ws}/settings/tokens`);
+
+    // Acting for you (an owner), every scope; for a viewer, read only.
+    await expect(page.getByRole("radio", { name: /^manage/ })).toBeEnabled();
+    await page.getByLabel("Acts for").selectOption({ label: `${username} · viewer` });
+    await expect(page.getByRole("radio", { name: /^read/ })).toBeChecked();
+    for (const scope of ["write", "upload", "full", "manage"])
+        await expect(page.getByRole("radio", { name: new RegExp(`^${scope}`) })).toBeDisabled();
+    await expect(page.getByText(`More than ${username} has as viewer.`).first()).toBeVisible();
+    await expect(page.getByRole("option", { name: "Nobody" })).toHaveCount(0);
+    await page.getByLabel("Name").fill("viewer bot");
+    await page.getByRole("button", { name: "Create token" }).click();
+    await expect(page.getByTestId("one-time-reveal")).toBeVisible();
+    await expect(page.getByRole("cell", { name: /^viewer bot/ })).toBeVisible();
 });

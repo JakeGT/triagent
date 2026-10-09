@@ -31,7 +31,7 @@ Requests flow `route → mount wrapper → handler → service → store`. Servi
 Everything belongs to a workspace: a person's personal workspace, or an organisation. Paths carry it: `/api/v1/w/{workspace}/p/{project}/…`.
 
 - A person's access comes from their **role** in that workspace (viewer, editor, admin, owner).
-- An API token belongs to **one workspace** and has a **scope** (read, write, upload, full, manage).
+- An API token belongs to **one workspace**, has a **scope** (read, write, upload, full, manage), and **acts for a member** of that workspace. It never has more access than they do: its permissions are what its scope allows *and* their role allows now (`permissionsOf({ kind: "token", scope, role })`), checked on every request, every MCP call, each live stream's heartbeat (a role change also closes their tokens' streams) and when an upload link it made is used. It can't be made with a scope beyond its member's role, it loses what they lose, it's revoked when they leave, and a token acting for nobody isn't accepted. It never reaches the member's other workspaces.
 - Both map onto one table of **permissions** (`packages/shared/src/permissions.ts`). Every route and MCP tool names the permission it needs; tests fail if one doesn't.
 - `secrets`, `members`, `tokens` and `workspace` are **browser-only**: no token scope includes them, so a leaked token can't escalate and secrets never pass through an agent.
 - Someone without access to a workspace gets 404 for everything in it, the same as for a workspace that doesn't exist. A test calls every route as an outsider to prove it.

@@ -66,10 +66,23 @@ export const SCOPE_INFO: Readonly<Record<TokenScope, string>> = {
  */
 export const BROWSER_ONLY: ReadonlySet<Permission> = new Set(["secrets", "members", "tokens", "workspace"]);
 
-export type Grant = { kind: "role"; role: Role } | { kind: "scope"; scope: TokenScope };
+/**
+ * What a person or token may do in a workspace. A token acts for a member (its owner) and has at most
+ * their access: what its scope allows that their current role allows too, so it never has more than
+ * they do, and loses what they lose.
+ */
+export type Grant = { kind: "role"; role: Role } | { kind: "token"; scope: TokenScope; role: Role };
 
 export function permissionsOf(grant: Grant): ReadonlySet<Permission> {
-    return new Set(grant.kind === "role" ? ROLE_PERMISSIONS[grant.role] : SCOPE_PERMISSIONS[grant.scope]);
+    if (grant.kind === "role") return new Set(ROLE_PERMISSIONS[grant.role]);
+    const role = new Set(ROLE_PERMISSIONS[grant.role]);
+    return new Set(SCOPE_PERMISSIONS[grant.scope].filter((p) => role.has(p) && !BROWSER_ONLY.has(p)));
+}
+
+/** The scopes a member with `role` can give a token acting for them: none with more than they have. */
+export function scopesFor(role: Role): TokenScope[] {
+    const allowed = new Set(ROLE_PERMISSIONS[role]);
+    return TOKEN_SCOPES.filter((s) => SCOPE_PERMISSIONS[s].every((p) => allowed.has(p)));
 }
 
 export function can(grant: Grant, permission: Permission): boolean {

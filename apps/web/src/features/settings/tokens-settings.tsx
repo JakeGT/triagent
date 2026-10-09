@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SCOPE_INFO, TOKEN_SCOPES, type TokenScope } from "@triagent/shared";
+import { SCOPE_INFO, scopesFor, TOKEN_SCOPES, type TokenScope } from "@triagent/shared";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -19,20 +19,25 @@ import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
 
 function CreateToken({ onCreated }: { onCreated(token: string): void }) {
     const me = useMe();
-    const { ws } = useWorkspace();
+    const { ws, role: myRole } = useWorkspace();
     const queryClient = useQueryClient();
     const members = useQuery(membersQuery(ws));
     const [name, setName] = useState("");
     const [scope, setScope] = useState<TokenScope>("full");
     const [days, setDays] = useState("90");
     const [owner, setOwner] = useState(me.user.id);
+    // A token has at most the access of the member it acts for: only their scopes can be chosen.
+    const list = members.data ?? [{ user: me.user, role: myRole, since: "" }];
+    const ownerMember = list.find((m) => m.user.id === owner);
+    const allowed = ownerMember ? scopesFor(ownerMember.role) : [];
+    const chosen = allowed.includes(scope) ? scope : (allowed.at(-1) ?? scope);
     const create = useMutation({
         mutationFn: () =>
             api.post<{ token: string; record: ApiToken }>(`${paths.workspace(ws)}/settings/tokens`, {
                 name: name.trim(),
-                scope,
+                scope: chosen,
                 expiresInDays: days.trim() ? Number(days) : null,
-                ownerUserId: owner || null,
+                ownerUserId: owner,
             }),
         onSuccess: async (r) => {
             onCreated(r.token);
@@ -54,10 +59,30 @@ function CreateToken({ onCreated }: { onCreated(token: string): void }) {
                         <Input {...p} value={name} onChange={(e) => setName(e.target.value)} required maxLength={64} autoComplete="off" />
                     )}
                 </Field>
+                <FieldRow>
+                    <Field
+                        label="Acts for"
+                        hint="The member it works for: it has at most their access, loses what they lose, and is revoked if they leave. They hear about the reviews it starts."
+                    >
+                        {(p) => (
+                            <NativeSelect {...p} value={owner} onChange={(e) => setOwner(e.target.value)}>
+                                {list.map((m) => (
+                                    <option key={m.user.id} value={m.user.id}>
+                                        {m.user.displayName}
+                                        {m.user.id === me.user.id ? " (you)" : ""} · {m.role}
+                                    </option>
+                                ))}
+                            </NativeSelect>
+                        )}
+                    </Field>
+                    <Field label="Expires after (days)" hint="Empty for a token that never expires." width="xs">
+                        {(p) => <Input {...p} type="number" min={1} max={3650} value={days} onChange={(e) => setDays(e.target.value)} />}
+                    </Field>
+                </FieldRow>
                 <ChoiceField
                     legend="Access"
                     name="scope"
-                    value={scope}
+                    value={chosen}
                     onChange={setScope}
                     choices={TOKEN_SCOPES.map((s) => ({
                         value: s,
@@ -66,27 +91,15 @@ function CreateToken({ onCreated }: { onCreated(token: string): void }) {
                                 <span className="font-mono">{s}</span>: {SCOPE_INFO[s]}
                             </>
                         ),
+                        ...(allowed.includes(s)
+                            ? {}
+                            : {
+                                  disabled: true,
+                                  hint: `More than ${ownerMember?.user.id === me.user.id ? "you have" : `${ownerMember?.user.displayName ?? "they"} has`} as ${ownerMember?.role ?? "a member"}.`,
+                              }),
                     }))}
                     hint="No token can manage members or tokens, or set secrets: those stay with people signed in here."
                 />
-                <FieldRow>
-                    <Field label="Expires after (days)" hint="Empty for a token that never expires." width="xs">
-                        {(p) => <Input {...p} type="number" min={1} max={3650} value={days} onChange={(e) => setDays(e.target.value)} />}
-                    </Field>
-                    <Field label="Acts for" hint="Who hears about the reviews it starts. Revoked if they leave the workspace.">
-                        {(p) => (
-                            <NativeSelect {...p} value={owner} onChange={(e) => setOwner(e.target.value)}>
-                                <option value="">Nobody</option>
-                                {(members.data ?? [{ user: me.user, role: "owner", since: "" }]).map((m) => (
-                                    <option key={m.user.id} value={m.user.id}>
-                                        {m.user.displayName}
-                                        {m.user.id === me.user.id ? " (you)" : ""}
-                                    </option>
-                                ))}
-                            </NativeSelect>
-                        )}
-                    </Field>
-                </FieldRow>
                 <FieldError message={create.error ? errorMessage(create.error) : null} />
                 <FormActions>
                     <Button type="submit" disabled={create.isPending || !name.trim()}>
@@ -160,7 +173,13 @@ export function TokensSettings() {
                                         <span className="font-mono">{t.scope}</span>
                                         <div className="text-muted-foreground">{SCOPE_INFO[t.scope]}</div>
                                     </TableCell>
-                                    <TableCell className="text-xs">{t.owner?.displayName ?? "Nobody"}</TableCell>
+                                    <TableCell className="text-xs">
+                                        {t.owner?.displayName ?? (
+                                            <span className="text-destructive">
+                                                Nobody: it no longer works. Revoke it, and make one that acts for a member.
+                                            </span>
+                                        )}
+                                    </TableCell>
                                     <TableCell className="text-xs">
                                         {formatDate(t.createdAt)}
                                         <div className="text-muted-foreground">by {t.createdBy}</div>

@@ -82,7 +82,11 @@ export function platformRoutes(services: Services, all: () => Route[]): Route[] 
                 if (principal?.kind !== "token") throw forbidden("Connect to MCP with an API token: Authorization: Bearer tri_…");
                 const workspace = await s.store.workspaces.get(principal.token.workspaceId);
                 if (!workspace) throw new ApiError(401, "This token's workspace no longer exists.");
-                const [status, payload] = await mcp(body, { workspace, grant: { kind: "scope", scope: principal.token.scope } }, actor);
+                const [status, payload] = await mcp(
+                    body,
+                    { workspace, grant: { kind: "token", scope: principal.token.scope, role: principal.role } },
+                    actor,
+                );
                 if (status === 202) return c.body(null, 202);
                 return json(payload, status);
             },

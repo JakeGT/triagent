@@ -1,7 +1,7 @@
 // People, sign-ins, workspaces, memberships and API tokens.
 
 import { randomBytes } from "node:crypto";
-import { type Grant, ROLES, type Role, roleRank, TOKEN_SCOPES, type TokenScope } from "@triagent/shared";
+import { type Grant, ROLES, type Role, roleRank, scopesFor, TOKEN_SCOPES, type TokenScope } from "@triagent/shared";
 import { isValidSlug, USERNAME } from "../domain/names.ts";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.ts";
 import {
@@ -24,7 +24,8 @@ import type { Identity } from "./oidc.ts";
 export const TOKEN_PREFIX = "tri_";
 const MAX_SESSIONS_PER_USER = 20;
 
-export type Principal = { kind: "session"; user: User; session: Session } | { kind: "token"; token: ApiToken; owner: User | null };
+/** A token's `role` is its owner's role in the token's workspace now: the token never has more. */
+export type Principal = { kind: "session"; user: User; session: Session } | { kind: "token"; token: ApiToken; owner: User; role: Role };
 
 /** What a principal may do in one workspace. */
 export interface Access {
@@ -539,7 +540,7 @@ export class Accounts {
         if (!workspace) return null;
         if (principal.kind === "token")
             return principal.token.workspaceId === workspace.id
-                ? { workspace, grant: { kind: "scope", scope: principal.token.scope } }
+                ? { workspace, grant: { kind: "token", scope: principal.token.scope, role: principal.role } }
                 : null;
         const m = await this.repos.memberships.get(workspace.id, principal.user.id);
         return m ? { workspace, grant: { kind: "role", role: m.role } } : null;
@@ -586,8 +587,12 @@ export class Accounts {
             if (!m) throw notFound("That person isn't a member.");
             this.checkRoleChange(this.roleOf(access), m.role, role);
             await w.tx.memberships.put({ ...m, role });
-            // Their live connections pick up the new role when they reconnect.
-            w.afterCommit(() => this.core.events.disconnect(`user:${userId}`, access.workspace.id));
+            // Their live connections, and their tokens', pick up the new role when they reconnect.
+            const theirTokens = (await w.tx.tokens.forWorkspace(access.workspace.id)).filter((t) => t.ownerUserId === userId);
+            w.afterCommit(() => {
+                this.core.events.disconnect(`user:${userId}`, access.workspace.id);
+                for (const t of theirTokens) this.core.events.disconnect(`token:${t.id}`);
+            });
             await w.audit({
                 workspaceId: access.workspace.id,
                 kind: "member",
@@ -633,12 +638,19 @@ export class Accounts {
 
     // ---- API tokens --------------------------------------------------------------------
 
-    /** The token for an Authorization header value, if valid. */
+    /**
+     * The token for an Authorization header value, if valid: not expired, and acting for someone who's
+     * still a member of its workspace (whose role, now, caps what it can do). A token acting for nobody
+     * (made before every token had to) isn't accepted.
+     */
     async token(raw: string): Promise<Principal | null> {
         if (!raw.startsWith(TOKEN_PREFIX) || raw.length > 200) return null;
         const token = await this.repos.tokens.byHash(sha256(raw));
         if (!token || !safeEqual(token.hash, sha256(raw))) return null;
         if (token.expiresAt && Date.parse(token.expiresAt) < Date.now()) return null;
+        const owner = token.ownerUserId ? await this.repos.users.get(token.ownerUserId) : null;
+        const membership = owner ? await this.repos.memberships.get(token.workspaceId, owner.id) : null;
+        if (!owner || !membership) return null;
         // Record "last used" at most every 10 minutes per token.
         const last = this.tokenSeen.get(token.id) ?? 0;
         if (Date.now() - last > 600_000) {
@@ -650,13 +662,16 @@ export class Accounts {
                 })
                 .catch(() => {});
         }
-        const owner = token.ownerUserId ? await this.repos.users.get(token.ownerUserId) : null;
-        return { kind: "token", token, owner };
+        return { kind: "token", token, owner, role: membership.role };
     }
 
-    async tokenStillValid(id: string): Promise<boolean> {
+    /** The token as it is now (with its member's current role), or null once it's revoked, expired or its member left. */
+    async tokenNow(id: string): Promise<Principal | null> {
         const t = await this.repos.tokens.get(id);
-        return Boolean(t) && !(t?.expiresAt && Date.parse(t.expiresAt) < Date.now());
+        if (!t || (t.expiresAt && Date.parse(t.expiresAt) < Date.now())) return null;
+        const owner = t.ownerUserId ? await this.repos.users.get(t.ownerUserId) : null;
+        const membership = owner ? await this.repos.memberships.get(t.workspaceId, owner.id) : null;
+        return owner && membership ? { kind: "token", token: t, owner, role: membership.role } : null;
     }
 
     async listTokens(workspace: Workspace) {
@@ -667,11 +682,17 @@ export class Accounts {
         return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }
 
-    private async checkOwner(tx: Repos, workspace: Workspace, ownerUserId: string | null): Promise<User | null> {
-        if (!ownerUserId) return null;
+    /** A token acts for a member, and its scope may not give it more than their role does. */
+    private async checkOwner(tx: Repos, workspace: Workspace, ownerUserId: string | null, scope: TokenScope): Promise<User> {
+        if (!ownerUserId) throw badRequest("A token acts for a member of its workspace, and has at most their access. Choose who.");
         const user = await tx.users.get(ownerUserId);
-        if (!user || !(await tx.memberships.get(workspace.id, user.id)))
-            throw badRequest("A token can only act for a member of its workspace.");
+        const membership = user ? await tx.memberships.get(workspace.id, user.id) : null;
+        if (!user || !membership) throw badRequest("A token can only act for a member of its workspace.");
+        const allowed = scopesFor(membership.role);
+        if (!allowed.includes(scope))
+            throw badRequest(
+                `${user.displayName}'s role here is ${membership.role}, so a token acting for them can only have ${allowed.map((a) => `"${a}"`).join(" or ")} access: never more than they have.`,
+            );
         return user;
     }
 
@@ -689,7 +710,12 @@ export class Accounts {
         const raw = `${TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
         return this.core.write(actor, async (w) => {
             // By default a token acts for the person creating it.
-            const owner = await this.checkOwner(w.tx, workspace, input.ownerUserId === undefined ? actor.userId : input.ownerUserId);
+            const owner = await this.checkOwner(
+                w.tx,
+                workspace,
+                input.ownerUserId === undefined ? actor.userId : input.ownerUserId,
+                input.scope,
+            );
             // Names show up as the author of an agent's changes, so they're unique in the workspace.
             if ((await w.tx.tokens.forWorkspace(workspace.id)).some((t) => t.name.toLowerCase() === name.toLowerCase())) {
                 throw conflict(`There's already a token called "${name}" in this workspace.`);
@@ -697,7 +723,7 @@ export class Accounts {
             const token: ApiToken = {
                 id: randomBytes(6).toString("hex"),
                 workspaceId: workspace.id,
-                ownerUserId: owner?.id ?? null,
+                ownerUserId: owner.id,
                 name,
                 scope: input.scope,
                 hash: sha256(raw),
@@ -712,7 +738,7 @@ export class Accounts {
                 workspaceId: workspace.id,
                 kind: "token",
                 target: token.id,
-                changes: { created: { name, scope: token.scope, owner: owner?.displayName ?? null } },
+                changes: { created: { name, scope: token.scope, owner: owner.displayName } },
             });
             return { token: raw, record: publicToken(token, owner) };
         });
@@ -722,10 +748,10 @@ export class Accounts {
         return this.core.write(actor, async (w) => {
             const token = await w.tx.tokens.get(id);
             if (!token || token.workspaceId !== workspace.id) throw notFound("No such token.");
-            const owner = await this.checkOwner(w.tx, workspace, ownerUserId);
-            await w.tx.tokens.put({ ...token, ownerUserId: owner?.id ?? null });
-            await w.audit({ workspaceId: workspace.id, kind: "token", target: id, changes: { owner: owner?.displayName ?? null } });
-            return publicToken({ ...token, ownerUserId: owner?.id ?? null }, owner);
+            const owner = await this.checkOwner(w.tx, workspace, ownerUserId, token.scope);
+            await w.tx.tokens.put({ ...token, ownerUserId: owner.id });
+            await w.audit({ workspaceId: workspace.id, kind: "token", target: id, changes: { owner: owner.displayName } });
+            return publicToken({ ...token, ownerUserId: owner.id }, owner);
         });
     }
 

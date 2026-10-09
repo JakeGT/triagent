@@ -173,6 +173,8 @@ export interface Choice<T extends string> {
     value: T;
     label: ReactNode;
     hint?: ReactNode;
+    /** This one can't be chosen (its hint says why). */
+    disabled?: boolean;
 }
 
 /** One choice from a few, as radio buttons, each with an optional description. */
@@ -211,7 +213,7 @@ export function ChoiceField<T extends string>({
                                 value={c.value}
                                 checked={value === c.value}
                                 onChange={() => onChange(c.value)}
-                                disabled={disabled}
+                                disabled={disabled || c.disabled}
                                 aria-describedby={c.hint ? `${id}-${c.value}-hint` : undefined}
                                 className="size-4 accent-primary"
                             />
