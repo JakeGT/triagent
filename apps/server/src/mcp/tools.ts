@@ -3,7 +3,7 @@
 
 import { CATEGORIES, type Permission, SEVERITIES, STATUSES } from "@triagent/shared";
 import { z } from "zod";
-import { parseFilters } from "../domain/filters.ts";
+import { MAX_ID, parseFilters } from "../domain/filters.ts";
 import { issueMarkdown, overviewMarkdown, taskMarkdown } from "../domain/markdown.ts";
 import { badRequest, notFound } from "../errors.ts";
 import type { Access } from "../services/accounts.ts";
@@ -52,7 +52,7 @@ const filterProps = {
     status: z.array(z.enum(STATUSES)).optional(),
     path: z.string().max(500).optional().describe("A file, or a folder ending in /"),
     q: z.string().max(200).optional().describe("Words that must all appear"),
-    task: z.string().max(100).optional().describe("Only issues linked to this task"),
+    task: z.string().max(MAX_ID).optional().describe("Only issues linked to this task"),
     foundBy: z
         .number()
         .int()
@@ -71,7 +71,7 @@ const editProps = {
     category: z.union([z.enum(CATEGORIES), z.literal("reviewer")]).optional(),
     duplicateOf: z
         .string()
-        .max(100)
+        .max(MAX_ID)
         .nullable()
         .optional()
         .describe("Mark as a duplicate of another issue (it becomes won't fix); null to undo"),
@@ -244,7 +244,7 @@ export const TOOLS: Tool[] = [
             "One issue in full: the finding, existing and suggested code, notes, duplicates and its revision (pass rev back to update_issue).",
         permission: "read",
         readOnly: true,
-        input: z.object({ ...where, id: z.string().max(100) }),
+        input: z.object({ ...where, id: z.string().max(MAX_ID) }),
         async run(ctx, args) {
             const { view } = await viewOf(ctx, args);
             const issue = view.getIssue(String(args.id));
@@ -257,7 +257,7 @@ export const TOOLS: Tool[] = [
         description:
             "Change an issue's status, assignee, rating, duplicate or discussion flag, and/or add a note. Pass rev (from get_issue) so you never overwrite someone else's change.",
         permission: "triage",
-        input: z.object({ ...where, id: z.string().max(100), rev: z.number().int().min(0).optional(), ...editProps }),
+        input: z.object({ ...where, id: z.string().max(MAX_ID), rev: z.number().int().min(0).optional(), ...editProps }),
         async run(ctx, args) {
             const { project: _p, branch: _b, id, ...patch } = args;
             const r = await ctx.services.triage.updateIssue(ctx.actor, await refOf(ctx, args), String(id), patch);
@@ -269,7 +269,7 @@ export const TOOLS: Tool[] = [
         title: "Update many issues",
         description: "Apply one change to up to 1000 issues, e.g. after one commit fixes several findings.",
         permission: "triage",
-        input: z.object({ ...where, ids: z.array(z.string().max(100)).min(1).max(1000), ...editProps }),
+        input: z.object({ ...where, ids: z.array(z.string().max(MAX_ID)).min(1).max(1000), ...editProps }),
         async run(ctx, args) {
             const { project: _p, branch: _b, ...body } = args;
             const r = await ctx.services.triage.bulkUpdate(ctx.actor, await refOf(ctx, args), body);
@@ -296,7 +296,7 @@ export const TOOLS: Tool[] = [
         title: "Release issue",
         description: "Hand back an issue you claimed: it goes back to open and unassigned. force releases someone else's.",
         permission: "triage",
-        input: z.object({ ...where, id: z.string().max(100), note: z.string().max(4000).optional(), force: z.boolean().optional() }),
+        input: z.object({ ...where, id: z.string().max(MAX_ID), note: z.string().max(4000).optional(), force: z.boolean().optional() }),
         async run(ctx, args) {
             const r = await ctx.services.triage.releaseIssue(ctx.actor, await refOf(ctx, args), String(args.id), {
                 note: args.note,
@@ -313,7 +313,7 @@ export const TOOLS: Tool[] = [
         input: z.object({
             ...where,
             kind: z.enum(["issue", "task"]).optional(),
-            id: z.string().max(100),
+            id: z.string().max(MAX_ID),
             noteId: z.string().max(40),
             text: z.string().max(4000),
         }),
@@ -335,7 +335,7 @@ export const TOOLS: Tool[] = [
         description: "Delete one of your own notes on an issue or task.",
         permission: "triage",
         destructive: true,
-        input: z.object({ ...where, kind: z.enum(["issue", "task"]).optional(), id: z.string().max(100), noteId: z.string().max(40) }),
+        input: z.object({ ...where, kind: z.enum(["issue", "task"]).optional(), id: z.string().max(MAX_ID), noteId: z.string().max(40) }),
         async run(ctx, args) {
             await ctx.services.triage.changeNote(
                 { ...ctx.actor, canModerate: ctx.can("moderate") },
@@ -432,7 +432,7 @@ export const TOOLS: Tool[] = [
             "The reviewer's summary items (top issues, hotspots, cross-cutting concerns, quick wins) as trackable tasks. Only full scans have a summary.",
         permission: "read",
         readOnly: true,
-        input: z.object({ ...where, section: z.string().max(100).optional(), status: z.array(z.enum(STATUSES)).optional() }),
+        input: z.object({ ...where, section: z.string().max(MAX_ID).optional(), status: z.array(z.enum(STATUSES)).optional() }),
         async run(ctx, args) {
             const { view } = await viewOf(ctx, args);
             const r = view.listTasks({ section: String(args.section ?? ""), status: (args.status as never) ?? [] });
@@ -451,7 +451,7 @@ export const TOOLS: Tool[] = [
         description: "One task with its linked issues and notes.",
         permission: "read",
         readOnly: true,
-        input: z.object({ ...where, id: z.string().max(100) }),
+        input: z.object({ ...where, id: z.string().max(MAX_ID) }),
         async run(ctx, args) {
             const { view } = await viewOf(ctx, args);
             const t = view.getTask(String(args.id));
@@ -465,7 +465,7 @@ export const TOOLS: Tool[] = [
         permission: "triage",
         input: z.object({
             ...where,
-            id: z.string().max(100),
+            id: z.string().max(MAX_ID),
             rev: z.number().int().min(0).optional(),
             status: editProps.status,
             assignee: editProps.assignee,

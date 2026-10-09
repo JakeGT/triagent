@@ -252,3 +252,49 @@ test("production refuses a plain-http address while sign-in cookies are Secure",
     assert.equal(loadConfig({ ...base, PUBLIC_ORIGIN: "https://review.example.com" }).cookieSecure, true);
     assert.equal(loadConfig({ ...base, PUBLIC_ORIGIN: "http://localhost:8080" }).cookieSecure, true);
 });
+
+test("a task whose id comes from a long heading can be read, changed and filtered by, through MCP and the API", async () => {
+    const t = await testApp();
+    const admin = await t.signIn("admin", ADMIN_PASSWORD);
+    await t.request("/api/v1/w/admin/projects", { method: "POST", session: admin, body: { slug: "app" } });
+    // A heading of some 200 characters: the task's id is made from it.
+    const heading = `Cross-cutting concerns ${"that need a decision before anything else is fixed ".repeat(4)}`.trim();
+    const uploaded = await t.request("/api/v1/w/admin/p/app/reports", {
+        method: "POST",
+        session: admin,
+        body: { report: { ...report("src/a.ts"), project_summary: `## ${heading}\n\n- **Fix it**: \`src/a.ts\` needs work.\n` } },
+    });
+    assert.equal(uploaded.status, 200, uploaded.text);
+    const tasks = (await t.request("/api/v1/w/admin/p/app/tasks", { session: admin })).body.items;
+    const id: string = tasks[0].id;
+    assert.ok(id.length > 100 && id.length <= 300, `the task's id is ${id.length} characters`);
+    const token = (
+        await t.request("/api/v1/w/admin/settings/tokens", { method: "POST", session: admin, body: { name: "agent", scope: "write" } })
+    ).body.token;
+    const call = async (name: string, args: Record<string, unknown>) =>
+        (
+            await t.request("/mcp", {
+                method: "POST",
+                token,
+                body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { project: "app", ...args } } },
+            })
+        ).body.result;
+    const got = await call("get_task", { id });
+    assert.equal(got.isError, false, JSON.stringify(got));
+    assert.equal(got.structuredContent.id, id);
+    const updated = await call("update_task", { id, status: "in_progress", note: "On it." });
+    assert.equal(updated.isError, false, JSON.stringify(updated));
+    const linked = await call("list_issues", { task: id });
+    assert.equal(linked.isError, false, JSON.stringify(linked));
+    assert.equal(linked.structuredContent.total, 1);
+    const section = await call("list_tasks", { section: tasks[0].sectionId });
+    assert.equal(section.isError, false, JSON.stringify(section));
+    // The API takes the same id as a filter and when claiming.
+    const listed = await t.request(`/api/v1/w/admin/p/app/issues?task=${encodeURIComponent(id)}`, { session: admin });
+    assert.equal(listed.status, 200, listed.text);
+    assert.equal(listed.body.total, 1);
+    const claimed = await t.request("/api/v1/w/admin/p/app/issues/claim", { method: "POST", session: admin, body: { task: id } });
+    assert.equal(claimed.status, 200, claimed.text);
+    // Longer than that is still refused.
+    assert.equal((await call("get_task", { id: "x".repeat(301) })).isError, true);
+});

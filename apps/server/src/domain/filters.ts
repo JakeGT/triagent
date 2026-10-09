@@ -2,6 +2,12 @@ import { CATEGORIES, type Category, ISSUE_SORTS, type IssueSort, SEVERITIES, typ
 import { badRequest } from "../errors.ts";
 import { cleanText } from "./names.ts";
 
+/**
+ * The longest issue, task or section id accepted. Task ids come from the summary's headings
+ * ("cross-cutting-concerns-3"), so they can be long; shortening them would detach existing triage.
+ */
+export const MAX_ID = 300;
+
 export interface IssueFilters {
     severity: Severity[];
     category: Category[];
@@ -83,7 +89,7 @@ export function parseFilters(input: Input, { maxLimit = 500, defaultLimit = 50 }
         status: oneOf(list(get("status")), STATUSES, "status"),
         path: text(get("path"), 500, "path"),
         q: text(get("q"), 200, "q"),
-        task: text(get("task"), 100, "task"),
+        task: text(get("task"), MAX_ID, "task"),
         assignee: text(get("assignee"), 64, "assignee"),
         hasSuggestion: flag(get("hasSuggestion", "has_suggestion"), "hasSuggestion"),
         needsDiscussion: flag(get("needsDiscussion", "needs_discussion"), "needsDiscussion"),

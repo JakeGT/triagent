@@ -1,5 +1,6 @@
 import { CATEGORIES, ISSUE_SORTS, ROLES, SEVERITIES, STATUSES, TOKEN_SCOPES } from "@triagent/shared";
 import { z } from "zod";
+import { MAX_ID } from "../domain/filters.ts";
 import type { RequestContext } from "../http/route.ts";
 import type { BranchRef } from "../services/triage.ts";
 import type { Project } from "../store/types.ts";
@@ -55,7 +56,7 @@ export const IssuePatch = z
             .optional()
             .describe('"reviewer" or null puts back the reviewer\'s rating'),
         category: z.union([z.enum(CATEGORIES), z.literal("reviewer"), z.null()]).optional(),
-        duplicateOf: z.string().max(100).nullable().optional(),
+        duplicateOf: z.string().max(MAX_ID).nullable().optional(),
         needsDiscussion: z.boolean().optional(),
         note: z.string().max(4000).optional(),
         rev: z

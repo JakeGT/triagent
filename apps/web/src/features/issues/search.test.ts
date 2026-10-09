@@ -39,7 +39,7 @@ describe("issue filters in the URL", () => {
         // Pages past the server's 1,000,000 offset, and task ids past its 100 characters.
         expect(parseIssueSearch({ page: "10001" })).toEqual({ page: 10001 });
         expect(parseIssueSearch({ page: "10002" })).toEqual({});
-        expect(parseIssueSearch({ task: "t".repeat(150) }).task).toHaveLength(100);
+        expect(parseIssueSearch({ task: "t".repeat(350) }).task).toHaveLength(300);
     });
 
     it("writes readable URLs and reads them back unchanged", () => {

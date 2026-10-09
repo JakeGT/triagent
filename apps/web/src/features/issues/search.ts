@@ -70,7 +70,7 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
     if (status) out.status = status;
     for (const k of ["path", "q", "assignee", "task"] as const) {
         // The server's limits (parseFilters): longer values would be refused.
-        const v = text(raw[k], k === "assignee" ? 64 : k === "q" ? 200 : k === "task" ? 100 : 500);
+        const v = text(raw[k], k === "assignee" ? 64 : k === "q" ? 200 : k === "task" ? 300 : 500);
         if (v) out[k] = v;
     }
     for (const k of FLAGS) {

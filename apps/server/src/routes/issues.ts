@@ -1,7 +1,7 @@
 // Issues and tasks on one branch: reading, triage, claims and notes.
 
 import { z } from "zod";
-import { parseFilters } from "../domain/filters.ts";
+import { MAX_ID, parseFilters } from "../domain/filters.ts";
 import { issueMarkdown, issuesMarkdown, taskMarkdown } from "../domain/markdown.ts";
 import { json, markdown, type Route, route } from "../http/route.ts";
 import { BranchQuery, branchRef, Finding, IssuePatch, IssueQuery, P, queryParams } from "./common.ts";
@@ -104,7 +104,7 @@ export const issueRoutes: Route[] = [
         tag: "Issues",
         summary: "Make one change to many issues",
         query: BranchQuery,
-        body: IssuePatch.omit({ rev: true }).extend({ ids: z.array(z.string().max(100)).min(1).max(1000) }),
+        body: IssuePatch.omit({ rev: true }).extend({ ids: z.array(z.string().max(MAX_ID)).min(1).max(1000) }),
         async handler(ctx) {
             return json(await ctx.services.triage.bulkUpdate(ctx.actor, branchRef(ctx, ctx.query.branch), ctx.body));
         },
@@ -123,7 +123,7 @@ export const issueRoutes: Route[] = [
             category: z.string().optional(),
             path: z.string().max(500).optional(),
             q: z.string().max(200).optional(),
-            task: z.string().max(100).optional(),
+            task: z.string().max(MAX_ID).optional(),
             assignee: z.string().max(64).optional().describe("Who to assign it to (default: you)"),
             note: z.string().max(4000).optional(),
         }),
@@ -244,7 +244,7 @@ export const issueRoutes: Route[] = [
         permission: "read",
         tag: "Tasks",
         summary: "The reviewer's summary items as tasks, linked to the issues in the files they name",
-        query: BranchQuery.extend({ section: z.string().max(100).optional(), status: z.string().optional() }),
+        query: BranchQuery.extend({ section: z.string().max(MAX_ID).optional(), status: z.string().optional() }),
         async handler(ctx) {
             const ref = branchRef(ctx, ctx.query.branch);
             const view = await ctx.services.reports.view(ctx.services.store, ref.project, ref.branch);
