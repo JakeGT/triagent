@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
 import type { Severity, Status, Via } from "@triagent/shared";
 import { type AnalyticsInput, analyse, type CurrentFinding, costOf, folderOf, type PricedModel, rangeOf } from "../src/domain/analytics.ts";
+import { LIMITS } from "../src/services/analytics.ts";
 import type { ActivityRow, ReviewDetails, ReviewRecord } from "../src/store/types.ts";
 import { ADMIN_PASSWORD, report, type Session, type TestApp, testApp } from "./helpers.ts";
 
@@ -478,7 +479,38 @@ describe("analytics API and MCP", () => {
         assert.equal(a.findings.added, 4);
         // The resolved finding was first reported by the upload, so its time to resolve is known.
         assert.equal(a.triage.timeToResolve.bySeverity.find((s: { severity: string }) => s.severity === "high").resolved, 1);
-        assert.deepEqual(a.truncated, { history: false, activity: false });
+        assert.deepEqual(a.truncated, { history: false, activity: false, current: false });
+    });
+
+    test("more current findings than one request reads: the answer stops there and says so", async () => {
+        const limit = LIMITS.current;
+        try {
+            // app has 4 findings and lib 1.
+            LIMITS.current = 3;
+            const cut = (await t.request("/api/v1/w/acme/analytics", { session: admin })).body;
+            assert.equal(cut.truncated.current, true);
+            assert.equal(cut.findings.open + cut.findings.resolved, 3);
+            // The reviews and the activity are still counted in full.
+            assert.equal(cut.reviews.total, 2);
+            assert.equal(cut.findings.added, 4);
+            const text = (
+                await t.request("/mcp", {
+                    method: "POST",
+                    token,
+                    body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_analytics", arguments: {} } },
+                })
+            ).body.result.content[0].text;
+            assert.match(text, /too many current findings/);
+            // Exactly at the limit nothing is left out. One project brings it back under.
+            LIMITS.current = 5;
+            assert.equal((await t.request("/api/v1/w/acme/analytics", { session: admin })).body.truncated.current, false);
+            LIMITS.current = 3;
+            const lib = (await t.request("/api/v1/w/acme/analytics?project=lib", { session: admin })).body;
+            assert.equal(lib.truncated.current, false);
+            assert.equal(lib.findings.open, 1);
+        } finally {
+            LIMITS.current = limit;
+        }
     });
 
     test("one project and one branch; an unknown project is a 404", async () => {

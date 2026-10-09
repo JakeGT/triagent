@@ -60,6 +60,8 @@ export function analyticsText(a: Analytics): string {
         `- Tool calls: ${p.tools.recorded ? `${n(p.tools.calls)}, ${pct(p.tools.failureRate)} failed` : "not recorded"}`,
     ];
     if (a.truncated.history || a.truncated.activity) lines.push("", "_Only the most recent rows were read, so older ones are left out._");
+    if (a.truncated.current)
+        lines.push("", "_There are too many current findings to count them all, so the findings figures cover only some branches._");
     return lines.join("\n");
 }
 

@@ -46,7 +46,7 @@ export interface PerfRow {
 export interface Analytics {
     range: { days: Days; from: string; to: string; unit: "day" | "week"; buckets: string[] };
     scope: { project: string | null; branch: string | null; projects: { slug: string; name: string }[] };
-    truncated: { history: boolean; activity: boolean };
+    truncated: { history: boolean; activity: boolean; current: boolean };
     unpriced: { model: string; reviews: number; tokens: number }[];
     reviews: {
         total: number;

@@ -110,6 +110,15 @@ export function AnalyticsPage() {
                             exact figures.
                         </p>
                     )}
+                    {query.data.truncated.current && (
+                        <p
+                            className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground"
+                            data-testid="truncated-current"
+                        >
+                            There are too many findings to count them all, so the figures for current findings cover only some branches.
+                            Pick one project or branch for exact figures.
+                        </p>
+                    )}
                     <ReviewsSection a={query.data} />
                     <FindingsSection a={query.data} />
                     <TriageSection a={query.data} />

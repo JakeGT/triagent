@@ -8,8 +8,8 @@ import type { Prices } from "./prices.ts";
 import type { Projects } from "./projects.ts";
 import type { Reports } from "./reports.ts";
 
-/** Upper bounds on what one request reads; past them the answer says it's partial. */
-export const LIMITS = { history: 20_000, activity: 50_000, page: 1000 };
+/** Upper bounds on what one request reads (`current`: findings in the current reports); past them the answer says it's partial. */
+export const LIMITS = { history: 20_000, activity: 50_000, current: 200_000, page: 1000 };
 
 export interface AnalyticsScope {
     project?: string | undefined;
@@ -19,8 +19,11 @@ export interface AnalyticsScope {
 
 export type Analytics = AnalyticsResult & {
     scope: { project: string | null; branch: string | null; projects: { slug: string; name: string }[] };
-    /** Reads that hit their limit, so the figures leave out the oldest rows. */
-    truncated: { history: boolean; activity: boolean };
+    /**
+     * Reads that hit their limit: the figures leave out the oldest history and activity rows, and
+     * (`current`) the findings of the branches not reached.
+     */
+    truncated: { history: boolean; activity: boolean; current: boolean };
 };
 
 export class AnalyticsService {
@@ -73,13 +76,23 @@ export class AnalyticsService {
 
         // What's open now, from the current reports of the branches in scope.
         const current: CurrentFinding[] = [];
-        for (const project of inScope) {
+        let truncatedCurrent = false;
+        gather: for (const project of inScope) {
             const stored = branch
                 ? [await store.reports.get(project.id, branch)].filter((s) => s !== null)
                 : await store.reports.branches(project.id);
             for (const s of stored) {
+                // Enough already: the reports left aren't read at all.
+                if (current.length >= LIMITS.current) {
+                    truncatedCurrent = true;
+                    break gather;
+                }
                 const view = await this.reports.viewStored(store, project, s);
                 for (const x of view.issues()) {
+                    if (current.length >= LIMITS.current) {
+                        truncatedCurrent = true;
+                        break gather;
+                    }
                     const record = view.record("issue", x.id);
                     current.push({
                         projectId: project.id,
@@ -114,7 +127,7 @@ export class AnalyticsService {
                 branch,
                 projects: all.map((p) => ({ slug: p.slug, name: p.name })),
             },
-            truncated: { history: history.length >= LIMITS.history, activity: truncatedActivity },
+            truncated: { history: history.length >= LIMITS.history, activity: truncatedActivity, current: truncatedCurrent },
         };
     }
 }
