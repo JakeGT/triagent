@@ -2,7 +2,7 @@
 // claims and bulk changes. Every change is conditional on what the caller saw when they ask for that
 // (rev), runs in one transaction, and is written to the activity log.
 
-import { CATEGORIES, type Category, SEVERITIES, type Severity, STATUSES, type Status } from "@triagent/shared";
+import { CATEGORIES, type Category, MAX_ID, SEVERITIES, type Severity, STATUSES, type Status } from "@triagent/shared";
 import type { BranchView } from "../domain/branch.ts";
 import { list, parseFilters } from "../domain/filters.ts";
 import { cleanText } from "../domain/names.ts";
@@ -144,7 +144,7 @@ export function parsePatch(body: unknown): Patch {
     if (b.category !== undefined)
         p.category = b.category === null || b.category === "reviewer" ? "reviewer" : pick(b.category, CATEGORIES, "category");
     if (b.duplicateOf !== undefined)
-        p.duplicateOf = b.duplicateOf === null || b.duplicateOf === "" ? null : (text(b.duplicateOf, 100, "duplicateOf") ?? null);
+        p.duplicateOf = b.duplicateOf === null || b.duplicateOf === "" ? null : (text(b.duplicateOf, MAX_ID, "duplicateOf") ?? null);
     if (b.needsDiscussion !== undefined) {
         if (typeof b.needsDiscussion !== "boolean") throw badRequest("needsDiscussion must be true or false.");
         p.needsDiscussion = b.needsDiscussion;

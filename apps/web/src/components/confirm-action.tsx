@@ -72,6 +72,7 @@ export function ConfirmAction({
         try {
             await onConfirm();
             setOpen(false);
+            onOpenChange?.(false);
             setTyped("");
         } catch (err) {
             setError(errorMessage(err));

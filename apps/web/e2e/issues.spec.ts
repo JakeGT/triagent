@@ -190,8 +190,9 @@ test("a selection kept across filters says how much of it isn't shown, and can b
     await expect(page.getByTestId("showing-selected")).toContainText("5 selected issues only");
 
     // Back to the filtered list, then to the low ones: the open issue (critical) isn't among them, so x leaves it be.
-    await bar.getByRole("button", { name: "Back to the filtered list" }).click();
+    await page.getByTestId("showing-selected").getByRole("button", { name: "Back to the filtered list" }).click();
     await expect(page.locator("[data-issue-row]")).toHaveCount(1);
+    await expect(page.getByTestId("showing-selected")).toHaveCount(0);
     await page.getByRole("button", { name: "Severity" }).click();
     await page.getByRole("checkbox", { name: "Critical" }).click();
     await page.getByRole("checkbox", { name: "Low" }).click();
@@ -201,8 +202,14 @@ test("a selection kept across filters says how much of it isn't shown, and can b
     await page.keyboard.press("x");
     await expect(bar).toContainText("5 issues selected, 1 not shown");
 
-    await bar.getByRole("button", { name: "Clear selection" }).click();
+    // Showing the selection, then unticking all of it: the bar goes, and the list still has its way back.
+    await bar.getByRole("button", { name: "Show selected" }).click();
+    await expect(page.locator("[data-issue-row]")).toHaveCount(5);
+    await page.getByRole("checkbox", { name: "Select all issues on this page" }).click();
     await expect(bar).toHaveCount(0);
+    await expect(page.locator("[data-issue-row]")).toHaveCount(5);
+    await page.getByTestId("showing-selected").getByRole("button", { name: "Back to the filtered list" }).click();
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^4 issues/);
     await expect(page.getByRole("checkbox", { name: "Select all issues on this page" })).not.toBeChecked();
 });
 

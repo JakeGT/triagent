@@ -1,12 +1,18 @@
-import { CATEGORIES, type Category, ISSUE_SORTS, type IssueSort, SEVERITIES, type Severity, STATUSES, type Status } from "@triagent/shared";
+import {
+    CATEGORIES,
+    type Category,
+    ISSUE_SORTS,
+    type IssueSort,
+    MAX_ID,
+    SEVERITIES,
+    type Severity,
+    STATUSES,
+    type Status,
+} from "@triagent/shared";
 import { badRequest } from "../errors.ts";
 import { cleanText } from "./names.ts";
 
-/**
- * The longest issue, task or section id accepted. Task ids come from the summary's headings
- * ("cross-cutting-concerns-3"), so they can be long; shortening them would detach existing triage.
- */
-export const MAX_ID = 300;
+export { MAX_ID };
 
 export interface IssueFilters {
     severity: Severity[];

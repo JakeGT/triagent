@@ -12,6 +12,12 @@ export type Status = (typeof STATUSES)[number];
 /** Statuses that count as dealt with. */
 export const DONE_STATUSES: ReadonlySet<Status> = new Set(["resolved", "wont_fix"]);
 
+/**
+ * The longest issue, task or section id accepted. Task ids come from the summary's headings
+ * ("cross-cutting-concerns-3"), so they can be long; shortening them would detach existing triage.
+ */
+export const MAX_ID = 300;
+
 /** "agreement": found by the most models first (reviews run with several), then by priority. */
 export const ISSUE_SORTS = ["priority", "path", "severity", "updated", "index", "agreement"] as const;
 export type IssueSort = (typeof ISSUE_SORTS)[number];

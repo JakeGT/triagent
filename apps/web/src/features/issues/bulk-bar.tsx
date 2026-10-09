@@ -1,7 +1,7 @@
 // One change to every selected issue: status, assignee, a rating correction or the discussion flag.
 
 import { SEVERITIES, STATUSES } from "@triagent/shared";
-import { ChevronDown, Eye, ListFilter, X } from "lucide-react";
+import { ChevronDown, Eye, X } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { FieldError } from "@/components/field";
@@ -156,9 +156,10 @@ export function BulkBar({
                 </DropdownMenuContent>
             </DropdownMenu>
             <span className="ms-auto flex flex-wrap items-center gap-2">
-                {(notShown > 0 || showingSelected) && (
-                    <Button size="sm" variant="ghost" aria-pressed={showingSelected} onClick={() => onShowSelected(!showingSelected)}>
-                        {showingSelected ? <ListFilter /> : <Eye />} {showingSelected ? "Back to the filtered list" : "Show selected"}
+                {/* The way back is beside the list's note, which stays when nothing is selected any more. */}
+                {notShown > 0 && !showingSelected && (
+                    <Button size="sm" variant="ghost" onClick={() => onShowSelected(true)}>
+                        <Eye /> Show selected
                     </Button>
                 )}
                 <Button size="sm" variant="ghost" onClick={onClear}>

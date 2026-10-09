@@ -27,6 +27,8 @@ import { isTypingTarget } from "./keys";
 import { activeFilters, type IssueSearch, issueApiQuery, PAGE_SIZE, withoutFilters } from "./search";
 
 const ROUTE = "/authed/w/$ws/p/$project/issues" as const;
+/** How many selected issues "Show selected" lists: their ids go in the request's address. */
+const MAX_SHOWN = 500;
 
 /** Columns that give way on narrow screens, and while an issue is open beside the list. */
 function columnClass(id: string, panelOpen: boolean): string | false {
@@ -85,6 +87,7 @@ export function IssuesPage() {
     // "Show selected": the ids the list is narrowed to, in place of the filters. They're the selection as it
     // was when asked for, so an issue unticked there stays in view.
     const [shown, setShown] = useState<string[] | null>(null);
+    const shownSet = useMemo(() => (shown ? new Set(shown) : null), [shown]);
 
     const apiQuery = useMemo(
         () =>
@@ -238,12 +241,16 @@ export function IssuesPage() {
     });
     // The selection outlives the filters and pages it was made on, so some of it may not be in the list now.
     const selectedIds = Object.keys(selection).filter((id) => selection[id]);
-    const notShown = selectedIds.filter((id) => !items.some((x) => x.id === id)).length;
+    // While showing the selection, "shown" is what that view holds on any of its pages, not just this one.
+    const listed = useMemo(() => new Set(items.map((x) => x.id)), [items]);
+    const notShown = selectedIds.filter((id) => !(shownSet ?? listed).has(id)).length;
     const firstPage = () => {
         if (search.page) setSearch({ ...search, page: undefined }, { replace: true });
     };
     const showSelected = (show: boolean) => {
-        setShown(show ? selectedIds : null);
+        // Nothing selected is nothing to show (an empty list of ids would mean "no filter" to the server), and
+        // the ids travel in the address, which has a length limit.
+        setShown(show && selectedIds.length ? selectedIds.slice(0, MAX_SHOWN) : null);
         firstPage();
     };
     const clearSelection = () => {
@@ -326,8 +333,18 @@ export function IssuesPage() {
                     />
                 )}
                 {shown && (
-                    <p className="text-sm text-muted-foreground" data-testid="showing-selected">
-                        Showing the {plural(shown.length, "selected issue")} only; the filters above aren't applied.
+                    // Its own way back, as the bar above goes when the last issue is unticked.
+                    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground" data-testid="showing-selected">
+                        <span>
+                            Showing{" "}
+                            {shown.length === MAX_SHOWN
+                                ? `the first ${MAX_SHOWN} selected issues`
+                                : `the ${plural(shown.length, "selected issue")}`}{" "}
+                            only; the filters above aren't applied.
+                        </span>
+                        <Button variant="outline" size="sm" onClick={() => showSelected(false)}>
+                            Back to the filtered list
+                        </Button>
                     </p>
                 )}
                 {query.isPending ? (

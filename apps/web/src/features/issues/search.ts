@@ -2,7 +2,17 @@
 // be bookmarked, shared and restored with the back button. These functions turn the URL's strings into
 // typed filters and back, and into the API's query.
 
-import { CATEGORIES, type Category, ISSUE_SORTS, type IssueSort, SEVERITIES, type Severity, STATUSES, type Status } from "@triagent/shared";
+import {
+    CATEGORIES,
+    type Category,
+    ISSUE_SORTS,
+    type IssueSort,
+    MAX_ID,
+    SEVERITIES,
+    type Severity,
+    STATUSES,
+    type Status,
+} from "@triagent/shared";
 
 export const FLAGS = ["hasSuggestion", "needsDiscussion", "duplicates", "adjusted"] as const;
 export type Flag = (typeof FLAGS)[number];
@@ -70,7 +80,7 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
     if (status) out.status = status;
     for (const k of ["path", "q", "assignee", "task"] as const) {
         // The server's limits (parseFilters): longer values would be refused.
-        const v = text(raw[k], k === "assignee" ? 64 : k === "q" ? 200 : k === "task" ? 300 : 500);
+        const v = text(raw[k], k === "assignee" ? 64 : k === "q" ? 200 : k === "task" ? MAX_ID : 500);
         if (v) out[k] = v;
     }
     for (const k of FLAGS) {
