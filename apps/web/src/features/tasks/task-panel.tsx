@@ -351,7 +351,7 @@ function TaskView({ id }: { id: string }) {
                             search={issuesLink({ task: task.id })}
                             className="link text-sm"
                         >
-                            All {plural(task.issueCount, "issue")} in Issues
+                            {task.issueCount === 1 ? "Open it in Issues" : `All ${plural(task.issueCount, "issue")} in Issues`}
                         </Link>
                     )}
                 </div>
