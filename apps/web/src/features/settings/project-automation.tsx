@@ -43,6 +43,7 @@ interface Form {
     skipPaths: string;
     skipBots: boolean;
     models: ModelSets;
+    options: Automation["options"];
 }
 
 const toForm = (a: Automation): Form => ({
@@ -63,6 +64,7 @@ const toForm = (a: Automation): Form => ({
     skipPaths: (a.skipPaths ?? []).join("\n"),
     skipBots: a.skipBots ?? true,
     models: toModelSets(a.models),
+    options: a.options ?? {},
 });
 
 function fromForm(f: Form): Automation {
@@ -86,6 +88,7 @@ function fromForm(f: Form): Automation {
         skipPaths: skipPaths(f.skipPaths),
         skipBots: f.skipBots,
         models: fromModelSets(f.models),
+        options: f.options,
     };
 }
 

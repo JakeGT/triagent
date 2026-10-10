@@ -10,7 +10,7 @@ import type { Access } from "../services/accounts.ts";
 import type { Actor } from "../services/core.ts";
 import type { Services } from "../services/index.ts";
 import { publicProject } from "../services/projects.ts";
-import { AutomationSchema, ModelIds } from "../services/settings.ts";
+import { AutomationSchema, ModelIds, RunOptionsInput } from "../services/settings.ts";
 import type { BranchRef } from "../services/triage.ts";
 import type { Project } from "../store/types.ts";
 import { analyticsTool } from "./analytics-tool.ts";
@@ -636,6 +636,9 @@ export const TOOLS: Tool[] = [
             base: z.string().max(200).optional(),
             models: ModelIds.optional().describe(
                 "The models for this review only, as ids from list_models (up to five; they review it at the same time and their findings are merged). Default: the project's models for this kind of review.",
+            ),
+            options: RunOptionsInput.optional().describe(
+                "Options for this review, when it has two or more models. Anything left out is off; without `options` at all, the project's own apply.",
             ),
         }),
         async run(ctx, args) {

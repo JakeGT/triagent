@@ -108,6 +108,18 @@ for (const kind of kinds) {
             assert.equal(started.get("w2"), undefined);
         });
 
+        test("a job's options are kept with it, beside the models it was asked to use", async () => {
+            const store = await kind.make();
+            await seed(store);
+            const options = { retryFailed: true, agreement: { failAt: 2, markSingles: true }, judge: "first", bakeOff: false };
+            const asked = job("j1", "w1", { requestedModels: ["fav-1", "fav-2"], options });
+            await store.jobs.put(asked);
+            assert.deepEqual(await store.jobs.get("j1"), asked);
+            assert.deepEqual((await store.jobs.get("j1"))?.requestedBy, { name: "admin", userId: "u1", tokenId: null });
+            await store.jobs.put({ ...asked, options: null });
+            assert.equal((await store.jobs.get("j1"))?.options ?? null, null);
+        });
+
         test("a job's log keeps its newest lines under the cap, with seq as a stable cursor", async () => {
             const store = await kind.make();
             await seed(store);

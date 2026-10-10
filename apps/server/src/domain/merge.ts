@@ -4,10 +4,11 @@
 // leads (the project lists its models in order); the others' are kept with it. One model's own findings
 // are never merged with each other: two findings from one model are two findings.
 
+import { distance, type FindingPair, type FindingRef, groupFindings, joinGroups } from "@triagent/shared/merge";
 import type { RawComment, RawReport } from "./report.ts";
 
-/** Lines apart that still count as the same place: models point at the same code a line or two differently. */
-const LINE_SLACK = 3;
+export { distance };
+
 /** At most this many models review a change, and have their reports merged. */
 export const MAX_MODELS = 5;
 
@@ -31,75 +32,37 @@ export interface OtherTake {
     suggestion_code?: string | null;
 }
 
-const line = (v: unknown): number | null => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
-const categoryOf = (c: RawComment) => (typeof c.category === "string" ? c.category.toLowerCase() : "");
+/** Each model's findings, as the shared grouping takes them (packages/shared/src/merge.ts). */
+export const findingsOf = (parts: readonly ModelReport[]) =>
+    parts.map((p) => (p.report && Array.isArray(p.report.comments) ? p.report.comments : null));
 
-function span(c: RawComment): [number, number] | null {
-    const start = line(c.start_line);
-    if (start === null) return null;
-    const end = line(c.end_line);
-    return [start, end !== null && end >= start ? end : start];
-}
-
-/** How far apart two findings are (0 when their lines overlap), or null when they aren't at the same place. */
-export function distance(a: RawComment, b: RawComment): number | null {
-    if (a.path !== b.path || categoryOf(a) !== categoryOf(b)) return null;
-    const x = span(a);
-    const y = span(b);
-    if (!x || !y) return !x && !y ? 0 : null;
-    const gap = Math.max(0, Math.max(x[0], y[0]) - Math.min(x[1], y[1]));
-    return gap <= LINE_SLACK ? gap : null;
-}
-
-interface Cluster {
-    lead: RawComment;
-    models: string[];
-    others: OtherTake[];
-}
+const take = (model: string, c: RawComment): OtherTake => ({
+    model,
+    severity: c.severity,
+    category: c.category,
+    start_line: c.start_line,
+    end_line: c.end_line,
+    content: c.content,
+    suggestion_code: c.suggestion_code ?? null,
+});
 
 /**
  * The reports of a review run with several models, as one. Its `models` lists those that produced a
- * report, in order; failed models are warnings (`model_failed`), so the review counts as partial.
+ * report, in order; failed models are warnings (`model_failed`), so the review counts as partial. `same`
+ * are pairs of findings a model said are the same problem: they're one finding too.
  */
-export function mergeReports(parts: readonly ModelReport[]): RawReport {
+export function mergeReports(parts: readonly ModelReport[], same: readonly FindingPair[] = []): RawReport {
     const done = parts.filter((p): p is ModelReport & { report: RawReport } => p.report !== null);
     const lead = done[0]?.report;
-    const clusters: Cluster[] = [];
-    const byPath = new Map<string, Cluster[]>();
-    for (const part of done) {
-        for (const c of Array.isArray(part.report.comments) ? part.report.comments : []) {
-            // Something in the list that isn't a finding at all can't spoil the other models' findings.
-            if (!c || typeof c !== "object" || typeof c.path !== "string") continue;
-            let best: Cluster | null = null;
-            let bestGap = Number.POSITIVE_INFINITY;
-            for (const k of byPath.get(c.path) ?? []) {
-                if (k.models.includes(part.label)) continue;
-                const gap = distance(k.lead, c);
-                if (gap !== null && gap < bestGap) {
-                    best = k;
-                    bestGap = gap;
-                }
-            }
-            if (best) {
-                best.models.push(part.label);
-                best.others.push({
-                    model: part.label,
-                    severity: c.severity,
-                    category: c.category,
-                    start_line: c.start_line,
-                    end_line: c.end_line,
-                    content: c.content,
-                    suggestion_code: c.suggestion_code ?? null,
-                });
-                continue;
-            }
-            const k: Cluster = { lead: c, models: [part.label], others: [] };
-            clusters.push(k);
-            const same = byPath.get(c.path);
-            if (same) same.push(k);
-            else byPath.set(c.path, [k]);
-        }
-    }
+    const byPlace = groupFindings(findingsOf(parts));
+    const groups = same.length ? joinGroups(byPlace, same) : byPlace;
+    const comment = (r: FindingRef) => ((parts[r.part] as ModelReport).report as RawReport).comments[r.index] as RawComment;
+    const label = (r: FindingRef) => (parts[r.part] as ModelReport).label;
+    const comments = groups.map((g) => ({
+        ...comment(g[0] as FindingRef),
+        found_by: g.map(label),
+        ...(g.length > 1 ? { also: g.slice(1).map((r) => take(label(r), comment(r))) } : {}),
+    }));
 
     const warnings: unknown[] = [];
     for (const part of done) {
@@ -117,7 +80,7 @@ export function mergeReports(parts: readonly ModelReport[]): RawReport {
     const { comments: _c, warnings: _w, ...rest } = lead ?? { comments: [] };
     return {
         ...rest,
-        comments: clusters.map((k) => ({ ...k.lead, found_by: k.models, ...(k.others.length ? { also: k.others } : {}) })),
+        comments,
         project_summary: lead?.project_summary ?? "",
         warnings,
         models: done.map((p) => p.label),

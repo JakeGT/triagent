@@ -1,7 +1,7 @@
 // Response shapes of the v1 API, mirroring apps/server (services/*.ts and domain/branch.ts). The
 // vocabulary (severities, roles, permissions…) comes from @triagent/shared.
 
-import type { Category, Grant, ReportScope, Role, Severity, Status, TokenScope, Via } from "@triagent/shared";
+import type { Category, Grant, ReportScope, Role, RunOptions, Severity, Status, TokenScope, Via } from "@triagent/shared";
 
 export interface ApiErrorBody {
     error: string;
@@ -369,7 +369,13 @@ export interface Automation {
     skipBots: boolean;
     /** The models reviews run with: favourite models' ids (or "instance"), for every review and for each kind. A set left out falls through. */
     models: ProjectModels;
+    /** Options for reviews run with several models, for those that don't choose their own. Anything left out is off. */
+    options: ProjectOptions;
 }
+
+/** A review's options as they're asked for (anything left out is off), and a project's own. */
+export type RunOptionsInput = Record<string, never>;
+export type ProjectOptions = RunOptionsInput;
 
 /** A project's sets of models: for every review, or for one kind of review (which wins). */
 export const MODEL_SETS = ["all", "pr", "changes", "full"] as const;
@@ -548,6 +554,8 @@ export interface Run {
     error: string | null;
     /** The models it was asked to use (favourite models' ids, or "instance"); null for the project's own. */
     requestedModels: string[] | null;
+    /** Its options for several models: those asked for while it's queued, those it runs with after. Null for none, or the project's. */
+    options: RunOptions | null;
     /** What it ran with, as it was then. */
     model: {
         provider: string;

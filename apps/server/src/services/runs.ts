@@ -7,7 +7,7 @@
 // loses the job, which is marked failed, saying so.
 
 import { setTimeout as sleep } from "node:timers/promises";
-import type { Severity } from "@triagent/shared";
+import { anyOption, NO_OPTIONS, type RunOptions, type Severity } from "@triagent/shared";
 import { modelSecrets, type RunnerModel } from "@triagent/shared/model";
 import { redactDeep, redactor } from "@triagent/shared/redact";
 import { parseFilters } from "../domain/filters.ts";
@@ -34,7 +34,7 @@ import { COMMENT_MARKER, type Github, NotConnected, RepositoryChanged, sameRepos
 import type { History } from "./history.ts";
 import type { Models, RunModel } from "./models.ts";
 import type { Reports } from "./reports.ts";
-import type { Settings } from "./settings.ts";
+import { type RunOptionsInput, runOptions, type Settings } from "./settings.ts";
 
 export const LOG_CAP_BYTES = 2 * 1024 * 1024;
 export const LEASE_SECONDS = 60;
@@ -56,6 +56,8 @@ export interface StartInput {
     base?: string;
     /** The models for this run only: favourite models' ids, or "instance". Without any, the project's rule decides. */
     models?: string[] | undefined;
+    /** Options for several models, for this run only. Without any, the project's own apply. */
+    options?: RunOptionsInput | undefined;
 }
 
 export interface JobSpec {
@@ -343,6 +345,16 @@ export function sumTokens(list: readonly (Tokens | null)[]): Tokens | null {
     }));
 }
 
+/**
+ * The options a review runs with, from those asked for: none with one model, and no rule that more
+ * models must agree than it has.
+ */
+export function effectiveOptions(asked: RunOptions, models: number): RunOptions {
+    if (models < 2) return structuredClone(NO_OPTIONS);
+    const failAt = asked.agreement.failAt === null ? null : Math.min(asked.agreement.failAt, models);
+    return { ...asked, agreement: { ...asked.agreement, failAt } };
+}
+
 /** Why a queued review won't start: its project now uses another repository. */
 const movedOn = (job: Pick<Job, "repository">, now: string) =>
     `This project now uses ${now}, but this review was queued for ${job.repository?.fullName}. Start it again to review ${now}.`;
@@ -430,6 +442,7 @@ export class Runs {
             error: job.error,
             model: job.model,
             requestedModels: job.requestedModels,
+            options: job.options ?? null,
             log: { lines: job.logLines, dropped: job.logDropped },
             ...(waiting !== undefined ? { waiting } : {}),
         };
@@ -609,20 +622,40 @@ export class Runs {
             spec = specForBranch("full", gitRef, null);
         }
         const models = input.models?.length ? input.models : null;
-        if (models) {
-            const workspace = await this.store.workspaces.get(project.workspaceId);
-            if (workspace) await this.settings.checkModelIds(this.store, workspace, models);
-        }
-        const job = await this.enqueue(actor, project, spec, models);
+        const options = input.options ? runOptions(input.options) : null;
+        const workspace = await this.store.workspaces.get(project.workspaceId);
+        if (models && workspace) await this.settings.checkModelIds(this.store, workspace, models);
+        if (options && workspace) await this.checkOptions(workspace, project, spec.kind, models, options);
+        const job = await this.enqueue(actor, project, spec, models, options);
         return this.view(job, project);
+    }
+
+    /**
+     * Options asked for a review, checked against the models it would run with now (its own, or the
+     * project's for its kind). Throws a 400 saying what's wrong: they only mean something with several models.
+     */
+    private async checkOptions(workspace: Workspace, project: Project, kind: JobKind, models: string[] | null, options: RunOptions) {
+        if (!anyOption(options)) return;
+        const count = models?.length ?? (await this.models.list(workspace, project)).rules?.[kind].ids.length ?? 1;
+        if (count < 2)
+            throw badRequest(
+                `These options are for reviews with two or more models, and this one has ${count === 1 ? "one" : "none"}. Choose more models, or leave the options out.`,
+            );
     }
 
     /**
      * Queue a review. A queued job for the same thing is replaced; one already queued or running for the
      * same commit is returned instead of queueing another (whichever models that one uses). `models` are
-     * this run's own (see `Models.forProject`); automatic reviews give none.
+     * this run's own (see `Models.forProject`), and `options` its options for several models; automatic
+     * reviews give neither, and get the project's.
      */
-    async enqueue(actor: Actor, project: Project, spec: JobSpec, models: string[] | null = null): Promise<Job> {
+    async enqueue(
+        actor: Actor,
+        project: Project,
+        spec: JobSpec,
+        models: string[] | null = null,
+        options: RunOptions | null = null,
+    ): Promise<Job> {
         // The repository it's for, so it never starts on, or reports to, another if the project moves.
         const gh = await this.github.maybeFor(project).catch(() => null);
         const repository = gh ? { id: gh.repo.id, fullName: gh.repo.fullName } : null;
@@ -649,6 +682,7 @@ export class Runs {
                 ...spec,
                 requestedBy: { name: actor.name, userId: actor.userId, tokenId: actor.tokenId ?? null },
                 requestedModels: models,
+                options,
                 source: sourceOf(actor),
                 status: "queued",
                 queuedAt: now(),
@@ -797,6 +831,9 @@ export class Runs {
                     // For a runner that gives every model the job's budget: the tightest, so none can overspend.
                     const capped = budgets.filter((b): b is number => b !== null);
                     const maxTokensBudget = chosen.models.some((m) => m.allowance) ? Math.min(...capped) : automation.maxTokensBudget;
+                    // Its options: its own, or the project's; none of them apply to a review with one model.
+                    const asked = job.options ?? runOptions(automation.options);
+                    const options = effectiveOptions(asked, chosen.models.length);
                     const started: Job = {
                         ...job,
                         status: "running",
@@ -823,9 +860,21 @@ export class Runs {
                                   }
                                 : {}),
                         },
+                        options: anyOption(options) ? options : null,
                         progress: { phase: "starting" },
                     };
                     await tx.jobs.put(started);
+                    if (anyOption(asked) && !anyOption(options))
+                        await tx.jobs.appendLog(
+                            job.id,
+                            [
+                                {
+                                    at: now(),
+                                    line: "[triagent] This review has one model, so the options for several models don't apply to it.",
+                                },
+                            ],
+                            LOG_CAP_BYTES,
+                        );
                     return { job: started, project, workspace, models: chosen.models, budgets, automation, maxTokensBudget };
                 }
             }

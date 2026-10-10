@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { json, type Route, route } from "../http/route.ts";
 import type { Access } from "../services/accounts.ts";
-import { ModelIds } from "../services/settings.ts";
+import { ModelIds, RunOptionsInput } from "../services/settings.ts";
 import type { Project } from "../store/types.ts";
 import { P, W } from "./common.ts";
 
@@ -17,6 +17,9 @@ export const StartReviewBody = z
         base: z.string().max(200).optional().describe("What the changes are compared with (kind changes; default: the default branch)"),
         models: ModelIds.optional().describe(
             "The models for this review only: ids of favourite models (see GET …/models), or \"instance\" for the instance's model. Default: the project's models for this kind of review",
+        ),
+        options: RunOptionsInput.optional().describe(
+            "Options for this review, when it has two or more models. Anything left out is off; without `options` at all, the project's own apply (Project settings → Review models)",
         ),
     })
     .strict();

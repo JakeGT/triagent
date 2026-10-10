@@ -1,7 +1,7 @@
 // Records and the storage interface. The in-memory store and the Postgres store both implement it, so
 // services never know which they're using. Everything is async for that reason.
 
-import type { Category, Role, Severity, Status, TokenScope, Via } from "@triagent/shared";
+import type { Category, Role, RunOptions, Severity, Status, TokenScope, Via } from "@triagent/shared";
 import type { RawReport, UploadMeta } from "../domain/report.ts";
 
 export interface NotifyPrefs {
@@ -346,6 +346,12 @@ export interface Job {
      * project's for this kind of review. Postgres keeps it inside `requested_by`.
      */
     requestedModels: string[] | null;
+    /**
+     * Its options for several models (packages/shared/src/run-options.ts). Queued: those it was asked to
+     * use, or null to use the project's. Once a runner has claimed it: those it runs with (null for none,
+     * as for any review with one model). Postgres keeps them inside `requested_by` too.
+     */
+    options?: RunOptions | null;
     /**
      * The model it ran with, set when a runner claims it, and the token budget it was given (with the
      * instance key, out of the workspace's allowance: set aside until it finishes, and charged in full

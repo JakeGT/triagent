@@ -3,7 +3,7 @@
 // and are never returned.
 
 import { randomBytes } from "node:crypto";
-import { MAX_SKIP_PATH_LENGTH, MAX_SKIP_PATHS } from "@triagent/shared";
+import { MAX_SKIP_PATH_LENGTH, MAX_SKIP_PATHS, NO_OPTIONS, type RunOptions } from "@triagent/shared";
 import { z } from "zod";
 import { MAX_MODELS } from "../domain/merge.ts";
 import { badRequest, conflict } from "../errors.ts";
@@ -23,6 +23,21 @@ export const INSTANCE_MODEL = "instance";
 
 /** One to MAX_MODELS favourite models' ids (or INSTANCE_MODEL), in order: the first one's wording leads. */
 export const ModelIds = z.array(z.string().min(1).max(64)).max(MAX_MODELS);
+
+/**
+ * A review's options for several models, as they're asked for (packages/shared/src/run-options.ts):
+ * anything left out is off.
+ */
+export const RunOptionsInput = z.object({}).strict();
+export type RunOptionsInput = z.infer<typeof RunOptionsInput>;
+
+/** A project's own, for reviews that don't say. */
+export const ProjectOptionsInput = RunOptionsInput;
+
+/** The options asked for, in full: what wasn't said is off. */
+export function runOptions(_input: RunOptionsInput | null | undefined): RunOptions {
+    return structuredClone(NO_OPTIONS);
+}
 
 /** A project's sets of models: for every review (`all`), or for one kind of review. */
 export const MODEL_SETS = ["all", "pr", "changes", "full"] as const satisfies readonly ("all" | JobKind)[];
@@ -89,6 +104,11 @@ export const AutomationSchema = z.object({
     models: z
         .object({ all: ModelIds.optional(), pr: ModelIds.optional(), changes: ModelIds.optional(), full: ModelIds.optional() })
         .strict(),
+    /**
+     * Options for reviews run with several models, for those that don't choose their own (automatic
+     * reviews, and reviews started without `options`). All off unless set; a review with one model has none.
+     */
+    options: ProjectOptionsInput,
 });
 export type Automation = z.infer<typeof AutomationSchema>;
 export type ProjectModels = Automation["models"];
@@ -115,6 +135,7 @@ export const AUTOMATION_DEFAULTS: Automation = {
     skipPaths: [],
     skipBots: true,
     models: {},
+    options: {},
 };
 
 const GITHUB_TOKEN = "github-token";
