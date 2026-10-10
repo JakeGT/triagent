@@ -168,6 +168,9 @@ Names come first and ids second: "Read and triage (`write`)", "PR #12 Redesign t
   every section is reached by scrolling.
 - **Landing page — the part about agents is dark in both themes.** Agents meet Triagent in a terminal, and that part
   of the page is a picture of one.
+- **S5 — the landing page has a backdrop.** A field of agreement dots that fades out behind the words, and the four
+  severity shapes at poster size beside the headline on a wide screen. They are the product's marks used as
+  ornament, which nothing in the app may do; they sit behind the content and carry no meaning there.
 - **Landing page — the headline, the section headings over full-width demos and the closing call are centred.**
   They sit over something centred and as wide as the page. Prose beside a picture stays left-aligned.
 

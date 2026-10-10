@@ -253,6 +253,66 @@
     }
 }
 
+/* The landing page's backdrop, made of the product's own marks: a field of agreement dots, clearest at the
+   edges and gone behind the words, and the four severity shapes at poster size. Never behind an app page. */
+@layer components {
+    .landing-field {
+        position: relative;
+        isolation: isolate;
+        overflow: hidden;
+    }
+    .landing-field::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: -2;
+        pointer-events: none;
+        background-image: radial-gradient(circle at center, var(--landing-dot) 1.25px, transparent 1.75px);
+        background-size: 1.5rem 1.5rem;
+        background-position: center top;
+        mask-image: var(--landing-mask);
+    }
+    .landing-field {
+        --landing-dot: color-mix(in oklab, var(--foreground) 26%, transparent);
+        /* Clear in the middle, where the headline and the paragraph are; fading out towards the bottom. */
+        --landing-mask: radial-gradient(ellipse 46% 52% at 50% 38%, transparent 55%, #000 100%), linear-gradient(#000 45%, transparent 96%);
+        mask-composite: intersect;
+    }
+    .landing-field::before {
+        mask-composite: intersect;
+    }
+    /* A band of it: strongest along the top edge, for a section that follows another. */
+    .landing-field-top {
+        --landing-mask: linear-gradient(#000, transparent 70%);
+    }
+    .landing-shape {
+        position: absolute;
+        z-index: -1;
+        pointer-events: none;
+        background: var(--c);
+        opacity: 0.14;
+    }
+    .dark .landing-shape {
+        opacity: 0.2;
+    }
+    .landing-shape-critical {
+        --c: var(--sev-critical);
+        clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    }
+    .landing-shape-high {
+        --c: var(--sev-high);
+        clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+    }
+    .landing-shape-medium {
+        --c: var(--sev-medium);
+        border-radius: 0.5rem;
+    }
+    .landing-shape-low {
+        --c: var(--sev-low);
+        border-radius: 999px;
+    }
+}
+
 /* Severity and status marks: colour plus a shape, so they don't rely on colour alone. */
 @layer components {
     .sev {

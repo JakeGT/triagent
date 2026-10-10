@@ -151,6 +151,18 @@ function Agreement() {
     );
 }
 
+/** The four severity shapes at poster size, behind the top of the page, where a wide screen has room beside the words. */
+function Shapes() {
+    return (
+        <div aria-hidden="true" className="max-lg:hidden">
+            <span className="landing-shape landing-shape-critical top-20 left-[max(1.5rem,calc(50%-45rem))] size-44 -rotate-12" />
+            <span className="landing-shape landing-shape-medium top-[21rem] left-[max(4rem,calc(50%-39rem))] size-20 rotate-12" />
+            <span className="landing-shape landing-shape-high top-12 right-[max(3rem,calc(50%-41rem))] size-28 rotate-6" />
+            <span className="landing-shape landing-shape-low top-[15rem] right-[max(1rem,calc(50%-46rem))] size-48" />
+        </div>
+    );
+}
+
 export function LandingPage() {
     const me = useQuery(meQuery);
     const signedIn = me.isSuccess;
@@ -203,45 +215,48 @@ export function LandingPage() {
             </header>
 
             <main id="main">
-                <section aria-labelledby="hero-title" className={cn(COLUMN, "grid gap-10 pt-10 pb-14 sm:gap-12 sm:pt-14 sm:pb-24")}>
-                    <div className="grid justify-items-center gap-7 text-center">
-                        {/* The headline is the change Triagent makes, written the way a change is: one line out, one in. */}
-                        <h1
-                            id="hero-title"
-                            className="grid max-w-full gap-1.5 text-start text-[clamp(1.75rem,6.6vw,4.5rem)] leading-[1.06] font-semibold tracking-tight sm:gap-2"
-                        >
-                            <span className="flex items-baseline gap-[0.45em] rounded-md bg-diff-del px-[0.4em] py-[0.14em]">
-                                <span className="font-mono text-[0.62em] font-normal text-sev-critical select-none" aria-hidden="true">
-                                    −
+                <section aria-labelledby="hero-title" className="landing-field">
+                    <Shapes />
+                    <div className={cn(COLUMN, "grid gap-10 pt-10 pb-14 sm:gap-12 sm:pt-14 sm:pb-24")}>
+                        <div className="grid justify-items-center gap-7 text-center">
+                            {/* The headline is the change Triagent makes, written the way a change is: one line out, one in. */}
+                            <h1
+                                id="hero-title"
+                                className="grid max-w-full gap-1.5 text-start text-[clamp(1.75rem,6.6vw,4.5rem)] leading-[1.06] font-semibold tracking-tight sm:gap-2"
+                            >
+                                <span className="flex items-baseline gap-[0.45em] rounded-md bg-diff-del px-[0.4em] py-[0.14em]">
+                                    <span className="font-mono text-[0.62em] font-normal text-sev-critical select-none" aria-hidden="true">
+                                        −
+                                    </span>
+                                    <span className="sr-only">Not </span>
+                                    <span className="text-foreground/75 line-through decoration-foreground/50 decoration-[0.055em]">
+                                        Three reviews to read.
+                                    </span>
+                                </span>{" "}
+                                <span className="flex items-baseline gap-[0.45em] rounded-md bg-diff-add px-[0.4em] py-[0.14em]">
+                                    <span className="font-mono text-[0.62em] font-normal text-st-resolved select-none" aria-hidden="true">
+                                        +
+                                    </span>
+                                    <span>One list to work through.</span>
                                 </span>
-                                <span className="sr-only">Not </span>
-                                <span className="text-foreground/75 line-through decoration-foreground/50 decoration-[0.055em]">
-                                    Three reviews to read.
-                                </span>
-                            </span>{" "}
-                            <span className="flex items-baseline gap-[0.45em] rounded-md bg-diff-add px-[0.4em] py-[0.14em]">
-                                <span className="font-mono text-[0.62em] font-normal text-st-resolved select-none" aria-hidden="true">
-                                    +
-                                </span>
-                                <span>One list to work through.</span>
-                            </span>
-                        </h1>
-                        <p className="max-w-[58ch] text-lg leading-normal text-pretty text-muted-foreground sm:text-xl sm:leading-normal">
-                            Triagent reviews your pull requests with the models you choose, merges what they find into a single list, and
-                            lets your team and your coding agents work through it together.
-                        </p>
-                        <div className="flex flex-wrap items-center justify-center gap-3">
-                            {enter("lg")}
-                            <Button asChild variant="outline" size="lg" className="h-12 px-6 text-base">
-                                <a href="#try">Try it here</a>
-                            </Button>
+                            </h1>
+                            <p className="max-w-[58ch] text-lg leading-normal text-pretty text-muted-foreground sm:text-xl sm:leading-normal">
+                                Triagent reviews your pull requests with the models you choose, merges what they find into a single list,
+                                and lets your team and your coding agents work through it together.
+                            </p>
+                            <div className="flex flex-wrap items-center justify-center gap-3">
+                                {enter("lg")}
+                                <Button asChild variant="outline" size="lg" className="h-12 px-6 text-base">
+                                    <a href="#try">Try it here</a>
+                                </Button>
+                            </div>
                         </div>
-                    </div>
-                    <div className="grid gap-4">
-                        <Bench />
-                        <p className="justify-self-center text-center text-[0.9375rem] text-muted-foreground">
-                            A made-up pull request. The switches work: turn a reviewer off and see what goes with it.
-                        </p>
+                        <div className="grid gap-4">
+                            <Bench />
+                            <p className="justify-self-center text-center text-[0.9375rem] text-muted-foreground">
+                                A made-up pull request. The switches work: turn a reviewer off and see what goes with it.
+                            </p>
+                        </div>
                     </div>
                 </section>
 
@@ -284,7 +299,7 @@ export function LandingPage() {
                 </section>
 
                 {/* Where agents work is a terminal: this part of the page is dark in both themes. */}
-                <section aria-labelledby="agents" className="dark bg-[#0b0f12] text-foreground">
+                <section aria-labelledby="agents" className="dark landing-field landing-field-top bg-[#0b0f12] text-foreground">
                     <div
                         className={cn(
                             COLUMN,
@@ -348,7 +363,7 @@ export function LandingPage() {
                     </div>
                 </section>
 
-                <section aria-labelledby="start-title" className="border-t bg-muted">
+                <section aria-labelledby="start-title" className="landing-field landing-field-top border-t bg-muted">
                     <div className={cn(COLUMN, BAND, "grid justify-items-center gap-8 text-center")}>
                         <h2
                             id="start-title"
