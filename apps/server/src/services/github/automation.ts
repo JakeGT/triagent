@@ -31,7 +31,7 @@ import { now } from "../../security.ts";
 import { ACTIVE_JOB_STATUSES, type Job, type Project, type Repos } from "../../store/types.ts";
 import type { Actor, Core } from "../core.ts";
 import type { Reports } from "../reports.ts";
-import { type JobSpec, type Runs, specForBranch, specForPull } from "../runs.ts";
+import { type JobSpec, onTheSide, type Runs, specForBranch, specForPull } from "../runs.ts";
 import type { Settings } from "../settings.ts";
 import { GitHubError, type Pull } from "./client.ts";
 import { type Github, type GithubAccess, NotConnected, STATUS_CONTEXT } from "./service.ts";
@@ -340,7 +340,7 @@ export class Automation {
                     console.error(`[${project.slug}] Answering /review on #${ask.number} failed: ${(err as Error).message}`),
                 );
         const active = (await this.store.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 200)).filter(
-            (j) => j.kind === "pr",
+            (j) => j.kind === "pr" && !onTheSide(j),
         );
         const decisions: Decision[] = [];
         const prs: Record<string, PullState> = {};
@@ -711,7 +711,7 @@ export class Automation {
         const s = await this.state(project);
         const known = s.prs[pr.number];
         const active = (await this.store.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 200)).filter(
-            (j) => j.kind === "pr" && j.pr?.number === pr.number,
+            (j) => j.kind === "pr" && j.pr?.number === pr.number && !onTheSide(j),
         );
         const verdict = decide({
             pull: { headSha: pr.head.sha, draft: Boolean(pr.draft), author: pr.user?.login ?? null, bot: isBot(pr.user), labels: [] },
@@ -754,7 +754,9 @@ export class Automation {
         const s = await this.state(project);
         const automation = await this.settings.automation(this.store, project);
         const connected = await this.github.maybeFor(project).catch(() => null);
-        const active = await this.store.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 200);
+        const active = (await this.store.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 200)).filter(
+            (j) => !onTheSide(j),
+        );
         const last = new Map((s.lastCheck?.decisions ?? []).map((d) => [d.number, d]));
         return {
             connected: Boolean(connected),
@@ -1269,7 +1271,7 @@ export class Automation {
         const head = (await gh.client.branch(gh.repo, branch).catch(() => null))?.commit.sha;
         if (!head) return null;
         const last = (await this.store.jobs.list({ projectId: project.id, statuses: ["done"] }, 200)).find(
-            (j) => j.kind === "full" && j.branch === branch,
+            (j) => j.kind === "full" && j.branch === branch && !onTheSide(j),
         );
         if (!last?.headSha || last.headSha !== head) return null;
         return `${branch} is still at ${short(head)}, the commit of its last full scan (${(last.finishedAt ?? "").slice(0, 10)})`;

@@ -379,6 +379,8 @@ export interface Automation {
 
 /** A review's options as they're asked for (anything left out is off), and a project's own. */
 export interface RunOptionsInput {
+    /** Run a model that failed or went quiet once more by itself, and add its findings to the report. */
+    retryFailed?: boolean;
     agreement?: {
         /** Fail the pull request's check only for critical findings at least this many models found. */
         failAt?: number | null;
@@ -550,6 +552,17 @@ export interface Run {
         github?: string[];
         /** With a rule about agreement: how many models had to find a critical finding, and how many such findings there were. */
         agreement?: { models: number; critical: number };
+        /** One model of a finished review run again: what its findings added to the report, or why they weren't added. */
+        rerun?: {
+            of: string;
+            index: number;
+            label: string;
+            attempt: number;
+            auto: boolean;
+            added: number | null;
+            agreed: number | null;
+            notAdded: string | null;
+        };
         /** A review run with several models: how each went. */
         models?: {
             label: string;
@@ -571,6 +584,8 @@ export interface Run {
     requestedModels: string[] | null;
     /** Its options for several models: those asked for while it's queued, those it runs with after. Null for none, or the project's. */
     options: RunOptions | null;
+    /** Set on a run that runs one model of a finished review again: the review, and which attempt of that model's this is. */
+    rerunOf?: { id: string; index: number; label: string; attempt: number; auto: boolean };
     /** What it ran with, as it was then. */
     model: {
         provider: string;
@@ -605,9 +620,35 @@ export interface LogLine {
     line: string;
 }
 
+/** One model of a finished review run again by itself, as the review's page lists it. */
+export interface RunRetry {
+    /** The model's place in the review. */
+    index: number;
+    label: string;
+    /** The run that ran it again. */
+    id: string;
+    /** 2 for the first time it was run again. */
+    attempt: number;
+    auto: boolean;
+    status: RunStatus;
+    queuedAt: string;
+    finishedAt: string | null;
+    total: number | null;
+    /** Of its findings: how many were new to the report, and how many joined one another model made. */
+    added: number | null;
+    agreed: number | null;
+    /** Why its findings weren't added to the report, when it finished but they weren't. */
+    notAdded: string | null;
+    error: string | null;
+}
+
 export interface RunDetail extends Run {
     logLines: LogLine[];
     next: number;
+    /** A finished review with several models: the runs that ran one of them again, oldest first. */
+    retries?: RunRetry[];
+    /** …and its models that didn't finish, by place: each can be run again, or says why not. */
+    rerunnable?: { index: number; reason: string | null }[];
 }
 
 export interface PullRequest {

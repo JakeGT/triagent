@@ -2,16 +2,16 @@
 // long it took, and cancelling it.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Square } from "lucide-react";
+import { RotateCw, Square } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
 import { ModelChips, modelLabels } from "@/components/model-choice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api, paths } from "@/lib/api";
+import { api, errorMessage, paths } from "@/lib/api";
 import { plural } from "@/lib/format";
 import { keys, modelsQuery } from "@/lib/queries";
-import type { Run, RunModelProgress, RunStatus } from "@/lib/types";
+import type { Run, RunModelProgress, RunRetry, RunStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const STATUS_TEXT: Record<RunStatus, string> = {
@@ -76,6 +76,7 @@ export function optionsText(run: Pick<Run, "options">): string[] {
     const o = run.options;
     if (!o) return [];
     const out: string[] = [];
+    if (o.retryFailed) out.push("Models that fail are run again once automatically.");
     if (o.agreement.failAt !== null)
         out.push(`The pull request check fails only for criticals at least ${o.agreement.failAt} models found.`);
     if (o.agreement.markSingles) out.push("Findings only one model found are marked as lower confidence.");
@@ -159,6 +160,68 @@ export function findingsText(run: Pick<Run, "result">): string {
     if (!r || r.total === null || r.total === undefined) return "";
     const critical = r.bySeverity?.critical ?? 0;
     return `${plural(r.total, "finding")}${critical ? ` (${critical} critical)` : ""}`;
+}
+
+/** "Second attempt", "Third attempt", "Attempt 5". */
+export function attemptText(attempt: number): string {
+    return attempt === 2 ? "Second attempt" : attempt === 3 ? "Third attempt" : attempt === 4 ? "Fourth attempt" : `Attempt ${attempt}`;
+}
+
+/** What a model's findings did to the report once it was run again, or why they weren't added. */
+export function addedText(r: Pick<RunRetry, "added" | "agreed" | "notAdded">): string {
+    if (r.notAdded) return `Not added to the report. ${r.notAdded}`;
+    if (r.added === null || r.agreed === null) return "";
+    if (!r.added && !r.agreed) return "It found nothing, so the report is as it was.";
+    const parts = [
+        r.added ? `${plural(r.added, "new finding")}` : "",
+        r.agreed ? `${r.agreed} that ${r.agreed === 1 ? "another model also found" : "other models also found"}` : "",
+    ].filter(Boolean);
+    return `Added to the report: ${parts.join(", and ")}.`;
+}
+
+/** How a model's run again is going, or went, in words. */
+export function retryText(r: RunRetry): string {
+    const how =
+        r.status === "queued"
+            ? "waiting to start"
+            : r.status === "running"
+              ? "running now"
+              : r.status === "cancelled"
+                ? "cancelled"
+                : r.status === "failed"
+                  ? `failed${r.error ? ` (${r.error})` : ""}`
+                  : addedText(r);
+    return `${attemptText(r.attempt)}${r.auto ? ", automatic" : ""}: ${how}`;
+}
+
+/** Run one model of a finished review again; its findings join the review's report. */
+export function RerunModel({ ws, run, index, label }: { ws: string; run: Pick<Run, "id">; index: number; label: string }) {
+    const queryClient = useQueryClient();
+    const rerun = useMutation({
+        mutationFn: () => api.post<Run>(`${paths.workspace(ws)}/runs/${encodeURIComponent(run.id)}/models/${index}/rerun`),
+        onSuccess: () => {
+            toast.success(`Running ${label} again.`);
+            void queryClient.invalidateQueries({ queryKey: keys.runs(ws) });
+        },
+        onError: (err) => {
+            toast.error(errorMessage(err));
+            void queryClient.invalidateQueries({ queryKey: keys.runs(ws) });
+        },
+    });
+    return (
+        // The label says which model, as the button alone says "it" (the visible words come first, as people say them).
+        <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7"
+            aria-label={`Run it again: ${label}`}
+            disabled={rerun.isPending}
+            onClick={() => rerun.mutate()}
+        >
+            <RotateCw /> Run it again
+        </Button>
+    );
 }
 
 export function CancelRun({ ws, run, compact }: { ws: string; run: Run; compact?: boolean }) {

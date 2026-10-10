@@ -646,7 +646,7 @@ export const TOOLS: Tool[] = [
                 "The models for this review only, as ids from list_models (up to five; they review it at the same time and their findings are merged). Default: the project's models for this kind of review.",
             ),
             options: RunOptionsInput.optional().describe(
-                "Options for this review, when it has two or more models: agreement rules (fail the pull request's check only for critical findings several models found; mark findings one model found as lower confidence). Anything left out is off; without `options` at all, the project's own apply.",
+                "Options for this review, when it has two or more models: retryFailed (a model that fails is run once more by itself), and agreement rules (fail the pull request's check only for critical findings several models found; mark findings one model found as lower confidence). Anything left out is off; without `options` at all, the project's own apply.",
             ),
         }),
         async run(ctx, args) {
@@ -722,7 +722,7 @@ export const TOOLS: Tool[] = [
         name: "get_run",
         title: "Get run",
         description:
-            "One review: status, progress, result, and its log (lines after `after`, a line number). With several models, `progress.models` is each one's own progress while it runs and `result.models` how each ended, with `reason` (stalled, timeLimit or overBudget) for one that was stopped.",
+            "One review: status, progress, result, and its log (lines after `after`, a line number). With several models, `progress.models` is each one's own progress while it runs and `result.models` how each ended, with `reason` (stalled, timeLimit or overBudget) for one that was stopped. Once it has finished, `rerunnable` lists the models that didn't (each can be run again with rerun_model, or says why not) and `retries` the runs that ran one again.",
         permission: "read",
         readOnly: true,
         input: z.object({ id: z.string().max(40), after: z.number().int().min(0).optional() }),
@@ -733,6 +733,24 @@ export const TOOLS: Tool[] = [
                 text: `${r.title}: ${r.status}${r.error ? ` (${r.error})` : ""}${r.result?.total !== null && r.result?.total !== undefined ? `, ${r.result.total} finding(s) on ${r.branch}` : ""}.\n\n${tail.join("\n")}`,
                 data: r,
             };
+        },
+    }),
+    tool({
+        name: "rerun_model",
+        title: "Run a model again",
+        description:
+            "Run one model of a finished review again by itself: one that failed or was stopped there (see get_run: `rerunnable` lists those that can be, `retries` those that were). Its findings are added to the report the review made, and triage on the findings already there is left as it is. Refused if the branch has a newer report by now. Returns the new run; wait_for_run waits for it.",
+        permission: "operate",
+        input: z.object({
+            id: z.string().max(40).describe("The review's run id"),
+            model: z.string().max(300).describe("The model to run again: its label in the run's result.models"),
+        }),
+        async run(ctx, args) {
+            const run = await ctx.services.runs.get(ctx.access.workspace, String(args.id));
+            const index = (run.result?.models as { label: string }[] | undefined)?.findIndex((m) => m.label === args.model) ?? -1;
+            if (index < 0) throw badRequest(`That review has no model called "${String(args.model).slice(0, 100)}".`);
+            const r = await ctx.services.runs.rerun(ctx.actor, ctx.access.workspace, run.id, index);
+            return { text: `Queued run ${r.id}: ${r.title}. Use wait_for_run with this id to wait for it.`, data: r };
         },
     }),
     tool({

@@ -5,6 +5,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { CATEGORIES, type Category, permissionsOf, ROLE_PERMISSIONS, SEVERITIES, type Severity } from "@triagent/shared";
 import { BranchView, compareBranches } from "../domain/branch.ts";
+import { addModel } from "../domain/merge.ts";
 import { COMMIT, cleanText, isValidBranch } from "../domain/names.ts";
 import { EMPTY_REVIEW, parseReport, type RawComment, type RawReport, type Review, sameFinding, type UploadMeta } from "../domain/report.ts";
 import { reportMetrics } from "../domain/review-metrics.ts";
@@ -439,6 +440,61 @@ export class Reports {
                 });
             }
             return { ok: true, ...comparison, reopened, current: next.meta };
+        });
+    }
+
+    /**
+     * Add one more model's findings to a branch's report: a model of the review that made the report, run
+     * again by itself. Only into that report (`uploadId`): if the branch has another by now, or none,
+     * nothing changes and the answer is null. The report keeps its place in the branch's history, and
+     * every finding already there keeps its id, so triage is as it was; nothing is reopened.
+     */
+    async addModelFindings(actor: Actor, project: Project, input: { branch: string; uploadId: string; label: string; report: RawReport }) {
+        const { branch, label } = input;
+        return this.core.write(actor, async (w) => {
+            const stored = await w.tx.reports.get(project.id, branch);
+            if (!stored || stored.upload.id !== input.uploadId) return null;
+            const merged = addModel(stored.report, label, input.report);
+            if (!merged) return null;
+            // No longer the file that was uploaded, so not "the same file" if that's uploaded again.
+            const upload: UploadMeta = { ...stored.upload, sha256: null };
+            let next: Review;
+            try {
+                next = parseReport(merged.report, upload);
+            } catch (err) {
+                throw new ApiError(422, (err as Error).message);
+            }
+            const before = this.review(stored);
+            await w.tx.reports.put({ projectId: project.id, branch, report: merged.report, upload });
+            await w.activity(
+                {
+                    workspaceId: project.workspaceId,
+                    projectId: project.id,
+                    branch,
+                    kind: "report",
+                    itemId: upload.fileName,
+                    changes: {
+                        uploaded: {
+                            issues: next.issues.length,
+                            carriedOver: before.issues.length,
+                            added: merged.added,
+                            removed: 0,
+                            reopened: 0,
+                            keptAdded: 0,
+                            commit: upload.commit,
+                            model: label,
+                        },
+                    },
+                },
+                project.slug,
+            );
+            return {
+                added: merged.added,
+                agreed: merged.agreed,
+                report: merged.report,
+                /** The findings that weren't on the branch before. */
+                addedIssues: next.issues.filter((x) => !before.byId.has(x.id)),
+            };
         });
     }
 

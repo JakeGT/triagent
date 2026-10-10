@@ -223,6 +223,49 @@ export class Git {
     }
 
     /**
+     * The commits a job was told to review (`head`, and `base` where its changes start), once what it
+     * reviews has been fetched: they're usually there already, as the pull request's or branch's history.
+     * One that isn't (the branch was rewritten since) is asked for by itself; if GitHub no longer has it,
+     * this fails saying so.
+     */
+    async pin(
+        mirror: string,
+        job: { cloneUrl: string; username: string; token: string },
+        commit: { head: string; base: string | null },
+        signal?: AbortSignal,
+    ): Promise<Fetched> {
+        for (const sha of [commit.head, commit.base]) {
+            if (sha === null) continue;
+            if (!SHA.test(sha)) throw new Error("The server named something that isn't a commit to review.");
+            const has = () =>
+                this.git(["--git-dir", mirror, "cat-file", "-e", `${sha}^{commit}`], gitEnv(this.ctx), 60_000, signal).then(
+                    () => true,
+                    () => false,
+                );
+            if (await has()) continue;
+            await this.git(
+                [
+                    "--git-dir",
+                    mirror,
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    "--",
+                    job.cloneUrl,
+                    `+${sha}:refs/triagent/commit/${sha}`,
+                ],
+                fetchEnv(this.ctx, job.cloneUrl, job.username, job.token),
+                15 * 60_000,
+                signal,
+            ).catch(() => {});
+            if (!(await has()))
+                throw new Error(`Commit ${sha.slice(0, 7)}, which this review was of, can't be fetched from GitHub any more.`);
+        }
+        return { head: commit.head, base: commit.base };
+    }
+
+    /**
      * A detached worktree of `commit` at `dir`. With `attrSource`, checking out uses that commit's
      * .gitattributes rather than the ones being checked out.
      */

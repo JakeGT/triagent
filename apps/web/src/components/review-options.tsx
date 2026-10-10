@@ -37,6 +37,19 @@ export function ReviewOptions({
             <legend className="mb-field text-sm leading-snug font-medium">{legend}</legend>
             <div className="grid gap-2">
                 <CheckField
+                    label="Retry failed models once automatically"
+                    hint="A model that fails or goes quiet is run once more by itself, and its findings are added to the report."
+                >
+                    {(p) => (
+                        <Checkbox
+                            {...p}
+                            checked={value.retryFailed === true}
+                            disabled={disabled}
+                            onCheckedChange={(v) => onChange({ ...value, retryFailed: v === true })}
+                        />
+                    )}
+                </CheckField>
+                <CheckField
                     label={`Fail the pull request check only for criticals at least ${failAt ?? 2} models found`}
                     hint="Otherwise any critical finding fails it. Every finding is still kept, whoever found it."
                 >

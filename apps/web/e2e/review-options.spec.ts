@@ -157,3 +157,55 @@ test("a project's own options: saved in its settings, and what Start a review be
     await expect(own.getByLabel("How many models must have found it").getByRole("option")).toHaveText(["At least 2 of 3", "All 3"]);
     await expect(own.getByLabel("How many models must have found it")).toHaveValue("3");
 });
+
+for (const theme of ["light", "dark"] as const) {
+    test(`a model that failed is run again from the review's page, and its findings join the report (${theme})`, async ({
+        page,
+        admin,
+    }) => {
+        test.slow();
+        const { ws, ids } = await reviewable(admin, ["fake/model", "fake/wordy-extra-fail-once"]);
+        const review = await admin.post(`/api/v1/w/${ws}/p/app/reviews`, { kind: "full", models: ids });
+        await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
+        await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+        await page.goto(`/w/${ws}/p/app/runs/${review.id}`);
+        const panel = page.getByTestId("run-panel");
+        await expect(panel.getByText("Partly done", { exact: true })).toBeVisible({ timeout: 30_000 });
+
+        // The model that failed says so, and can be run again; the one that finished has nothing to run.
+        const models = panel.getByTestId("run-models").locator("> li");
+        await expect(models).toHaveCount(2);
+        await expect(models.nth(1)).toContainText("fake/wordy-extra-fail-once failed");
+        await expect(models.nth(0).getByRole("button")).toHaveCount(0);
+        const again = models.nth(1).getByRole("button", { name: "Run it again: fake/wordy-extra-fail-once" });
+        await axe(page, `a review with a model that failed (${theme})`);
+        await again.click();
+        await expect(page.getByText("Running fake/wordy-extra-fail-once again.")).toBeVisible();
+
+        // Its second attempt is listed under it, and says what it added once it's done.
+        const attempt = models.nth(1).getByTestId("run-model-retries").getByRole("link");
+        await expect(attempt).toHaveText("Second attempt: Added to the report: 1 new finding, and 1 that another model also found.", {
+            timeout: 30_000,
+        });
+        await expect(again).toHaveCount(0);
+        await expect(models.nth(1).getByTestId("run-model-retries")).toContainText("findings have been added already");
+        await axe(page, `a review whose model was run again (${theme})`);
+        await noSidewaysScroll(page);
+
+        // The attempt has a page of its own, which says what it is and leads back.
+        await attempt.click();
+        await expect(panel.getByRole("heading", { level: 2 })).toHaveText("fake/wordy-extra-fail-once again: Full scan of main");
+        const of = panel.getByTestId("run-rerun-of");
+        await expect(of).toContainText("fake/wordy-extra-fail-once in the review it failed in.");
+        await expect(of).toContainText("Added to the report: 1 new finding, and 1 that another model also found.");
+        await expect(panel.getByText("Second attempt of")).toBeVisible();
+        await axe(page, `a model's second attempt (${theme})`);
+        await of.getByRole("link", { name: "the review it failed in" }).click();
+        await expect(panel.getByRole("heading", { level: 2 })).toHaveText("Full scan of main");
+
+        // Triage has both models' findings now.
+        await page.goto(`/w/${ws}/p/app/issues?branch=main`);
+        await expect(page.getByText("Found by all 2 models")).toHaveCount(1);
+        await expect(page.getByText("Found by 1 of 2")).toHaveCount(1);
+    });
+}

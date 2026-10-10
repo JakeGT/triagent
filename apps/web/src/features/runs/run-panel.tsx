@@ -16,6 +16,8 @@ import { safeHref } from "@/lib/safe-href";
 import { useCan, useProject } from "@/lib/session";
 import type { LogLine, RunDetail } from "@/lib/types";
 import {
+    addedText,
+    attemptText,
     CancelRun,
     duration,
     findingsText,
@@ -24,7 +26,9 @@ import {
     modelProgressText,
     optionsText,
     progressText,
+    RerunModel,
     RunStatusBadge,
+    retryText,
     runModelLabels,
 } from "./run-bits";
 
@@ -103,6 +107,7 @@ function RunDetailView({ runId }: { runId: string }) {
     const active = r.status === "queued" || r.status === "running";
     const shown = linesOf(r.all, logModel);
     const options = optionsText(r);
+    const canOperate = can("operate");
     const logChoice = (label: string | null) => (
         <Button
             key={label ?? ""}
@@ -160,6 +165,25 @@ function RunDetailView({ runId }: { runId: string }) {
                 <dd>
                     {r.source === "automation" ? "Automatically" : `By ${r.requestedBy.name}`}, {formatDateTime(r.queuedAt)}
                 </dd>
+                {r.rerunOf && (
+                    <>
+                        <dt className="text-muted-foreground">{attemptText(r.rerunOf.attempt)} of</dt>
+                        <dd data-testid="run-rerun-of">
+                            <Badge variant="outline" className="font-mono font-normal">
+                                {r.rerunOf.label}
+                            </Badge>{" "}
+                            in{" "}
+                            <Link
+                                to="/w/$ws/p/$project/runs/$runId"
+                                params={{ ws, project: slug, runId: r.rerunOf.id }}
+                                className="underline"
+                            >
+                                the review it failed in
+                            </Link>
+                            {r.rerunOf.auto ? ", run again automatically" : ""}. {r.result?.rerun ? addedText(r.result.rerun) : ""}
+                        </dd>
+                    </>
+                )}
                 {asked && choices.data && (
                     <>
                         <dt className="text-muted-foreground">Asked to use</dt>
@@ -186,20 +210,52 @@ function RunDetailView({ runId }: { runId: string }) {
                             {r.result?.models ? (
                                 <>
                                     <ul className="grid gap-0.5" data-testid="run-models">
-                                        {r.result.models.map((m) => (
-                                            <li key={m.label}>
-                                                <Badge variant="outline" className="font-mono font-normal">
-                                                    {m.label}
-                                                </Badge>{" "}
-                                                {m.status === "done" || m.status === "partial"
-                                                    ? `${plural(m.total ?? 0, "finding")}${m.status === "partial" ? " (partly)" : ""}`
-                                                    : m.status === "cancelled"
-                                                      ? "cancelled"
-                                                      : `failed${m.error ? ` (${m.error})` : ""}`}
-                                                {m.tokens !== null && `, ${m.tokens.toLocaleString("en-GB")} tokens`}
-                                                {m.seconds !== null && `, ${duration(m.seconds)}`}
-                                            </li>
-                                        ))}
+                                        {r.result.models.map((m, i) => {
+                                            const again = r.retries?.filter((x) => x.index === i) ?? [];
+                                            const able = r.rerunnable?.find((x) => x.index === i);
+                                            return (
+                                                <li key={m.label}>
+                                                    <Badge variant="outline" className="font-mono font-normal">
+                                                        {m.label}
+                                                    </Badge>{" "}
+                                                    {m.status === "done" || m.status === "partial"
+                                                        ? `${plural(m.total ?? 0, "finding")}${m.status === "partial" ? " (partly)" : ""}`
+                                                        : m.status === "cancelled"
+                                                          ? "cancelled"
+                                                          : `failed${m.error ? ` (${m.error})` : ""}`}
+                                                    {m.tokens !== null && `, ${m.tokens.toLocaleString("en-GB")} tokens`}
+                                                    {m.seconds !== null && `, ${duration(m.seconds)}`}
+                                                    {(again.length > 0 || able) && (
+                                                        // The model run again by itself: each attempt, and the way to ask for another.
+                                                        <ul
+                                                            className="mt-0.5 ms-3 grid gap-0.5 border-s ps-3"
+                                                            data-testid="run-model-retries"
+                                                        >
+                                                            {again.map((x) => (
+                                                                <li key={x.id}>
+                                                                    <Link
+                                                                        to="/w/$ws/p/$project/runs/$runId"
+                                                                        params={{ ws, project: slug, runId: x.id }}
+                                                                        className="underline"
+                                                                    >
+                                                                        {retryText(x)}
+                                                                    </Link>
+                                                                </li>
+                                                            ))}
+                                                            {able && able.reason === null && canOperate && (
+                                                                <li>
+                                                                    <RerunModel ws={ws} run={r} index={i} label={m.label} />
+                                                                </li>
+                                                            )}
+                                                            {able?.reason &&
+                                                                !again.some((x) => x.status === "queued" || x.status === "running") && (
+                                                                    <li className="text-muted-foreground">{able.reason}</li>
+                                                                )}
+                                                        </ul>
+                                                    )}
+                                                </li>
+                                            );
+                                        })}
                                     </ul>
                                     {r.requestedModels && <p data-testid="run-models-chosen">Chosen for this review.</p>}
                                 </>

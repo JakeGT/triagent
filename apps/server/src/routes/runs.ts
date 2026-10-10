@@ -101,6 +101,20 @@ export const runRoutes: Route[] = [
         },
     }),
     route({
+        method: "POST",
+        path: `${W}/runs/{runId}/models/{index}/rerun`,
+        scope: "workspace",
+        permission: "operate",
+        tag: "Runs",
+        summary: "Run one model of a finished review again: the one at this place in its models (from 0), which failed or was stopped",
+        description:
+            "Queues a small review with that model alone, on the commit the review was of, and returns it. When it finishes, its findings are added to the report the review made, and triage on the findings already there is left as it is. Refused (409) when that model finished, is already being run again, or the branch has a newer report by now; if a newer report arrives while it runs, its findings aren't added and its `result.rerun.notAdded` says why. `GET …/runs/{runId}` lists a review's models that can be run again (`rerunnable`) and those that were (`retries`).",
+        async handler({ services, access, params, actor }) {
+            const index = /^\d{1,2}$/.test(params.index as string) ? Number(params.index) : -1;
+            return json(await services.runs.rerun(actor, (access as Access).workspace, params.runId as string, index), 201);
+        },
+    }),
+    route({
         method: "GET",
         path: `${P}/pull-requests`,
         scope: "project",

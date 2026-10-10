@@ -65,3 +65,6 @@ A review with two or more models can be given `options` in `start_review`. Each 
 
 - `agreement: { failAt: 2 }`: the pull request's check fails only for critical findings at least that many of the models found (2 up to the number of models). Every finding is still listed.
 - `agreement: { markSingles: true }`: findings only one model found are marked `lowerConfidence` and listed after the others of their severity. Pass `lowerConfidence: false` to `list_issues` or `claim_next_issue` to leave them for later, or `true` to see only them.
+- `retryFailed: true`: a model that fails or goes quiet is run once more by itself, and its findings are added to the report.
+
+To do that by hand after a review, `get_run` lists the models that didn't finish (`rerunnable`) and `rerun_model` with the run's `id` and the model's label runs one again. Triage already done on the branch is kept. It's refused once the branch has a newer report.

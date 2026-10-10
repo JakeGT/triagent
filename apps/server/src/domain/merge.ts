@@ -89,6 +89,63 @@ export function mergeReports(parts: readonly ModelReport[], same: readonly Findi
 }
 
 /**
+ * A merged report with one more model's findings added: a model that failed in the review and was run
+ * again by itself. What's there keeps its place and wording (so its triage stays with it); the model's
+ * findings at the same place as one of them join it, and the rest are added after. Findings added by
+ * hand are left alone. Null when the report already has this model's findings.
+ */
+export function addModel(report: RawReport, label: string, part: RawReport): { report: RawReport; added: number; agreed: number } | null {
+    const models = Array.isArray(report.models) ? report.models.filter((m): m is string => typeof m === "string") : [];
+    if (models.includes(label)) return null;
+    const found = (c: RawComment) => (Array.isArray(c.found_by) ? (c.found_by as unknown[]) : []);
+    const comments = report.comments.map((c) => ({ ...c }));
+    const before = comments.length;
+    let agreed = 0;
+    for (const c of Array.isArray(part.comments) ? part.comments : []) {
+        if (!c || typeof c !== "object" || typeof c.path !== "string") continue;
+        let best: RawComment | null = null;
+        let bestGap = Number.POSITIVE_INFINITY;
+        for (const k of comments.slice(0, before)) {
+            if (k.added_by || found(k).includes(label)) continue;
+            const gap = distance(k, c);
+            if (gap !== null && gap < bestGap) {
+                best = k;
+                bestGap = gap;
+            }
+        }
+        if (best) {
+            best.found_by = [...found(best), label];
+            best.also = [...(Array.isArray(best.also) ? best.also : []), take(label, c)];
+            agreed++;
+        } else comments.push({ ...c, found_by: [label] });
+    }
+    // It's no longer a model that didn't finish; what its own review couldn't finish is said under its name.
+    const warnings: unknown[] = (Array.isArray(report.warnings) ? report.warnings : []).filter((w) => {
+        const x = w as { type?: unknown; model?: unknown } | null;
+        return !(x && x.type === "model_failed" && x.model === label);
+    });
+    for (const w of Array.isArray(part.warnings) ? part.warnings : []) {
+        if (!w || typeof w !== "object") continue;
+        const x = w as Record<string, unknown>;
+        warnings.push({ ...x, message: `${label}: ${typeof x.message === "string" ? x.message : ""}` });
+    }
+    return {
+        report: {
+            ...report,
+            comments,
+            warnings,
+            models: [...models, label],
+            model_summaries: [
+                ...(Array.isArray(report.model_summaries) ? report.model_summaries : []),
+                { model: label, summary: part.project_summary ?? "" },
+            ],
+        },
+        added: comments.length - before,
+        agreed,
+    };
+}
+
+/**
  * Names for a review's models: each one's nickname or name, with its provider when two in the review share
  * that, and a number if they still do, so no two are known by the same label.
  */

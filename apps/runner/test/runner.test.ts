@@ -419,6 +419,27 @@ describe("git against a fake GitHub", () => {
         await assert.rejects(git.fetch(mirror, job({ token: `github_pat_${"w".repeat(30)}` })), /fetch failed|Authentication/);
     });
 
+    test("a job told which commits to review gets those, fetched by themselves if need be, or fails saying they're gone", async () => {
+        const base = fake.repo("acme/app").branches.get("main") as string;
+        const head = await fake.commit("acme/app", "pinned", { "src/p.ts": "export const p = 1;\n" }, "Add p", "main");
+        await fake.openPull("acme/app", { number: 9, headRef: "pinned" });
+        const mirror = mirrorPath(path.join(work, "cache-pin"), job().cloneUrl);
+        // The pull request has moved on since: the commit the review was of is in its history.
+        const now = await fake.commit("acme/app", "pinned", { "src/q.ts": "export const q = 2;\n" }, "Add q");
+        assert.equal((await git.fetch(mirror, job({ pr: 9 }))).head, now);
+        assert.deepEqual(await git.pin(mirror, job(), { head, base }), { head, base });
+        // One that isn't in what was fetched (another branch's) is asked for by itself.
+        const elsewhere = await fake.commit("acme/app", "elsewhere", { "src/e.ts": "export const e = 5;\n" }, "Add e", "main");
+        assert.deepEqual(await git.pin(mirror, job(), { head: elsewhere, base: null }), { head: elsewhere, base: null });
+        // One GitHub doesn't have, and something that isn't a commit at all.
+        await assert.rejects(
+            git.pin(mirror, job(), { head: "c".repeat(40), base }),
+            /Commit ccccccc, which this review was of, can't be fetched/,
+        );
+        await assert.rejects(git.pin(mirror, job(), { head, base: "d".repeat(40) }), /Commit ddddddd/);
+        await assert.rejects(git.pin(mirror, job(), { head: "main; rm -rf /", base: null }), /isn't a commit/);
+    });
+
     test("a change under review can't bring its own review rules: the base's are used, or none", async () => {
         const mirror = mirrorPath(path.join(work, "cache"), job().cloneUrl);
         // The pull request rewrites the rules to exclude what it changes.

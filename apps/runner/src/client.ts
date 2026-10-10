@@ -22,6 +22,8 @@ export interface ClaimedJob {
     model: RunnerModel;
     /** Every model to review with (all at once), in order, each with how people know it, and its own token budget if it has one (else the job's). */
     models?: (RunnerModel & { label: string; maxTokensBudget?: number | null })[];
+    /** Review exactly these commits, whatever the pull request or branch is at by now (a model of a finished review, run again). */
+    commit?: { head: string; base: string | null };
 }
 
 /** How one model's review went, in a job with several. */

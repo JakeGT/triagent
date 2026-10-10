@@ -30,6 +30,12 @@ export const ModelIds = z.array(z.string().min(1).max(64)).max(MAX_MODELS);
  */
 export const RunOptionsInput = z
     .object({
+        retryFailed: z
+            .boolean()
+            .optional()
+            .describe(
+                "Run a model that failed or went quiet once more by itself, without being asked, and add its findings to the review's report",
+            ),
         agreement: z
             .object({
                 failAt: z
@@ -61,6 +67,7 @@ export const ProjectOptionsInput = RunOptionsInput;
 export function runOptions(input: RunOptionsInput | null | undefined): RunOptions {
     return {
         ...structuredClone(NO_OPTIONS),
+        retryFailed: input?.retryFailed ?? false,
         agreement: { failAt: input?.agreement?.failAt ?? null, markSingles: input?.agreement?.markSingles ?? false },
     };
 }

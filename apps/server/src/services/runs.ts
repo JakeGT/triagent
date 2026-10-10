@@ -156,7 +156,73 @@ export interface ClaimedJob {
      * its own (the instance's, out of the workspace's allowance) says so; the others use `maxTokensBudget`.
      */
     models: (RunnerModel & { label: string; maxTokensBudget?: number | null })[];
+    /**
+     * Review exactly these commits, whatever the pull request or branch is at by now: a model of a
+     * finished review being run again. A runner that doesn't know this reviews what it fetched, and
+     * its findings aren't added to the review's report unless that's the same commit.
+     */
+    commit?: { head: string; base: string | null };
 }
+
+/** One model of a finished review run again by itself, as the review's own page lists it. */
+export interface Retry {
+    /** The model's place in the review. */
+    index: number;
+    label: string;
+    /** The run that ran it again. */
+    id: string;
+    /** 2 for the first time it was run again. */
+    attempt: number;
+    /** Without being asked: the review's `retryFailed` option. */
+    auto: boolean;
+    status: JobStatus;
+    queuedAt: string;
+    finishedAt: string | null;
+    /** Its own findings, once it has finished. */
+    total: number | null;
+    /** Of those, how many were new to the report, and how many joined a finding another model made. */
+    added: number | null;
+    agreed: number | null;
+    /** Why its findings weren't added to the report, when it finished but they weren't. */
+    notAdded: string | null;
+    error: string | null;
+}
+
+/** Where a review keeps the runs that ran its models again: it points at them, and they say how they went. */
+interface RetryPointer {
+    index: number;
+    id: string;
+    auto: boolean;
+}
+
+const retriesOf = (job: Pick<Job, "result">): RetryPointer[] =>
+    Array.isArray(job.result?.retries) ? (job.result.retries as RetryPointer[]) : [];
+
+/** What a model run again made of the branch's report, kept with its run. */
+interface RerunResult {
+    of: string;
+    index: number;
+    label: string;
+    attempt: number;
+    auto: boolean;
+    added: number | null;
+    agreed: number | null;
+    notAdded: string | null;
+    /** The report with its findings in: what the pull request's check and comment now say. */
+    branch?: {
+        total: number;
+        bySeverity: Record<Severity, number>;
+        gaps: ReturnType<typeof reviewGaps>;
+        models: string[];
+        agreement?: Agreed;
+    };
+}
+
+/**
+ * A job beside a branch's reviews: one model of a finished review run again. It doesn't take over the
+ * pull request's check while it's queued or running, and automatic reviews don't count it as a review.
+ */
+export const onTheSide = (job: Pick<Job, "rerunOf">): boolean => Boolean(job.rerunOf);
 
 type View = ReturnType<Runs["view"]>;
 
@@ -316,6 +382,8 @@ export function runTokens(reported: Tokens | null, said: unknown): Tokens | null
 
 /** One model's outcome in a run with several. */
 interface Part {
+    /** The favourite it was (or "instance"), as the job recorded it. */
+    id?: string | null;
     provider: string;
     model: string;
     label: string;
@@ -461,6 +529,17 @@ export class Runs {
             model: job.model,
             requestedModels: job.requestedModels,
             options: job.options ?? null,
+            ...(job.rerunOf
+                ? {
+                      rerunOf: {
+                          id: job.rerunOf.jobId,
+                          index: job.rerunOf.index,
+                          label: job.rerunOf.label,
+                          attempt: job.rerunOf.attempt,
+                          auto: job.rerunOf.auto,
+                      },
+                  }
+                : {}),
             log: { lines: job.logLines, dropped: job.logDropped },
             ...(waiting !== undefined ? { waiting } : {}),
         };
@@ -583,9 +662,167 @@ export class Runs {
                     ? (await this.list(workspace, { limit: 1 })).queued.find((q) => q.id === job.id)?.waiting
                     : undefined,
             ),
+            ...(project && job.model?.models && !ACTIVE_JOB_STATUSES.includes(job.status)
+                ? { retries: await this.retries(job), rerunnable: await this.rerunnable(job, project) }
+                : {}),
             logLines: lines,
             next: lines.at(-1)?.seq ?? Math.max(after, job.logDropped),
         };
+    }
+
+    // ---- running one model again -------------------------------------------------------------------
+
+    /** The runs that ran this review's models again, oldest first, each as it stands now. */
+    private async retries(job: Job, repos: Repos = this.store): Promise<Retry[]> {
+        const out: Retry[] = [];
+        for (const p of retriesOf(job)) {
+            const run = await repos.jobs.get(p.id);
+            if (!run?.rerunOf) continue;
+            const made = (run.result?.rerun as RerunResult | undefined) ?? null;
+            out.push({
+                index: p.index,
+                label: run.rerunOf.label,
+                id: run.id,
+                attempt: run.rerunOf.attempt,
+                auto: run.rerunOf.auto,
+                status: run.status,
+                queuedAt: run.queuedAt,
+                finishedAt: run.finishedAt,
+                total: typeof run.result?.total === "number" ? run.result.total : null,
+                added: made?.added ?? null,
+                agreed: made?.agreed ?? null,
+                notAdded: made?.notAdded ?? null,
+                error: run.error,
+            });
+        }
+        return out;
+    }
+
+    /**
+     * Why one model of a finished review can't be run again now, or null when it can: it must have failed
+     * or been stopped in a review with several that made a report, not be running again already or have
+     * its findings in, and the report must still be the branch's.
+     */
+    private async rerunBlocked(repos: Repos, job: Job, project: Project, index: number): Promise<string | null> {
+        const models = job.model?.models;
+        const results = job.result?.models as { label: string; status: string }[] | undefined;
+        if (job.rerunOf) return "This run is itself one model being run again. Run it again from the review it belongs to.";
+        if (!models || models.length < 2 || !Array.isArray(results)) return "Only a review with several models has models to run again.";
+        const m = models[index];
+        const how = results[index];
+        if (!m || !how) return `This review has no model at place ${index}.`;
+        if (job.status !== "done" && job.status !== "partial")
+            return "No model of this review finished, so it made no report to add to. Start the review again instead.";
+        if (how.status === "done" || how.status === "partial")
+            return `${m.label} finished in this review, so there's nothing to run again.`;
+        for (const r of await this.retries(job, repos)) {
+            if (r.index !== index) continue;
+            if (ACTIVE_JOB_STATUSES.includes(r.status)) return `${m.label} is already being run again.`;
+            if ((r.status === "done" || r.status === "partial") && !r.notAdded) return `${m.label}'s findings have been added already.`;
+        }
+        const reportId = typeof job.result?.reportId === "string" ? job.result.reportId : null;
+        if (!reportId || !job.headSha)
+            return "This review doesn't say which report it made or which commit it was of, so nothing can be added to it. Start a new review instead.";
+        const stored = await repos.reports.get(project.id, job.branch);
+        if (stored?.upload.id !== reportId)
+            return `A newer report has replaced this review's on ${job.branch}, so ${m.label}'s findings can't be added to it. Start a new review instead.`;
+        if (!m.id) return `${m.label} isn't one of this workspace's favourite models, so it can't be run again by itself.`;
+        return null;
+    }
+
+    /** The models of a finished review, by place, that didn't finish in it: each can be run again, or says why not. */
+    private async rerunnable(job: Job, project: Project): Promise<{ index: number; reason: string | null }[]> {
+        const results = Array.isArray(job.result?.models) ? (job.result.models as { status: string }[]) : [];
+        const out: { index: number; reason: string | null }[] = [];
+        for (const [index, m] of results.entries())
+            if (m.status !== "done" && m.status !== "partial")
+                out.push({ index, reason: await this.rerunBlocked(this.store, job, project, index) });
+        return out;
+    }
+
+    /**
+     * Queue a job that runs one model of `job` again, on the commit it reviewed, to add its findings to
+     * the report `job` made. Returns it, and `job` pointing at it (saved here).
+     */
+    private async queueRerun(
+        w: { tx: Repos; afterCommit(fn: () => void): void },
+        job: Job,
+        project: Project,
+        index: number,
+        by: Pick<Job, "requestedBy" | "source"> & { auto: boolean },
+    ): Promise<{ queued: Job; job: Job }> {
+        const m = job.model?.models?.[index] as NonNullable<NonNullable<Job["model"]>["models"]>[number];
+        const queued: Job = {
+            id: randomId(),
+            workspaceId: job.workspaceId,
+            projectId: job.projectId,
+            kind: job.kind,
+            dedupeKey: `rerun:${job.id}:${index}`,
+            title: `${m.label} again: ${job.title}`.slice(0, 300),
+            branch: job.branch,
+            gitRef: job.gitRef,
+            baseRef: job.baseRef,
+            headSha: job.headSha,
+            baseSha: job.baseSha,
+            pr: job.pr,
+            requestedBy: by.requestedBy,
+            requestedModels: [m.id as string],
+            // One model, so none of the review's options: what the review asked for is read from it when this ends.
+            options: structuredClone(NO_OPTIONS),
+            rerunOf: {
+                jobId: job.id,
+                index,
+                label: m.label,
+                attempt: 2 + retriesOf(job).filter((r) => r.index === index).length,
+                auto: by.auto,
+                reportId: typeof job.result?.reportId === "string" ? job.result.reportId : null,
+            },
+            source: by.source,
+            status: "queued",
+            queuedAt: now(),
+            startedAt: null,
+            finishedAt: null,
+            runnerId: null,
+            leaseExpiresAt: null,
+            cancelRequested: null,
+            progress: {},
+            result: null,
+            error: null,
+            model: null,
+            credentials: null,
+            repository: job.repository,
+            logLines: 0,
+            logDropped: 0,
+        };
+        const pointer: RetryPointer = { index, id: queued.id, auto: by.auto };
+        const next: Job = { ...job, result: { ...(job.result ?? {}), retries: [...retriesOf(job), pointer] } };
+        await w.tx.jobs.put(queued);
+        await w.tx.jobs.put(next);
+        w.afterCommit(() => {
+            this.announce(queued, project, "queued");
+            this.announce(next, project, "progress");
+        });
+        return { queued, job: next };
+    }
+
+    /**
+     * Run one model of a finished review again: a small job for that model alone, on the commit the review
+     * was of. When it finishes, its findings are added to the report the review made, if that's still the
+     * branch's report; triage on what's there is left as it is.
+     */
+    async rerun(actor: Actor, workspace: Workspace, id: string, index: number) {
+        const { queued, project } = await this.core.write(actor, async (w) => {
+            const job = await this.jobIn(workspace, id, w.tx);
+            const project = await w.tx.projects.get(job.projectId);
+            if (!project) throw notFound("No such run in this workspace.");
+            const why = await this.rerunBlocked(w.tx, job, project, index);
+            if (why) throw conflict(why);
+            // The model must still be one this workspace can choose (a favourite, or the instance's with an allowance).
+            await this.settings.checkModelIds(w.tx, workspace, [job.model?.models?.[index]?.id as string]);
+            const by = { requestedBy: { name: actor.name, userId: actor.userId, tokenId: actor.tokenId ?? null }, source: sourceOf(actor) };
+            return { queued: (await this.queueRerun(w, job, project, index, { ...by, auto: false })).queued, project };
+        });
+        return this.view(queued, project);
     }
 
     /** Resolves once the run has finished, or after `seconds` (at most ten minutes), with its latest state. */
@@ -725,7 +962,7 @@ export class Runs {
             w.afterCommit(() => this.announce(job, project, "queued"));
             return { job, isNew: true };
         });
-        if (created.isNew && created.job.kind === "pr" && created.job.headSha) {
+        if (created.isNew && created.job.kind === "pr" && created.job.headSha && !onTheSide(created.job)) {
             const job = created.job;
             this.background(`Marking ${job.title} as queued on GitHub`, async () => {
                 const workspace = await this.store.workspaces.get(project.workspaceId);
@@ -757,8 +994,9 @@ export class Runs {
                 await w.tx.jobs.put(next);
                 w.afterCommit(() => {
                     this.announce(next, project, "finished");
-                    if (project) this.onFinished(next, project);
-                    if (next.kind === "pr" && next.headSha && project)
+                    this.finishedBeside(next, project);
+                    if (project && !onTheSide(next)) this.onFinished(next, project);
+                    if (next.kind === "pr" && next.headSha && project && !onTheSide(next))
                         this.background("Marking a cancelled review on GitHub", () =>
                             this.github.setStatus(project, next.headSha as string, "error", "Review cancelled", null, next.repository),
                         );
@@ -842,7 +1080,10 @@ export class Runs {
                     if (notConnected) {
                         const failed: Job = { ...job, status: "failed", finishedAt: now(), error: notConnected };
                         await tx.jobs.put(failed);
-                        this.store.afterCommit(() => this.announce(failed, project, "finished"));
+                        this.store.afterCommit(() => {
+                            this.announce(failed, project, "finished");
+                            this.finishedBeside(failed, project);
+                        });
                         continue;
                     }
                     // With the instance key, a model's budget comes out of what's left of the allowance until the
@@ -948,7 +1189,7 @@ export class Runs {
         }
         this.redactions.set(job.id, redactor(credentials.secrets));
         this.announce(job, project, "started");
-        if (job.kind === "pr" && job.headSha)
+        if (job.kind === "pr" && job.headSha && !onTheSide(job))
             this.background(`Marking ${job.title} as in review on GitHub`, () =>
                 this.github.setStatus(
                     project,
@@ -979,7 +1220,14 @@ export class Runs {
                 label: m.label,
                 ...(m.allowance ? { maxTokensBudget: budgets[i] ?? null } : {}),
             })),
+            ...(job.rerunOf && job.headSha ? { commit: { head: job.headSha, base: job.baseSha } } : {}),
         };
+    }
+
+    /** A model run again has ended, however: the review it belongs to is announced too, so its page shows how it went. */
+    private finishedBeside(job: Job, project: Pick<Project, "slug"> | null): void {
+        const of = job.rerunOf?.jobId;
+        if (of) void this.store.jobs.get(of).then((original) => original && this.announce(original, project, "progress"));
     }
 
     /** End a queued review that can never start, saying why (and telling its pull request, like a cancelled one). */
@@ -988,6 +1236,8 @@ export class Runs {
         await tx.jobs.put(failed);
         this.store.afterCommit(() => {
             this.announce(failed, project, "finished");
+            this.finishedBeside(failed, project);
+            if (onTheSide(failed)) return;
             this.onFinished(failed, project);
             if (failed.kind === "pr" && failed.headSha)
                 this.background(`Marking ${failed.title} as failed on GitHub`, () =>
@@ -1236,7 +1486,29 @@ export class Runs {
                 }
                 let counts: { added: number; carriedOver: number; removed: number; reopened: number } | undefined;
                 let addedIds: Partial<Record<Severity, string[]>> | undefined;
-                if (upload && project && report) {
+                // The branch report this run made, so a model of it run again later can tell it's still there.
+                let reportId: string | null = null;
+                // One model run again: its findings join the report its review made, rather than replacing it.
+                const original = held.rerunOf ? await w.tx.jobs.get(held.rerunOf.jobId) : null;
+                let rerun: RerunResult | null = null;
+                if (held.rerunOf) {
+                    const of = held.rerunOf;
+                    rerun = {
+                        of: of.jobId,
+                        index: of.index,
+                        label: of.label,
+                        attempt: of.attempt,
+                        auto: of.auto,
+                        added: null,
+                        agreed: null,
+                        notAdded: null,
+                    };
+                    if (upload && project && report) {
+                        const made = await this.addRerun(held, original, project, report, headSha);
+                        rerun = { ...rerun, ...made.rerun };
+                        addedIds = made.addedIds;
+                    }
+                } else if (upload && project && report) {
                     // Findings this review reported first (for analytics' finding ages): those not on the branch before it.
                     const before = await this.reports.view(w.tx, project, held.branch).catch(() => null);
                     const out = await this.reports.upload(REVIEWER, project, {
@@ -1253,6 +1525,7 @@ export class Runs {
                         reopen: true,
                         scope: held.kind === "full" ? "full" : "diff",
                     });
+                    reportId = (out.current as { upload?: { id?: string } | null }).upload?.id ?? null;
                     counts = {
                         added: out.added,
                         carriedOver: out.carriedOver,
@@ -1294,6 +1567,8 @@ export class Runs {
                     ocrVersion: metrics?.ocrVersion ?? null,
                     seconds: seconds(held.startedAt, finishedAt) ?? null,
                     ...(upload && report && failAt ? { agreement: agreedCritical(report, failAt) } : {}),
+                    ...(reportId ? { reportId } : {}),
+                    ...(rerun ? { rerun } : {}),
                     ...(parts
                         ? {
                               models: parts.map((p) => ({
@@ -1324,6 +1599,19 @@ export class Runs {
                     progress: { ...progress, phase: final === "done" || final === "partial" ? "finished" : final },
                 };
                 await w.tx.jobs.put(next);
+                // Asked to: each model that failed or went quiet is run once more by itself. Not one stopped for
+                // passing its token budget (it would only pass it again), and never from a model run again.
+                let pointing = next;
+                if (parts && reportId && project && held.options?.retryFailed)
+                    for (const [i, p] of parts.entries())
+                        if (p.status === "failed" && p.reason !== "overBudget" && p.id)
+                            pointing = (
+                                await this.queueRerun(w, pointing, project, i, {
+                                    requestedBy: held.requestedBy,
+                                    source: held.source,
+                                    auto: true,
+                                })
+                            ).job;
                 if (held.startedAt && !parts)
                     await this.history.record(w.tx, {
                         workspaceId: held.workspaceId,
@@ -1349,6 +1637,19 @@ export class Runs {
                             ...(metrics?.llm ? { llm: metrics.llm } : {}),
                             ...(addedIds ? { addedIds } : {}),
                             error: errorText,
+                            // A model run again counts under the review it belongs to: one scan, with this as another attempt.
+                            ...(held.rerunOf && original
+                                ? {
+                                      attempt: held.rerunOf.attempt,
+                                      scan: {
+                                          id: original.id,
+                                          models: original.model?.models?.map((m) => m.label) ?? [held.rerunOf.label],
+                                          lead: false,
+                                          status: original.status as "done" | "partial",
+                                          findings: typeof original.result?.total === "number" ? original.result.total : null,
+                                      },
+                                  }
+                                : {}),
                         },
                     });
                 // Several models: a record each (for comparing them), grouped by the scan; the lead carries the branch's changes.
@@ -1412,9 +1713,9 @@ export class Runs {
                 const revoke = this.credentialsOf(held)?.revoke ?? null;
                 w.afterCommit(() => {
                     this.revoke(next, revoke);
-                    this.afterFinish(next, project, workspace, automation?.failOnCritical ?? true);
+                    this.afterFinish(pointing, project, workspace, automation?.failOnCritical ?? true);
                 });
-                return next;
+                return pointing;
             });
 
         if (input.status === "done") {
@@ -1434,6 +1735,44 @@ export class Runs {
             () => record(input.status === "cancelled" ? "cancelled" : "failed", clean(input.error) ?? "The review failed.", false),
             jobId,
         );
+    }
+
+    /**
+     * Add the findings of a model run again to the report its review made, if that's still the branch's
+     * report and this is the commit it was of. Otherwise nothing changes, and the answer says why.
+     */
+    private async addRerun(held: Job, original: Job | null, project: Project, report: RawReport, headSha: string | null) {
+        const of = held.rerunOf as NonNullable<Job["rerunOf"]>;
+        const notAdded = (why: string) => ({ rerun: { added: null, agreed: null, notAdded: why }, addedIds: undefined });
+        const short = (s: string | null | undefined) => (s ?? "an unknown commit").slice(0, 7);
+        if (!original?.headSha || headSha !== original.headSha)
+            return notAdded(
+                `It reviewed ${short(headSha)}, not ${short(original?.headSha)}, the commit the review was of, so its findings weren't added to the report. The runner may be too old to review an earlier commit: update it, then run the model again.`,
+            );
+        const out = of.reportId
+            ? await this.reports.addModelFindings(REVIEWER, project, {
+                  branch: held.branch,
+                  uploadId: of.reportId,
+                  label: of.label,
+                  report,
+              })
+            : null;
+        if (!out)
+            return notAdded(
+                `A newer report has replaced the review's on ${held.branch}, so these findings weren't added to it. Start a new review to have ${of.label}'s findings there.`,
+            );
+        const addedIds: Partial<Record<Severity, string[]>> = {};
+        for (const x of out.addedIssues.slice(0, MAX_ADDED_IDS)) addedIds[x.severity] = [...(addedIds[x.severity] ?? []), x.id];
+        const whole = reportMetrics(out.report);
+        const failAt = original.options?.agreement.failAt ?? null;
+        const branch: NonNullable<RerunResult["branch"]> = {
+            total: whole.findings.total,
+            bySeverity: whole.findings.bySeverity,
+            gaps: reviewGaps(out.report),
+            models: Array.isArray(out.report.models) ? (out.report.models as string[]) : [],
+            ...(failAt ? { agreement: agreedCritical(out.report, failAt) } : {}),
+        };
+        return { rerun: { added: out.added, agreed: out.agreed, notAdded: null, branch }, addedIds };
     }
 
     /**
@@ -1488,9 +1827,13 @@ export class Runs {
         if (sent?.timer) clearTimeout(sent.timer);
         this.progressSent.delete(job.id);
         this.announce(job, project, "finished");
+        this.finishedBeside(job, project);
         if (!project) return;
-        if (job.kind === "pr" && job.pr && job.headSha && workspace)
+        // A model run again reports only once its findings are in the review's report: the check and comment are then that report's.
+        const reports = job.rerunOf ? Boolean((job.result?.rerun as RerunResult | undefined)?.branch) : true;
+        if (job.kind === "pr" && job.pr && job.headSha && workspace && reports)
             this.background(`Reporting ${job.title} to GitHub`, () => this.tellGithub(job, project, workspace, failOnCritical));
+        if (onTheSide(job)) return;
         try {
             this.onFinished(job, project);
         } catch (err) {
@@ -1528,10 +1871,22 @@ export class Runs {
             }
         };
         if (job.status === "done" || job.status === "partial") {
-            const bySeverity = (job.result?.bySeverity ?? { critical: 0, high: 0, medium: 0, low: 0 }) as Record<Severity, number>;
-            const total = Number(job.result?.total ?? 0);
-            const agreed = (job.result?.agreement as Agreed | undefined) ?? null;
-            const status = finishedStatus({ status: job.status, total, bySeverity, failOnCritical, agreed });
+            // A model run again: the whole report, with its findings in, is what's reported.
+            const whole = (job.result?.rerun as RerunResult | undefined)?.branch ?? null;
+            const bySeverity = (whole?.bySeverity ?? job.result?.bySeverity ?? { critical: 0, high: 0, medium: 0, low: 0 }) as Record<
+                Severity,
+                number
+            >;
+            const total = Number(whole?.total ?? job.result?.total ?? 0);
+            const agreed = (whole ? whole.agreement : (job.result?.agreement as Agreed | undefined)) ?? null;
+            const gaps = whole ? whole.gaps : ((job.result?.gaps as ReturnType<typeof reviewGaps>) ?? null);
+            const status = finishedStatus({
+                status: whole ? (gaps ? "partial" : "done") : job.status,
+                total,
+                bySeverity,
+                failOnCritical,
+                agreed,
+            });
             const view = await this.reports.view(this.store, project, job.branch).catch(() => null);
             const urgent = view
                 ? view.filter(
@@ -1560,8 +1915,8 @@ export class Runs {
                         total,
                         bySeverity,
                         urgent,
-                        gaps: (job.result?.gaps as never) ?? null,
-                        models: job.model?.models?.map((m) => m.label) ?? null,
+                        gaps,
+                        models: whole?.models ?? job.model?.models?.map((m) => m.label) ?? null,
                         failOnCritical,
                         agreed,
                         commit: sha,

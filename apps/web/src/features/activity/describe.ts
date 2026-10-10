@@ -70,7 +70,9 @@ export function describeActivity(row: ActivityRow): string {
             u.removed ? `${u.removed} gone` : "",
             u.reopened ? `${u.reopened} reopened` : "",
         ].filter(Boolean);
-        parts.push(`uploaded ${row.itemId} with ${String(u.issues ?? 0)} findings${extra.length ? ` (${extra.join(", ")})` : ""}`);
+        // One model of a review, run again: its findings joined the report that was there.
+        if (typeof u.model === "string") parts.push(`added ${u.model}'s findings to ${row.itemId}${u.added ? ` (${u.added} new)` : ""}`);
+        else parts.push(`uploaded ${row.itemId} with ${String(u.issues ?? 0)} findings${extra.length ? ` (${extra.join(", ")})` : ""}`);
     } else if (row.kind === "branch" && c.moved) {
         const m = obj(c.moved);
         parts.push(`moved branch ${String(m.from)} to ${String(m.to)}`);

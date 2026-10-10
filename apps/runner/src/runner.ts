@@ -563,6 +563,20 @@ export class Runner {
                 run.signal,
             );
             run.check();
+            if (job.commit) {
+                // A model of a finished review, run again: the commit that review was of, not where things are now.
+                const now = fetched.head;
+                fetched = await this.git.pin(
+                    mirror,
+                    { cloneUrl: job.repository.cloneUrl, username: job.git.username, token: job.git.token },
+                    job.commit,
+                    run.signal,
+                );
+                run.check();
+                run.say(
+                    `Reviewing ${fetched.head.slice(0, 7)}, the commit the review this belongs to was of${now === fetched.head ? "" : ` (it's at ${now.slice(0, 7)} now)`}.`,
+                );
+            }
             if (job.kind === "pr" && job.headSha && fetched.head !== job.headSha)
                 run.say(`The pull request moved on to ${fetched.head.slice(0, 7)} since it was queued; reviewing that.`);
             if (fetched.base && fetched.base === fetched.head)

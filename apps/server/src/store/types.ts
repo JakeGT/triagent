@@ -250,6 +250,8 @@ export interface ReviewDetails {
      * record (the first model's) carries what the merged report did to the branch (counts, addedIds).
      */
     scan?: { id: string; models: string[]; lead: boolean; status: "done" | "partial" | "failed" | "cancelled"; findings: number | null };
+    /** One model of a review run again by itself: which attempt of that model's this was (2 for the first time it was run again). */
+    attempt?: number;
 }
 
 /** One finished review: a run on the server, or a report someone uploaded. Kept for analytics and allowances. */
@@ -352,6 +354,13 @@ export interface Job {
      * as for any review with one model). Postgres keeps them inside `requested_by` too.
      */
     options?: RunOptions | null;
+    /**
+     * Set on a job that runs one model of a finished review again (it failed or was stopped there): the
+     * review, the model's place and label in it, which attempt this is, whether it was asked for or
+     * automatic, and the branch report its findings are to be added to (if that's still the branch's).
+     * Postgres keeps it inside `requested_by` too.
+     */
+    rerunOf?: { jobId: string; index: number; label: string; attempt: number; auto: boolean; reportId: string | null } | null;
     /**
      * The model it ran with, set when a runner claims it, and the token budget it was given (with the
      * instance key, out of the workspace's allowance: set aside until it finishes, and charged in full

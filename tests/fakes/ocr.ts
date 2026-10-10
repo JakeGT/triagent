@@ -3,7 +3,7 @@
 // each file the change touches, or every file for a scan) and progress on stderr, like the real one.
 //
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
-// (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5" (five seconds of work, saying so all the while), "fake/silent-5" (five seconds without a word), "fake/spend-25000" (says it has used that many tokens, before any sleep), "fake/orphan" (leaves a process behind
+// (OCR_LLM_MODEL): "fake/fail", "fake/fail-once" (fails the first time it reviews a repository, and not after), "fake/partial", "fake/empty", "fake/sleep-5" (five seconds of work, saying so all the while), "fake/silent-5" (five seconds without a word), "fake/spend-25000" (says it has used that many tokens, before any sleep), "fake/orphan" (leaves a process behind
 // in its group), and for reviews with several models "wordy" (the same findings, put another way, two lines
 // lower), "extra" (one more finding, at line 40 of the first file) and "alarm" (one more, critical, at line 80 of it). It also prints what tests check: its arguments, which environment variables it got,
 // the model key (the server must redact it), its user config (~/.opencodereview/config.json, which the
@@ -11,7 +11,8 @@
 // out files the root .gitignore matches and files git calls binary, and reads rule files rule.json names.
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 const args = process.argv.slice(2);
 if (args[0] === "--version") {
@@ -111,7 +112,14 @@ if (m) {
 // A model call that hangs: nothing is printed until it's over.
 const silent = /silent-(\d+)/.exec(model);
 if (silent) await sleep(Number(silent[1]) * 1000);
-if (model.includes("fail")) {
+// "fail-once" remembers it has failed in the repository's own git directory (the runner's mirror of it).
+let failing = model.includes("fail");
+if (model.includes("fail-once")) {
+    const failed = path.join(gitOut(["rev-parse", "--path-format=absolute", "--git-common-dir"]), `fake-ocr-${model.replace(/\W+/g, "-")}`);
+    failing = !existsSync(failed);
+    if (failing) writeFileSync(failed, "failed once\n");
+}
+if (failing) {
     say('[ocr] Subtask error for group "src": LLM completion error: POST "https://llm.test/chat/completions": 503 Service Unavailable');
     process.stdout.write(
         JSON.stringify({ status: "failed", comments: null, summary: { total_tokens: 40, input_tokens: 40, output_tokens: 0 } }),
