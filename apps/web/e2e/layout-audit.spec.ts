@@ -34,7 +34,15 @@ for (const theme of ["light", "dark"] as const)
             await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
             await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
 
-            // Signed out: sign-in and invite-required.
+            // Signed out: the front page, sign-in and invite-required.
+            await page.goto("/");
+            await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+            await page.emulateMedia({ reducedMotion: "reduce" });
+            await shot("landing");
+            await page.emulateMedia({ reducedMotion: null });
+            await page.goto("/no-such-page");
+            await expect(page.getByRole("heading").first()).toBeVisible();
+            await shot("not-found");
             await page.goto("/sign-in");
             await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
             await shot("auth-sign-in");
@@ -53,7 +61,21 @@ for (const theme of ["light", "dark"] as const)
 
             const s = await seedShowcase(admin, baseURL as string);
             await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+            // A project with nothing in it yet: the first-use states.
+            await admin.post(`/api/v1/w/${s.ws}/projects`, { slug: "empty", name: "Nothing yet" });
+            const empty = `/w/${s.ws}/p/empty`;
             const pages: [string, string][] = [
+                ["workspace-home", `/w/${s.ws}`],
+                ["empty-overview", `${empty}/overview`],
+                ["empty-issues", `${empty}/issues`],
+                ["empty-tasks", `${empty}/tasks`],
+                ["empty-files", `${empty}/files`],
+                ["empty-branches", `${empty}/branches`],
+                ["empty-runs", `${empty}/runs`],
+                ["empty-pull-requests", `${empty}/pull-requests`],
+                ["empty-activity", `${empty}/activity`],
+                ["empty-start-review", `${empty}/start-review`],
+                ["issues-no-results", `${s.base}/issues?q=zzzzzz`],
                 ["overview", `${s.base}/overview`],
                 ["issues", `${s.base}/issues`],
                 ["issue-detail", `${s.base}/issues/${s.issueId}`],
