@@ -60,8 +60,10 @@ export function AgentRace({ mcp }: { mcp: string }) {
         }, ms);
         timers.current.add(t);
     };
-    const say = (who: string, mark: Line["mark"], text: string) =>
-        setLog((old) => [...old, { n: lines.current++, who, mark, text }].slice(-LOG_LINES));
+    const say = (who: string, mark: Line["mark"], text: string) => {
+        const line = { n: lines.current++, who, mark, text };
+        setLog((old) => [...old, line].slice(-LOG_LINES));
+    };
     const change = (id: string, patch: Partial<Row>) => {
         live.current = live.current.map((r) => (r.finding.id === id ? { ...r, ...patch } : r));
         setRows(live.current);
@@ -115,7 +117,10 @@ export function AgentRace({ mcp }: { mcp: string }) {
 
     const resolved = rows.filter((r) => r.state === "resolved").length;
     return (
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] overflow-hidden rounded-lg border bg-[#11161a]" data-testid="agent-race">
+        <div
+            className="dark grid min-w-0 grid-cols-[minmax(0,1fr)] overflow-hidden rounded-lg border bg-[#11161a] text-foreground"
+            data-testid="agent-race"
+        >
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2.5">
                 <p className="min-w-0 flex-1 text-sm text-muted-foreground">
                     <span className="font-medium text-foreground">Three agents, one list.</span>{" "}
