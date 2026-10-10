@@ -21,7 +21,7 @@ function Prose({ text }: { text: string }): ReactNode {
     return text.split("`").map((part, i) =>
         i % 2 ? (
             // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one fixed sentence
-            <code key={i} className="rounded bg-muted px-1 py-0.5 text-[0.85em]">
+            <code key={i} className="rounded bg-muted px-1 py-0.5 text-[0.9em]">
                 {part}
             </code>
         ) : (
@@ -110,7 +110,7 @@ export function TryIt() {
     };
 
     return (
-        <div className="overflow-hidden rounded-xl border bg-card shadow-sm" data-testid="try-it">
+        <div className="overflow-hidden rounded-lg border bg-card" data-testid="try-it">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3">
                 <div className="min-w-0 flex-1">
                     <p className="font-medium">
@@ -159,16 +159,16 @@ export function TryIt() {
                         );
                     })}
                 </fieldset>
-                <fieldset className="flex items-center gap-1 rounded-md border bg-background p-0.5">
+                <fieldset className="flex flex-wrap items-center gap-1.5">
                     <legend className="sr-only">Found by</legend>
                     {[1, 2, MODELS.length].map((n) => (
                         <Button
                             key={n}
                             type="button"
                             size="sm"
-                            variant={atLeast === n ? "secondary" : "ghost"}
+                            variant={atLeast === n ? "secondary" : "outline"}
                             aria-pressed={atLeast === n}
-                            className="h-6 px-2 text-xs"
+                            className="h-7"
                             onClick={() => setAtLeast(n)}
                         >
                             {n === 1 ? "Any model" : n === MODELS.length ? `All ${n}` : `${n} or more`}
@@ -179,7 +179,7 @@ export function TryIt() {
                     <Button type="button" size="sm" className="h-7" onClick={runAgent} disabled={!next || agentBusy}>
                         <Bot /> {agentBusy ? "Agent working…" : next ? "Let an agent take the next one" : "Nothing left to take"}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" className="h-7" onClick={reset}>
+                    <Button type="button" size="sm" variant="outline" className="h-7" onClick={reset}>
                         <RotateCcw /> Start again
                     </Button>
                 </span>
@@ -197,7 +197,7 @@ export function TryIt() {
                                 <th scope="col" className="px-2 py-2 text-start font-medium">
                                     Finding
                                 </th>
-                                <th scope="col" className="px-4 py-2 text-start font-medium">
+                                <th scope="col" className="px-4 py-2 text-start font-medium max-sm:hidden">
                                     Status
                                 </th>
                             </tr>
@@ -220,22 +220,24 @@ export function TryIt() {
                                             onClick={() => setOpenId(r.id)}
                                             aria-current={r.id === openId ? "true" : undefined}
                                             className={cn(
-                                                "text-start font-medium hover:underline focus-visible:underline focus-visible:outline-none",
+                                                "py-0.5 text-start font-medium hover:underline focus-visible:underline focus-visible:outline-none",
                                                 DONE.has(r.status) && "text-muted-foreground line-through decoration-foreground/30",
                                             )}
                                         >
                                             <Prose text={r.title} />
                                         </button>
-                                        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                                            <span className="font-mono">
+                                        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                                            <span className="font-mono break-all">
                                                 {r.path}:{r.line}
                                             </span>
                                             <span className="inline-flex items-center gap-1.5">
                                                 <Dots finding={r} /> {foundByText(r)}
                                             </span>
+                                            {/* On a phone there's no room for a third column: the status joins this line. */}
+                                            <StatusMark status={r.status} className="text-xs sm:hidden" />
                                         </p>
                                     </td>
-                                    <td className="px-4 py-2.5 whitespace-nowrap">
+                                    <td className="px-4 py-2.5 whitespace-nowrap max-sm:hidden">
                                         <StatusMark status={r.status} className="text-xs" />
                                     </td>
                                 </tr>
@@ -298,7 +300,7 @@ export function TryIt() {
                                 <p className="font-mono text-xs text-muted-foreground">{open.foundBy.join(", ")}</p>
                                 {open.also && (
                                     <details className="group text-sm">
-                                        <summary className="cursor-pointer text-primary underline-offset-2 hover:underline">
+                                        <summary className="cursor-pointer py-0.5 text-primary underline-offset-2 hover:underline">
                                             What {open.also.model} said
                                         </summary>
                                         <p className="mt-1.5 text-muted-foreground">
@@ -346,12 +348,12 @@ export function TryIt() {
                     )}
 
                     {log.length > 0 && (
-                        <div className="dark rounded-md border border-white/10 bg-[#11161a] p-3 text-foreground" data-testid="agent-log">
+                        <div className="rounded-md border bg-muted/30 p-3" data-testid="agent-log">
                             <p className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <Bot className="size-3.5" aria-hidden="true" /> What the agent sent, over MCP
                             </p>
                             <pre
-                                className="overflow-x-auto font-mono text-[0.7rem] leading-relaxed whitespace-pre-wrap"
+                                className="overflow-x-auto font-mono text-xs leading-relaxed whitespace-pre-wrap"
                                 // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable regions must be reachable by keyboard
                                 tabIndex={0}
                             >

@@ -96,6 +96,20 @@ for (const theme of ["light", "dark"] as const) {
     });
 }
 
+test("the page follows the reader's theme, and the switch says what it gives", async ({ page }) => {
+    await page.addInitScript(() => localStorage.getItem("triagent-theme") ?? localStorage.setItem("triagent-theme", "light"));
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveClass(/light/);
+    // Nothing is forced dark on a light page but the picture of an agent's terminal.
+    await expect(page.locator(".dark")).toHaveCount(1);
+    await expect(page.locator(".dark")).toContainText("claude mcp add");
+    const light = await page.locator("header").evaluate((el) => getComputedStyle(el).backgroundColor);
+    await page.getByRole("button", { name: "Dark theme" }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await expect(page.getByRole("button", { name: "Light theme" })).toBeVisible();
+    expect(await page.locator("header").evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(light);
+});
+
 test("the page fits a phone without scrolling sideways", async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 740 });
     await page.goto("/");
@@ -104,7 +118,8 @@ test("the page fits a phone without scrolling sideways", async ({ page }) => {
     expect(overflow).toBeLessThanOrEqual(0);
 });
 
-for (const width of [360, 820, 1440]) {
+// 1280 and 1440: beside the headline, at a little over half the column. 360 and 820: under it, at full width.
+for (const width of [360, 820, 1280, 1440]) {
     test(`nothing in the hero's review spills out of its window at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
         // Reduced motion rests it on the last frame, the one with the longest lines.
