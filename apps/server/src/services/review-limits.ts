@@ -92,10 +92,10 @@ export class ReviewLimitSettings {
                 kind: "settings",
                 target: "instance:review-limits",
                 changes: {
-                    ...(before.instance !== instance || !before.saved ? { instance: { from: before.instance, to: instance } } : {}),
-                    ...(before.perWorkspace !== perWorkspace || !before.saved
-                        ? { perWorkspace: { from: before.perWorkspace, to: perWorkspace } }
-                        : {}),
+                    // The first save is a change even with the environment's own numbers: they stop applying.
+                    ...(before.saved ? {} : { saved: { from: false, to: true } }),
+                    ...(before.instance !== instance ? { instance: { from: before.instance, to: instance } } : {}),
+                    ...(before.perWorkspace !== perWorkspace ? { perWorkspace: { from: before.perWorkspace, to: perWorkspace } } : {}),
                 },
             });
             return next;
@@ -111,10 +111,9 @@ export class ReviewLimitSettings {
             const before = await this.read(w.tx);
             const was = Object.hasOwn(before.workspaces, workspaceId) ? (before.workspaces[workspaceId] as number) : null;
             if (was === n) return { workspaceId, reviewLimit: n };
-            const { [workspaceId]: _removed, ...others } = before.workspaces;
             // Limits of workspaces deleted since are dropped as this one is saved.
             const ids = new Set((await w.tx.workspaces.list()).map((x) => x.id));
-            const workspaces = Object.fromEntries(Object.entries(others).filter(([id]) => ids.has(id)));
+            const workspaces = Object.fromEntries(Object.entries(before.workspaces).filter(([id]) => id !== workspaceId && ids.has(id)));
             await w.tx.instanceSettings.put(
                 KEY,
                 this.stored({ ...before, workspaces: n === null ? workspaces : { ...workspaces, [workspaceId]: n } }),

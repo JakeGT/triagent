@@ -185,6 +185,7 @@ export const instanceModelRoutes: Route[] = [
         summary: "Give a workspace its own limit on reviews running at once, in place of the one for every workspace",
         description:
             "From 1 to 100, lower or higher than the limit for every workspace. The instance's limit still applies: a workspace never runs more than that.",
+        // The range is the service's to refuse, in a sentence (as for the instance's limits below), not the schema's.
         body: z.object({ limit: z.number().describe("How many of the workspace's reviews may run at once") }),
         async handler({ services, params, body, actor }) {
             return json(await services.reviewLimits.setWorkspace(actor, params.workspaceId as string, body.limit));

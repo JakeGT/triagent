@@ -21,7 +21,7 @@ import { insightKeys, instancePaths, instanceWorkspacesQuery } from "@/lib/insig
 import type { InstanceWorkspace, ReviewLimits } from "@/lib/insights-types";
 import { keys } from "@/lib/queries";
 import { useMe, useWorkspace } from "@/lib/session";
-import { parseLimit } from "./instance-reviews-settings";
+import { MAX_LIMIT, MIN_LIMIT, parseLimit } from "./instance-reviews-settings";
 import { ReadOnlyNote, SettingsPage } from "./settings-page";
 
 const SHOWN = 100;
@@ -50,7 +50,7 @@ export function ReviewLimitForm({ w, limits }: { w: InstanceWorkspace; limits: R
         e.preventDefault();
         const n = value.trim() ? parseLimit(value) : null;
         if (value.trim() && n === null) {
-            setError("Give a whole number from 1 to 100, or leave it empty for the default.");
+            setError(`Give a whole number from ${MIN_LIMIT} to ${MAX_LIMIT}, or leave it empty for the default.`);
             return;
         }
         setBusy(true);

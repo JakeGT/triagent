@@ -351,6 +351,18 @@ describe("limits set in the app", () => {
         assert.deepEqual(limits, { instance: 3, perWorkspace: 2, workspaces: { y: 2 }, saved: null });
         await store.instanceSettings.put("review-limits", kept);
     });
+    test("the first save is audited as the environment's no longer applying, with only the numbers that changed", async () => {
+        const store = env.t.services.store;
+        const latest = async () =>
+            (await store.audit.list({ workspaceId: null }, { limit: 200 })).find((a) => a.target === "instance:review-limits")?.changes;
+        // Nothing saved yet, and the numbers saved are the environment's own (3 and 2): no number changed.
+        await store.instanceSettings.put("review-limits", { workspaces: {} });
+        assert.equal((await setLimits(env, 3, 2)).body.saved.by, "admin");
+        assert.deepEqual(await latest(), { saved: { from: false, to: true } });
+        await store.instanceSettings.put("review-limits", { workspaces: {} });
+        await setLimits(env, 5, 2);
+        assert.deepEqual(await latest(), { saved: { from: false, to: true }, instance: { from: 3, to: 5 } });
+    });
 });
 
 describe("what runners can take", () => {
