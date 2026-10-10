@@ -38,12 +38,12 @@ export function PageHeader({
 
 export function Page({ children, className, wide }: { children: ReactNode; className?: string; wide?: boolean }) {
     // One column that may shrink below its content's width, so a wide table scrolls inside its frame
-    // instead of widening the page on a phone. It starts at the left edge of the content area, like every
-    // page (DESIGN.md): nothing is centred but a dialog and the sign-in form.
+    // instead of widening the page on a phone. A page narrower than the content area sits in its middle;
+    // the text inside it is left-aligned (DESIGN.md).
     return (
         <div
             className={cn(
-                "grid w-full grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6",
+                "mx-auto grid w-full grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6",
                 wide ? "max-w-none" : "max-w-6xl",
                 className,
             )}

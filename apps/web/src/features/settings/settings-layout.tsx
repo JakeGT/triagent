@@ -124,7 +124,7 @@ export function SettingsLayout() {
 
     const here = [...projectItems, ...workspaceItems, ...instanceItems, ...accountItems].find((i) => i.href === pathname)?.label;
     return (
-        <div className="grid w-full max-w-6xl grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6">
+        <div className="mx-auto grid w-full max-w-6xl grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6">
             <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
             <div className="grid grid-cols-[minmax(0,1fr)] gap-section md:grid-cols-[12rem_minmax(0,1fr)]">
                 <SettingsNav current={here} pathname={pathname}>

@@ -83,8 +83,8 @@ Numbers in tables are tabular and right-aligned. Monospace is for code, paths, i
 - **Density:** compact. Used for long sittings, to compare and triage, with pointer and keyboard.
 - **Spacing scale:** 4 8 12 16 24 32 48 64 96; `--spacing-field` (6) inside a field, `--spacing-form` (16) between
   fields, `--spacing-section` (24) between sections.
-- **Alignment:** pages start at the left edge of the content area. Nothing is centred except a dialog and the
-  sign-in form.
+- **Alignment:** text, tables and forms are left-aligned. A page with a maximum width sits in the middle of the
+  content area, so a wide screen has even margins; pages that use the full width (Issues, Tasks) start at its left.
 - **Radius:** 4 px for marks and inline code; 6 px for controls; 8 px for tables, panels and dialogs. Nothing larger.
 - **Elevation:** none for anything in the page. `shadow-xs` on a control that can be pressed. A real shadow only on
   what floats above the page: menus, popovers, dialogs, toasts.
