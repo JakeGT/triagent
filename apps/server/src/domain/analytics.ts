@@ -222,7 +222,8 @@ export function analyse(input: AnalyticsInput) {
         reviews: reviewSection,
         findings: findingsSection(events, input.current, range, firstSeen, now),
         triage: triageSection(events, range, firstSeen, severityOf, now),
-        performance: performanceSection(reviews),
+        // How reviews went: not the model a review asked about its findings afterwards.
+        performance: performanceSection(reviews.filter((r) => !r.details.merging)),
         unpriced,
     };
 }
@@ -343,7 +344,8 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             u.tokens += r.tokens.total;
             unpriced.set(model, u);
         }
-        const key = r.model ?? UNKNOWN_MODEL;
+        // A model asked which findings are the same problem isn't a review by that model: it's counted as merging.
+        const key = r.details.merging ? `merging (${r.model ?? UNKNOWN_MODEL})` : (r.model ?? UNKNOWN_MODEL);
         const g = group("model", key);
         g.reviews++;
         g[r.status]++;

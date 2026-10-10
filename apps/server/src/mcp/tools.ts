@@ -646,7 +646,7 @@ export const TOOLS: Tool[] = [
                 "The models for this review only, as ids from list_models (up to five; they review it at the same time and their findings are merged). Default: the project's models for this kind of review.",
             ),
             options: RunOptionsInput.optional().describe(
-                "Options for this review, when it has two or more models: retryFailed (a model that fails is run once more by itself), and agreement rules (fail the pull request's check only for critical findings several models found; mark findings one model found as lower confidence). Anything left out is off; without `options` at all, the project's own apply.",
+                "Options for this review, when it has two or more models: retryFailed (a model that fails is run once more by itself), agreement rules (fail the pull request's check only for critical findings several models found; mark findings one model found as lower confidence), and judge (a model is asked which findings from different models are the same problem, and those are merged). Anything left out is off; without `options` at all, the project's own apply.",
             ),
         }),
         async run(ctx, args) {
@@ -722,7 +722,7 @@ export const TOOLS: Tool[] = [
         name: "get_run",
         title: "Get run",
         description:
-            "One review: status, progress, result, and its log (lines after `after`, a line number). With several models, `progress.models` is each one's own progress while it runs and `result.models` how each ended, with `reason` (stalled, timeLimit or overBudget) for one that was stopped. Once it has finished, `rerunnable` lists the models that didn't (each can be run again with rerun_model, or says why not) and `retries` the runs that ran one again.",
+            "One review: status, progress, result, and its log (lines after `after`, a line number). With several models, `progress.models` is each one's own progress while it runs and `result.models` how each ended, with `reason` (stalled, timeLimit or overBudget) for one that was stopped. `result.judge` says how asking a model about the findings went, when the review chose to (pairs asked, how many were the same problem, its tokens, or why nobody was asked). Once it has finished, `rerunnable` lists the models that didn't (each can be run again with rerun_model, or says why not) and `retries` the runs that ran one again.",
         permission: "read",
         readOnly: true,
         input: z.object({ id: z.string().max(40), after: z.number().int().min(0).optional() }),

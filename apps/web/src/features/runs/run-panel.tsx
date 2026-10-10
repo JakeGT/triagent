@@ -21,6 +21,7 @@ import {
     CancelRun,
     duration,
     findingsText,
+    judgeText,
     kindText,
     linesOf,
     modelProgressText,
@@ -322,6 +323,12 @@ function RunDetailView({ runId }: { runId: string }) {
                                 `: ${plural(r.result.counts.added, "new finding")}, ${r.result.counts.carriedOver} carried over, ${r.result.counts.removed} gone`}
                             {r.result.tokens && `. ${r.result.tokens.total.toLocaleString("en-GB")} model tokens.`}
                         </dd>
+                    </>
+                )}
+                {r.result?.judge && (
+                    <>
+                        <dt className="text-muted-foreground">Same problem?</dt>
+                        <dd data-testid="run-judge">{judgeText(r.result.judge)}</dd>
                     </>
                 )}
                 {r.error && (

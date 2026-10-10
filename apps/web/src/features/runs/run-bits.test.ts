@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunRetry } from "@/lib/types";
-import { addedText, attemptText, linesOf, modelProgressText, optionsText, progressText, retryText } from "./run-bits";
+import { addedText, attemptText, judgeText, linesOf, modelProgressText, optionsText, progressText, retryText } from "./run-bits";
 
 describe("modelProgressText", () => {
     it("says what a model is doing, with its own files, round, tokens and time", () => {
@@ -93,11 +93,34 @@ describe("optionsText", () => {
     it("says each option a run has, and nothing for a run with none", () => {
         expect(optionsText({ options: null })).toEqual([]);
         expect(
-            optionsText({ options: { retryFailed: true, agreement: { failAt: 3, markSingles: true }, judge: null, bakeOff: false } }),
+            optionsText({ options: { retryFailed: true, agreement: { failAt: 3, markSingles: true }, judge: "first", bakeOff: false } }),
         ).toEqual([
             "Models that fail are run again once automatically.",
             "The pull request check fails only for criticals at least 3 models found.",
             "Findings only one model found are marked as lower confidence.",
+            "A model is asked which findings from different models are the same problem.",
         ]);
+    });
+});
+
+describe("judgeText", () => {
+    const judge = { label: "Careful", candidates: 3, asked: 3, same: 2, merged: 2, tokens: { total: 1234 }, seconds: 4, error: null };
+
+    it("says how many pairs a model compared, and what came of it", () => {
+        expect(judgeText(judge)).toBe(
+            "Careful compared 3 pairs of findings: 2 the same problem, so there are 2 findings fewer. 1,234 tokens.",
+        );
+        expect(judgeText({ ...judge, candidates: 450, asked: 200, same: 0, merged: 0, tokens: null })).toBe(
+            "Careful compared 200 pairs of findings (the closest of 450): 0 the same problem.",
+        );
+        expect(judgeText({ ...judge, candidates: 0, asked: 0, same: 0, merged: 0, tokens: null })).toBe(
+            "No findings from different models were left to compare.",
+        );
+    });
+
+    it("says why when nobody was asked, or the answers weren't used", () => {
+        expect(judgeText({ ...judge, asked: 0, error: "The model couldn't be asked (its provider answered 500)." })).toBe(
+            "The model couldn't be asked (its provider answered 500).",
+        );
     });
 });

@@ -112,6 +112,8 @@ export const runnerRoutes: Route[] = [
                     )
                     .max(MAX_MODELS)
                     .optional(),
+                // What a model said about pairs of findings: checked where it's used (a bad one never loses the review).
+                judged: z.unknown().optional(),
                 error: z.string().max(10_000).nullable().optional(),
                 headSha: z.string().max(40).nullable().optional(),
                 baseSha: z.string().max(40).nullable().optional(),
@@ -125,6 +127,7 @@ export const runnerRoutes: Route[] = [
                     status: body.status,
                     report: body.report,
                     ...(body.parts ? { parts: body.parts } : {}),
+                    ...(body.judged !== undefined ? { judged: body.judged } : {}),
                     error: body.error ?? null,
                     headSha: body.headSha ?? null,
                     baseSha: body.baseSha ?? null,

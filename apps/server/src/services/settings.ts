@@ -3,7 +3,7 @@
 // and are never returned.
 
 import { randomBytes } from "node:crypto";
-import { MAX_SKIP_PATH_LENGTH, MAX_SKIP_PATHS, NO_OPTIONS, type RunOptions } from "@triagent/shared";
+import { JUDGE_FIRST, MAX_SKIP_PATH_LENGTH, MAX_SKIP_PATHS, NO_OPTIONS, type RunOptions } from "@triagent/shared";
 import { z } from "zod";
 import { MAX_MODELS } from "../domain/merge.ts";
 import { badRequest, conflict } from "../errors.ts";
@@ -56,6 +56,13 @@ export const RunOptionsInput = z
             .strict()
             .optional()
             .describe("Rules about how many models found a finding. They change the check and how findings are listed, nothing else"),
+        judge: z
+            .union([z.boolean(), z.string().min(1).max(64)])
+            .nullable()
+            .optional()
+            .describe(
+                "Ask a model whether findings from different models that the lines and category left apart are the same problem, and merge those it says are (at most 200 pairs a review; it sees the findings' text and where they are, never the code). true or \"first\": the review's first model that can be asked; or a favourite model's id. Not a model on Amazon Bedrock, nor the instance's model",
+            ),
     })
     .strict();
 export type RunOptionsInput = z.infer<typeof RunOptionsInput>;
@@ -69,6 +76,7 @@ export function runOptions(input: RunOptionsInput | null | undefined): RunOption
         ...structuredClone(NO_OPTIONS),
         retryFailed: input?.retryFailed ?? false,
         agreement: { failAt: input?.agreement?.failAt ?? null, markSingles: input?.agreement?.markSingles ?? false },
+        judge: input?.judge === true ? JUDGE_FIRST : input?.judge || null,
     };
 }
 
@@ -241,6 +249,23 @@ export class Settings {
         }
     }
 
+    /**
+     * Why a favourite can't be the model asked which findings are the same problem (a review's `judge`),
+     * or null when it can: it must be one of the workspace's favourites, and not on Amazon Bedrock.
+     */
+    async judgeProblem(repos: Repos, workspace: Workspace, id: string): Promise<string | null> {
+        if (id === JUDGE_FIRST) return null;
+        if (id === INSTANCE_MODEL)
+            return "The instance's model can't be the one asked which findings are the same problem. Choose one of this workspace's favourite models.";
+        const { favourites } = await this.setup.favourites(repos, { kind: "workspace", workspace });
+        const f = favourites.find((x) => x.id === id);
+        if (!f)
+            return `"${id.slice(0, 64)}" isn't one of this workspace's favourite models, so it can't be asked which findings are the same problem.`;
+        return f.canJudge
+            ? null
+            : `${f.name ?? f.model} is on ${f.providerName}, and a model there can't be asked which findings are the same problem yet. Choose another model to ask.`;
+    }
+
     async setAutomation(actor: Actor, project: Project, patch: Partial<Automation>) {
         const parsed = AutomationSchema.partial().strict().safeParse(patch);
         if (!parsed.success) throw badRequest(parsed.error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "));
@@ -258,6 +283,13 @@ export class Settings {
                 for (const k of MODEL_SETS)
                     if (workspace && models[k] && JSON.stringify(models[k]) !== JSON.stringify(before.models[k]))
                         await this.checkModelIds(w.tx, workspace, models[k], "A project's reviews");
+            }
+            // The same for the model the project's reviews ask about findings, when it changes.
+            const judge = runOptions(parsed.data.options).judge;
+            if (judge && judge !== runOptions(before.options).judge) {
+                const workspace = await w.tx.workspaces.get(project.workspaceId);
+                const problem = workspace ? await this.judgeProblem(w.tx, workspace, judge) : null;
+                if (problem) throw badRequest(problem);
             }
             const next = { ...before, ...parsed.data, ...(models ? { models } : {}) };
             await w.tx.settings.put({ workspaceId: project.workspaceId, projectId: project.id, key: "automation", value: next });

@@ -7,11 +7,12 @@
 // loses the job, which is marked failed, saying so.
 
 import { setTimeout as sleep } from "node:timers/promises";
-import { anyOption, NO_OPTIONS, type RunOptions, type Severity } from "@triagent/shared";
+import { anyOption, JUDGE_FIRST, NO_OPTIONS, type RunOptions, type Severity } from "@triagent/shared";
+import { candidatePairs, type FindingPair, groupFindings, joinGroups, MAX_JUDGE_PAIRS, samePair } from "@triagent/shared/merge";
 import { modelSecrets, type RunnerModel } from "@triagent/shared/model";
 import { redactDeep, redactor } from "@triagent/shared/redact";
 import { parseFilters } from "../domain/filters.ts";
-import { MAX_MODELS, type ModelReport, mergeReports } from "../domain/merge.ts";
+import { findingsOf, MAX_MODELS, type ModelReport, mergeReports } from "../domain/merge.ts";
 import { isValidBranch } from "../domain/names.ts";
 import type { RawReport } from "../domain/report.ts";
 import { reportMetrics } from "../domain/review-metrics.ts";
@@ -121,6 +122,8 @@ export interface FinishInput {
     report?: unknown;
     /** A run with several models: how each went. `report` is unused then; the server merges these. */
     parts?: FinishPart[];
+    /** What the model the review asked said about pairs of its findings, as the runner sent it: checked by `readJudged`. */
+    judged?: unknown;
     error?: string | null;
     headSha?: string | null;
     baseSha?: string | null;
@@ -162,6 +165,100 @@ export interface ClaimedJob {
      * its findings aren't added to the review's report unless that's the same commit.
      */
     commit?: { head: string; base: string | null };
+    /**
+     * The model to ask which findings are the same problem once the reviews are in, with this job's
+     * credentials for it, when the review chose to have one asked. A runner that doesn't know this sends
+     * no answers, and the findings are merged by place only.
+     */
+    judge?: RunnerModel & { label: string };
+}
+
+/** How asking a model about a review's findings went, kept with the run. */
+export interface JudgeResult {
+    label: string | null;
+    provider: string | null;
+    model: string | null;
+    /** Pairs there were to ask about, how many were asked (at most MAX_JUDGE_PAIRS), and how many it said are the same problem. */
+    candidates: number;
+    asked: number;
+    same: number;
+    /** Findings fewer because of it. */
+    merged: number;
+    tokens: Tokens | null;
+    seconds: number | null;
+    /** Why nothing was asked or its answers weren't used: the findings are then merged by place only. */
+    error: string | null;
+}
+
+const whole = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
+
+/**
+ * What the runner says a model answered about pairs of findings, checked against the reviews themselves:
+ * at most MAX_JUDGE_PAIRS pairs, each of two findings that exist, from different models, in the same
+ * file, and one of the pairs worth asking about (as the server works them out from the same reports).
+ * Anything else, and none of it is used: `error` says why, and `same` is empty.
+ */
+export function readJudged(
+    given: unknown,
+    parts: readonly ModelReport[],
+    clean: (text: string) => string = (t) => t,
+): { same: FindingPair[]; asked: number; candidates: number; tokens: Tokens | null; seconds: number | null; error: string | null } {
+    const findings = findingsOf(parts);
+    const expected = candidatePairs(findings);
+    const none = (error: string, tokens: Tokens | null = null, seconds: number | null = null) => ({
+        same: [],
+        asked: 0,
+        candidates: expected.total,
+        tokens,
+        seconds,
+        error,
+    });
+    if (given === undefined || given === null)
+        return none("The runner didn't ask (it may be too old to), so findings were merged by where they are only. Update the runner.");
+    if (typeof given !== "object" || Array.isArray(given))
+        return none("The runner's answers couldn't be read, so findings were merged by where they are only.");
+    const g = given as { pairs?: unknown; tokens?: unknown; seconds?: unknown; error?: unknown };
+    const t = g.tokens as { input?: unknown; output?: unknown } | null | undefined;
+    const used = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 1e9) : 0);
+    const tokens: Tokens | null =
+        t && typeof t === "object" && used(t.input) + used(t.output) > 0
+            ? { input: used(t.input), output: used(t.output), cacheRead: 0, total: used(t.input) + used(t.output) }
+            : null;
+    const seconds =
+        typeof g.seconds === "number" && Number.isFinite(g.seconds) && g.seconds >= 0 ? Math.min(Math.round(g.seconds), 1e6) : null;
+    if (typeof g.error === "string" && g.error)
+        return none(
+            `The model couldn't be asked (${clean(g.error).slice(0, 500)}), so findings were merged by where they are only.`,
+            tokens,
+            seconds,
+        );
+    const refused = (why: string) =>
+        none(`The runner's answers weren't used (${why}), so findings were merged by where they are only.`, tokens, seconds);
+    if (!Array.isArray(g.pairs)) return refused("they aren't a list of pairs");
+    if (g.pairs.length > MAX_JUDGE_PAIRS) return refused(`there are more than ${MAX_JUDGE_PAIRS} of them`);
+    const pairs: (FindingPair & { same: boolean })[] = [];
+    const ref = (r: unknown): FindingPair["a"] | null => {
+        const x = r as { part?: unknown; index?: unknown } | null;
+        return x && typeof x === "object" && whole(x.part) && whole(x.index) ? { part: x.part, index: x.index } : null;
+    };
+    const at = (r: FindingPair["a"]) => findings[r.part]?.[r.index] as { path?: unknown } | null | undefined;
+    for (const raw of g.pairs as unknown[]) {
+        const p = raw as { a?: unknown; b?: unknown; same?: unknown } | null;
+        if (!p || typeof p !== "object" || typeof p.same !== "boolean") return refused("one isn't a pair with a true or false answer");
+        const a = ref(p.a);
+        const b = ref(p.b);
+        if (!a || !b) return refused("one doesn't name two findings");
+        const x = at(a);
+        const y = at(b);
+        if (!x || !y || typeof x !== "object" || typeof y !== "object") return refused("one names a finding that isn't in the reviews");
+        if (a.part === b.part) return refused("one pairs two findings of the same model");
+        if (typeof x.path !== "string" || x.path !== y.path) return refused("one pairs findings in different files");
+        const pair = { a, b };
+        if (!expected.pairs.some((e) => samePair(e, pair))) return refused("one isn't a pair that was to be asked about");
+        if (pairs.some((e) => samePair(e, pair))) return refused("one pair is there twice");
+        pairs.push({ ...pair, same: p.same });
+    }
+    return { same: pairs.filter((p) => p.same), asked: pairs.length, candidates: expected.total, tokens, seconds, error: null };
 }
 
 /** One model of a finished review run again by itself, as the review's own page lists it. */
@@ -899,6 +996,20 @@ export class Runs {
         const failAt = options.agreement.failAt;
         if (failAt !== null && failAt > count)
             throw badRequest(`This review has ${count} models, so agreement.failAt can be at most ${count}.`);
+        if (options.judge) {
+            const problem = await this.settings.judgeProblem(this.store, workspace, options.judge);
+            if (problem) throw badRequest(problem);
+            // "The first that can": at least one of the models it would run with must be able to.
+            if (options.judge === JUDGE_FIRST) {
+                const ids = models ?? (await this.models.list(workspace, project)).rules?.[kind].ids ?? [];
+                const able = [];
+                for (const id of ids) if ((await this.settings.judgeProblem(this.store, workspace, id)) === null) able.push(id);
+                if (!able.length)
+                    throw badRequest(
+                        "None of this review's models can be asked which findings are the same problem (they're on Amazon Bedrock, or the instance's). Name a favourite model as `judge`, or leave it out.",
+                    );
+            }
+        }
     }
 
     /**
@@ -1096,6 +1207,8 @@ export class Runs {
                     // Its options: its own, or the project's; none of them apply to a review with one model.
                     const asked = job.options ?? runOptions(automation.options);
                     const options = effectiveOptions(asked, chosen.models.length);
+                    // The model it asks which findings are the same problem, if it chose to have one asked and there is one.
+                    const judge = options.judge ? await this.models.judgeFor(workspace, chosen.models, options.judge, tx) : null;
                     const started: Job = {
                         ...job,
                         status: "running",
@@ -1121,6 +1234,19 @@ export class Runs {
                                       })),
                                   }
                                 : {}),
+                            ...(judge
+                                ? {
+                                      judge:
+                                          "error" in judge
+                                              ? judge
+                                              : {
+                                                    id: judge.model.id,
+                                                    provider: judge.model.provider,
+                                                    model: judge.model.model,
+                                                    label: judge.model.label,
+                                                },
+                                  }
+                                : {}),
                         },
                         options: anyOption(options) ? options : null,
                         progress: { phase: "starting" },
@@ -1137,13 +1263,34 @@ export class Runs {
                             ],
                             LOG_CAP_BYTES,
                         );
-                    return { job: started, project, workspace, models: chosen.models, budgets, automation, maxTokensBudget };
+                    if (judge && "error" in judge)
+                        await tx.jobs.appendLog(
+                            job.id,
+                            [
+                                {
+                                    at: now(),
+                                    line: `[triagent] No model will be asked which findings are the same problem: ${judge.error}. They're merged by where they are only.`,
+                                },
+                            ],
+                            LOG_CAP_BYTES,
+                        );
+                    return {
+                        job: started,
+                        project,
+                        workspace,
+                        models: chosen.models,
+                        budgets,
+                        automation,
+                        maxTokensBudget,
+                        judge: judge && "model" in judge ? judge.model : null,
+                    };
                 }
             }
             return null;
         });
         if (!picked) return null;
         const { job, project, workspace, models, budgets, automation, maxTokensBudget } = picked;
+        let judge = picked.judge;
 
         // Credentials for this job only, minted now (outside the transaction: it calls GitHub).
         let token: string;
@@ -1174,13 +1321,26 @@ export class Runs {
             if (revoke) this.revoke(job, token);
             return null;
         }
+        // The same check for the model that's asked about the findings; one that fails it isn't asked, and the review goes on.
+        const unsafeJudge =
+            judge && !models.includes(judge)
+                ? await this.models.recheck(judge).catch((err: Error) => `Couldn't check the model's URL: ${err.message}`)
+                : null;
+        if (unsafeJudge) judge = null;
         const scope = { workspaceId: job.workspaceId, projectId: job.projectId };
-        const credentials: JobCredentials = { secrets: [token, ...models.flatMap((m) => modelSecrets(m))], revoke: revoke ? token : null };
+        const credentials: JobCredentials = {
+            secrets: [token, ...[...models, ...(judge ? [judge] : [])].flatMap((m) => modelSecrets(m))],
+            revoke: revoke ? token : null,
+        };
         const sealed = this.core.secrets.seal(JSON.stringify(credentials), scope, `job:${job.id}`);
         const stillOurs = await this.store.transaction(async (tx) => {
             const current = await tx.jobs.get(job.id);
             if (current?.status !== "running" || current.runnerId !== runner.id) return false;
-            await tx.jobs.put({ ...current, credentials: sealed });
+            await tx.jobs.put({
+                ...current,
+                credentials: sealed,
+                ...(unsafeJudge && current.model ? { model: { ...current.model, judge: { error: unsafeJudge } } } : {}),
+            });
             return true;
         });
         if (!stillOurs) {
@@ -1221,6 +1381,7 @@ export class Runs {
                 ...(m.allowance ? { maxTokensBudget: budgets[i] ?? null } : {}),
             })),
             ...(job.rerunOf && job.headSha ? { commit: { head: job.headSha, base: job.baseSha } } : {}),
+            ...(judge ? { judge: { ...forRunner(judge), label: judge.label } } : {}),
         };
     }
 
@@ -1403,6 +1564,7 @@ export class Runs {
         // A run with several models: each model's own outcome (in the job's order), and one merged report.
         const listed = known?.model?.models && known.model.models.length > 1 ? known.model.models : null;
         let parts: Part[] | null = null;
+        let judged: JudgeResult | null = null;
         try {
             if (listed) {
                 parts = listed.map((m, i) => {
@@ -1444,7 +1606,35 @@ export class Runs {
                     };
                 });
                 if (parts.some((p) => p.report)) {
-                    report = mergeReports(parts.map((p): ModelReport => ({ label: p.label, report: p.report, error: p.error })));
+                    const reports = parts.map((p): ModelReport => ({ label: p.label, report: p.report, error: p.error }));
+                    // The review chose to have a model asked which findings are the same problem: what it said, if it can be used.
+                    const judge = known?.model?.judge;
+                    let same: FindingPair[] = [];
+                    if (judge) {
+                        const who = "error" in judge ? null : judge;
+                        const read =
+                            "error" in judge
+                                ? {
+                                      ...readJudged({ pairs: [] }, reports),
+                                      error: `No model was asked: ${judge.error}. Findings were merged by where they are only.`,
+                                  }
+                                : readJudged(input.judged, reports, redact);
+                        same = read.same;
+                        const byPlace = groupFindings(findingsOf(reports));
+                        judged = {
+                            label: who?.label ?? null,
+                            provider: who?.provider ?? null,
+                            model: who?.model ?? null,
+                            candidates: read.candidates,
+                            asked: read.asked,
+                            same: same.length,
+                            merged: byPlace.length - joinGroups(byPlace, same).length,
+                            tokens: read.tokens,
+                            seconds: read.seconds,
+                            error: read.error,
+                        };
+                    }
+                    report = mergeReports(reports, same);
                     // Kept with the report: triage lists such findings after the others, wherever it's read.
                     if (known?.options?.agreement.markSingles) report.mark_singles = true;
                     metrics = reportMetrics(report);
@@ -1478,7 +1668,9 @@ export class Runs {
                 // Every instance-key run counts against the allowance: with no figure at all (stopped, cancelled
                 // or lost without a word from OCR), the whole budget it was given, marked as an estimate.
                 // Several models: what they used between them (the merged report's own figure is the first model's).
-                let tokens = parts ? sumTokens(parts.map((p) => p.tokens)) : runTokens(metrics?.tokens ?? null, held.progress.tokens);
+                let tokens = parts
+                    ? sumTokens([...parts.map((p) => p.tokens), judged?.tokens ?? null])
+                    : runTokens(metrics?.tokens ?? null, held.progress.tokens);
                 const estimated = !parts && !tokens && held.model?.keySource === "instance" && Boolean(held.model.budget);
                 if (estimated) {
                     const b = held.model?.budget as number;
@@ -1569,6 +1761,7 @@ export class Runs {
                     ...(upload && report && failAt ? { agreement: agreedCritical(report, failAt) } : {}),
                     ...(reportId ? { reportId } : {}),
                     ...(rerun ? { rerun } : {}),
+                    ...(judged ? { judge: judged } : {}),
                     ...(parts
                         ? {
                               models: parts.map((p) => ({
@@ -1686,6 +1879,28 @@ export class Runs {
                                 ...(i === 0 && addedIds ? { addedIds } : {}),
                                 error: p.error ?? (i === 0 ? errorText : null),
                                 scan: { ...scan, lead: i === 0 },
+                            },
+                        });
+                    // The model that was asked about the findings: its tokens are the scan's too, counted as merging.
+                    if (judged?.model && (judged.tokens || judged.asked))
+                        await this.history.record(w.tx, {
+                            workspaceId: held.workspaceId,
+                            projectId: held.projectId,
+                            branch: held.branch,
+                            at: finishedAt,
+                            source: "run",
+                            kind: held.kind,
+                            status: judged.error ? "failed" : "done",
+                            model: judged.model,
+                            provider: judged.provider,
+                            keySource: "workspace",
+                            tokens: judged.tokens,
+                            details: {
+                                ...common,
+                                merging: true,
+                                ...(judged.seconds !== null ? { runSeconds: judged.seconds } : {}),
+                                error: judged.error,
+                                scan: { ...scan, lead: false },
                             },
                         });
                 }

@@ -47,4 +47,39 @@ describe("ReviewOptions", () => {
         show({ agreement: { failAt: 2 } }, 2);
         expect(screen.queryByLabelText("How many models must have found it")).toBeNull();
     });
+
+    it("a model can be asked about the findings: the review's first that can be, or a favourite, but not one on Amazon Bedrock", async () => {
+        const fav = (id: string, model: string, canJudge = true) => ({
+            id,
+            provider: "p",
+            providerName: "Provider",
+            model,
+            name: null,
+            isDefault: false,
+            ready: true,
+            missing: null,
+            canJudge,
+        });
+        const choices = {
+            favourites: [fav("b", "bedrock-model", false), fav("a", "model-a"), fav("c", "model-c")],
+            defaultId: "a",
+            instance: null,
+            max: 5,
+            fallback: ["a"],
+        };
+        const onChange = vi.fn();
+        const { rerender } = render(<ReviewOptions value={{}} models={2} choices={choices} chosen={["b", "a"]} onChange={onChange} />);
+        expect(screen.queryByLabelText("Model to ask")).toBeNull();
+        await userEvent.click(screen.getByRole("checkbox", { name: /^Ask a model whether findings/ }));
+        expect(onChange).toHaveBeenLastCalledWith({ judge: "first" });
+        rerender(<ReviewOptions value={{ judge: true }} models={2} choices={choices} chosen={["b", "a"]} onChange={onChange} />);
+        const who = screen.getByLabelText("Model to ask") as HTMLSelectElement;
+        // The first that can be is the second model: the first is on Amazon Bedrock.
+        expect([...who.options].map((o) => o.text)).toEqual(["The review's first model that can be (model-a)", "model-a", "model-c"]);
+        await userEvent.selectOptions(who, "c");
+        expect(onChange).toHaveBeenLastCalledWith({ judge: "c" });
+        // None of the review's models can be asked: it says so.
+        rerender(<ReviewOptions value={{ judge: "first" }} models={2} choices={choices} chosen={["b"]} onChange={onChange} />);
+        expect(screen.getByRole("alert").textContent).toBe("None of this review's models can be asked. Choose a model to ask.");
+    });
 });

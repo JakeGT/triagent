@@ -1,9 +1,13 @@
 // The options a review with several models can have, as a list to tick: on Start a review (for that
 // review), and in a project's settings (for reviews that don't choose their own). Each is off unless ticked.
 
-import { CheckField, Field, NativeSelect } from "@/components/field";
+import { CheckField, Field, FieldError, NativeSelect } from "@/components/field";
+import { modelOptions } from "@/components/model-choice";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { RunOptionsInput } from "@/lib/types";
+import type { ModelChoices, RunOptionsInput } from "@/lib/types";
+
+/** Where a favourite's id goes, for "the review's first model that can be asked" (JUDGE_FIRST on the server). */
+const FIRST = "first";
 
 /** The options as they'd be sent for a review with this many models: no rule asks for more models than it has. */
 export function optionsFor(value: RunOptionsInput, models: number): RunOptionsInput {
@@ -15,12 +19,18 @@ export function ReviewOptions({
     legend = "Options",
     value,
     models,
+    choices,
+    chosen,
     project,
     disabled,
     onChange,
 }: {
     legend?: string;
     value: RunOptionsInput;
+    /** The models there are, to choose which is asked about the findings. */
+    choices?: ModelChoices | undefined;
+    /** The review's own models, in order (not for a project's own options: its reviews differ). */
+    chosen?: readonly string[];
     /** How many models the review has; for a project's own options, the most a review can have. */
     models: number;
     /** A project's own options: its reviews can have different numbers of models. */
@@ -30,6 +40,12 @@ export function ReviewOptions({
 }) {
     const agreement = value.agreement ?? {};
     const failAt = agreement.failAt ? Math.min(agreement.failAt, Math.max(models, 2)) : null;
+    // Which model is asked about the findings: one that can be (not on Amazon Bedrock, nor the instance's).
+    const judge = value.judge === true ? FIRST : value.judge || null;
+    const able = (choices?.favourites ?? []).filter((f) => f.canJudge !== false);
+    const names = new Map(modelOptions(choices).map((o) => [o.id, o.label]));
+    const first = chosen?.find((id) => able.some((f) => f.id === id));
+    const nobody = judge === FIRST && chosen !== undefined && choices !== undefined && first === undefined;
     const setAgreement = (patch: NonNullable<RunOptionsInput["agreement"]>) =>
         onChange({ ...value, agreement: { ...agreement, ...patch } });
     return (
@@ -85,6 +101,51 @@ export function ReviewOptions({
                         )}
                     </Field>
                 )}
+                <CheckField
+                    label="Ask a model whether findings from different models are the same problem"
+                    hint="Findings the models put in different places or categories are compared, up to 200 pairs a review, and those it says are the same are merged. It's sent what the findings say and where they are, never the code. Its tokens are counted with the review's."
+                >
+                    {(p) => (
+                        <Checkbox
+                            {...p}
+                            checked={judge !== null}
+                            disabled={disabled}
+                            onCheckedChange={(v) => onChange({ ...value, judge: v === true ? FIRST : null })}
+                        />
+                    )}
+                </CheckField>
+                {judge !== null && (
+                    <Field
+                        label="Model to ask"
+                        hint="A model on Amazon Bedrock can't be asked yet, nor can the instance's model."
+                        width="lg"
+                        className="ps-7"
+                    >
+                        {(p) => (
+                            <NativeSelect
+                                {...p}
+                                value={judge}
+                                disabled={disabled}
+                                onChange={(e) => onChange({ ...value, judge: e.target.value })}
+                            >
+                                <option value={FIRST}>
+                                    {first
+                                        ? `The review's first model that can be (${names.get(first)})`
+                                        : "The review's first model that can be"}
+                                </option>
+                                {able.map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                        {names.get(f.id) ?? f.model}
+                                    </option>
+                                ))}
+                                {judge !== FIRST && !able.some((f) => f.id === judge) && (
+                                    <option value={judge}>A model that can't be asked now: choose another</option>
+                                )}
+                            </NativeSelect>
+                        )}
+                    </Field>
+                )}
+                {nobody && <FieldError className="ps-7" message="None of this review's models can be asked. Choose a model to ask." />}
                 <CheckField
                     label="Mark findings only one model found as lower confidence"
                     hint="They're labelled, can be filtered, and are listed after the others of their severity. Nothing about triage changes."

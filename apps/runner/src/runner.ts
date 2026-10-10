@@ -31,6 +31,7 @@ import {
 } from "./client.ts";
 import type { RunnerConfig } from "./config.ts";
 import { Git, gitEnv, mirrorPath } from "./git.ts";
+import { judgeFindings } from "./judge.ts";
 import { start } from "./process.ts";
 import { combined, type ModelProgress, type Progress, readProgress } from "./progress.ts";
 
@@ -181,7 +182,7 @@ interface Slot {
 
 /** One job in progress: its log buffer, heartbeat and the OCR process (or one per model). */
 export class JobRun {
-    private readonly job: Pick<ClaimedJob, "id" | "git" | "model" | "models">;
+    private readonly job: Pick<ClaimedJob, "id" | "git" | "model" | "models" | "judge">;
     private readonly server: Pick<ServerClient, "events" | "heartbeat">;
     private readonly redact: (line: string) => string;
     private buffer: { at: string; line: string }[] = [];
@@ -201,7 +202,7 @@ export class JobRun {
     private readonly graceSeconds: number;
 
     constructor(
-        job: Pick<ClaimedJob, "id" | "git" | "model" | "models">,
+        job: Pick<ClaimedJob, "id" | "git" | "model" | "models" | "judge">,
         server: Pick<ServerClient, "events" | "heartbeat">,
         graceSeconds = 120,
     ) {
@@ -209,7 +210,7 @@ export class JobRun {
         this.job = job;
         this.server = server;
         // The job's own secrets come out before anything leaves the runner (the server redacts again).
-        this.redact = redactor([job.git.token, ...modelsOf(job).flatMap((m) => modelSecrets(m))]);
+        this.redact = redactor([job.git.token, ...[...modelsOf(job), ...(job.judge ? [job.judge] : [])].flatMap((m) => modelSecrets(m))]);
     }
 
     /** Lines waiting to be sent. */
@@ -659,6 +660,19 @@ export class Runner {
                     models.map((m) => m.label),
                     run.cancelled,
                 );
+                // The review chose to have a model asked which of the findings left apart are the same problem.
+                if (job.judge && outcome.status === "done") {
+                    const judged = await this.judge(job.judge, run, parts);
+                    if (run.lost) throw new Stop("This job is no longer ours.");
+                    // Cancelled while asking: the review ends as cancelled, as it would have a moment earlier.
+                    outcome = run.cancelled
+                        ? overall(
+                              parts,
+                              models.map((m) => m.label),
+                              true,
+                          )
+                        : { ...outcome, judged };
+                }
             } else {
                 // One model: as it always was.
                 run.setProgress({ phase: "starting" });
@@ -692,6 +706,28 @@ export class Runner {
             await run.end();
         }
         if (!run.lost) await this.report(job.id, { ...outcome, headSha: fetched?.head ?? null, baseSha: fetched?.base ?? null });
+    }
+
+    /** Ask the job's judging model about the findings its reviews left apart, saying in the log how it went. */
+    private async judge(model: NonNullable<ClaimedJob["judge"]>, run: JobRun, parts: readonly FinishPart[]) {
+        run.setProgress({ ...run.currentProgress, phase: "merging" });
+        run.say(`Asking ${model.label} which findings from different models are the same problem…`);
+        const judged = await judgeFindings(model, parts, {
+            ...(this.config.llmTimeout ? { timeoutMs: Number(this.config.llmTimeout) * 1000 } : {}),
+            signal: run.signal,
+        });
+        const error = judged.error ? run.redactLine(judged.error) : undefined;
+        const same = judged.pairs.filter((p) => p.same).length;
+        const asked = `${judged.pairs.length} pair${judged.pairs.length === 1 ? "" : "s"}`;
+        run.say(
+            error
+                ? `${model.label} couldn't be asked (${error}), so findings are merged by where they are only.`
+                : judged.pairs.length
+                  ? `${model.label} compared ${asked}${judged.total > judged.pairs.length ? ` (the closest of ${judged.total})` : ""}: ${same} the same problem.`
+                  : "No findings from different models were left to compare.",
+        );
+        run.setProgress({ ...run.currentProgress, phase: "uploading" });
+        return { ...judged, ...(error ? { error } : {}) };
     }
 
     /**

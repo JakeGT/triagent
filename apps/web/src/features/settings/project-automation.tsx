@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
-import { automationQuery, keys } from "@/lib/queries";
+import { automationQuery, keys, modelsQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { Automation } from "@/lib/types";
 import { fromModelSets, type ModelSets, ProjectModels, toModelSets } from "./project-models";
@@ -189,6 +189,8 @@ export function ProjectAutomation() {
     const editable = useCan()("configure");
     const queryClient = useQueryClient();
     const query = useQuery(automationQuery(ws, slug));
+    // The favourites, to choose which model a review asks about its findings (the same list the models above are ticked from).
+    const choices = useQuery(modelsQuery(ws));
     const form = useDraft(query.data ? toForm(query.data) : undefined);
 
     const save = useMutation({
@@ -229,6 +231,7 @@ export function ProjectAutomation() {
                             legend="When a review has several models"
                             value={d.options}
                             models={MAX_MODELS}
+                            choices={choices.data}
                             project
                             disabled={!editable}
                             onChange={(options) => set({ options })}

@@ -5,7 +5,8 @@
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
 // (OCR_LLM_MODEL): "fake/fail", "fake/fail-once" (fails the first time it reviews a repository, and not after), "fake/partial", "fake/empty", "fake/sleep-5" (five seconds of work, saying so all the while), "fake/silent-5" (five seconds without a word), "fake/spend-25000" (says it has used that many tokens, before any sleep), "fake/orphan" (leaves a process behind
 // in its group), and for reviews with several models "wordy" (the same findings, put another way, two lines
-// lower), "extra" (one more finding, at line 40 of the first file) and "alarm" (one more, critical, at line 80 of it). It also prints what tests check: its arguments, which environment variables it got,
+// lower), "extra" (one more finding, at line 40 of the first file), "alarm" (one more, critical, at line 80 of it), "apart" (its findings two hundred
+// lines lower and about performance, so nothing about where they are says they're the others' findings) and "quote" (each finding quotes the file, and suggests code). It also prints what tests check: its arguments, which environment variables it got,
 // the model key (the server must redact it), its user config (~/.opencodereview/config.json, which the
 // runner writes for Amazon Bedrock, taking the model from it as OCR does), and the review rules it found. Like the real one, it leaves
 // out files the root .gitignore matches and files git calls binary, and reads rule files rule.json names.
@@ -149,11 +150,16 @@ const report = {
             path,
             content: model.includes("wordy")
                 ? `Looking closely at ${path}, the fake reviewer sees a problem here.`
-                : `A problem found in ${path} by the fake reviewer.`,
+                : model.includes("apart")
+                  ? `Seen from further off, ${path} has the same trouble.`
+                  : `A problem found in ${path} by the fake reviewer.`,
             severity: content(path).includes("CRITICAL") ? "critical" : model.includes("wordy") ? "medium" : "high",
-            category: "bug",
-            start_line: model.includes("wordy") ? 3 : 1,
-            end_line: model.includes("wordy") ? 3 : 1,
+            category: model.includes("apart") ? "performance" : "bug",
+            start_line: model.includes("apart") ? 201 : model.includes("wordy") ? 3 : 1,
+            end_line: model.includes("apart") ? 201 : model.includes("wordy") ? 3 : 1,
+            ...(model.includes("quote")
+                ? { existing_code: content(path), suggestion_code: `// suggested for ${path}: FAKE-SUGGESTED-CODE` }
+                : {}),
         })),
         ...(model.includes("extra") && files[0]
             ? [{ path: files[0], content: `Only ${model} noticed this.`, severity: "low", category: "style", start_line: 40, end_line: 40 }]

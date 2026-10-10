@@ -5,11 +5,12 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { NO_OPTIONS, type RunOptions } from "@triagent/shared";
 import { candidatePairs, groupFindings, joinGroups } from "@triagent/shared/merge";
+import { FakeProvider } from "../../../tests/fakes/model-provider.ts";
 import { mergeReports } from "../src/domain/merge.ts";
 import { parseReport, priorityCompare } from "../src/domain/report.ts";
 import { commentBody, finishedStatus } from "../src/domain/review-run.ts";
-import { agreedCritical, effectiveOptions } from "../src/services/runs.ts";
-import { eventually, finished, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
+import { agreedCritical, effectiveOptions, readJudged } from "../src/services/runs.ts";
+import { eventually, finished, MODEL_KEY, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
 
 const on = (change: Partial<RunOptions>): RunOptions => ({ ...structuredClone(NO_OPTIONS), ...change });
 
@@ -787,5 +788,388 @@ describe("a model run again, as the runner is told and answers", () => {
                 [3, true],
             ],
         );
+    });
+});
+
+describe("a model asked which findings are the same problem", () => {
+    let env: ReviewEnv;
+    let provider: FakeProvider;
+    const ws = "judged";
+    const { request, favourite, post, start, issues } = kit(() => env, ws, "judged/app");
+    const judgeKey = `sk-judge-${"j".repeat(24)}`;
+    const SECRET_CODE = "export const a = 'DO-NOT-SEND-THIS-CODE';\n";
+    const workspaceId = async () => (await env.t.services.store.workspaces.bySlug(ws))?.id as string;
+    /** The favourite that is the stand-in provider's model, set up on first use. */
+    let judgeId = "";
+    const judge = async () => {
+        if (judgeId) return judgeId;
+        const settings = `/api/v1/w/${ws}/settings/review-model`;
+        const set = await request(`${settings}/providers/custom`, {
+            method: "PATCH",
+            session: env.admin,
+            body: { url: `${provider.url}/v1`, protocol: "openai" },
+        });
+        assert.equal(set.status, 200, set.text);
+        assert.equal(
+            (await request(`${settings}/keys/custom`, { method: "PUT", session: env.admin, body: { key: judgeKey } })).status,
+            200,
+        );
+        judgeId = await favourite("judge-model", "custom");
+        return judgeId;
+    };
+    /** Two models whose findings nothing about their place makes one: the second's are far lower, and about something else. */
+    const apart = async () => [await favourite("fake/model"), await favourite("fake/apart-quote")];
+
+    before(async () => {
+        provider = await new FakeProvider().start();
+        env = await reviewEnv({ env: { ALLOW_PRIVATE_MODEL_URLS: "true" } });
+        await patProject(env, ws, { repo: "judged/app" });
+        await env.fake.gitRepo("judged/app", { "src/a.ts": SECRET_CODE, "src/b.ts": "export const b = 2;\n" });
+        env.runner();
+    });
+    after(async () => {
+        await env.close();
+        await provider.stop();
+    });
+
+    test("who can be asked: a favourite, not a model on Amazon Bedrock, nor the instance's", async () => {
+        const models = await apart();
+        const ask = (judge: unknown, m = models) => post({ kind: "full", branch: "main", models: m, options: { judge } });
+        const unknown = await ask("nope");
+        assert.equal(unknown.status, 400, unknown.text);
+        assert.match(unknown.text, /isn't one of this workspace's favourite models, so it can't be asked/);
+        const bedrock = await favourite("anthropic.claude-test", "bedrock");
+        const refused = await ask(bedrock);
+        assert.equal(refused.status, 400, refused.text);
+        assert.match(
+            refused.text,
+            /anthropic\.claude-test is on Amazon Bedrock, and a model there can't be asked which findings are the same problem yet\. Choose another/,
+        );
+        assert.match((await ask("instance")).text, /The instance's model can't be the one asked/);
+        // "The first that can" needs one that can; and one model has nobody to compare with.
+        const none = await ask(true, [bedrock, await favourite("anthropic.claude-other", "bedrock")]);
+        assert.equal(none.status, 400, none.text);
+        assert.match(none.text, /None of this review's models can be asked/);
+        assert.match((await ask(true, [models[0] as string])).text, /two or more models/);
+        // A project's own choice is checked the same way; the list of favourites says which can be asked.
+        const project = await request(`/api/v1/w/${ws}/p/app/settings/automation`, {
+            method: "PATCH",
+            session: env.admin,
+            body: { options: { judge: bedrock } },
+        });
+        assert.equal(project.status, 400, project.text);
+        const listed = (await request(`/api/v1/w/${ws}/models`, { session: env.admin })).body.favourites;
+        assert.deepEqual(
+            listed.map((f: { model: string; canJudge: boolean }) => [f.model, f.canJudge]).filter((x: [string, boolean]) => !x[1]),
+            [
+                ["anthropic.claude-test", false],
+                ["anthropic.claude-other", false],
+            ],
+        );
+    });
+
+    test("off unless chosen: findings are merged by where they are, and no model is asked", async () => {
+        const plain = await finished(env, ws, (await start({ kind: "full", branch: "main", models: await apart() })).id);
+        assert.equal(plain.status, "done", plain.error);
+        assert.equal(plain.result.total, 4, "two files, two findings each: nothing about where they are makes them one");
+        assert.equal(plain.result.judge, undefined);
+        assert.equal(plain.model.judge, undefined);
+        assert.equal(provider.requests.length, 0);
+    });
+
+    test("on: the pairs it says are the same are merged like any agreement, and its tokens are counted as merging", async () => {
+        // The same problem in a.ts, it says; not in b.ts.
+        provider.same = (p) => p.a.file === "src/a.ts";
+        const id = await judge();
+        const started = await start({ kind: "full", branch: "main", models: await apart(), options: { judge: id } });
+        assert.equal(started.options.judge, id);
+        const done = await finished(env, ws, started.id);
+        assert.equal(done.status, "done", done.error);
+        assert.deepEqual(done.model.judge, { id, provider: "custom", model: "judge-model", label: "judge-model" });
+        assert.deepEqual(done.result.judge, {
+            label: "judge-model",
+            provider: "custom",
+            model: "judge-model",
+            candidates: 2,
+            asked: 2,
+            same: 1,
+            merged: 1,
+            tokens: { input: 300, output: 20, cacheRead: 0, total: 320 },
+            seconds: done.result.judge.seconds,
+            error: null,
+        });
+        assert.equal(done.result.total, 3);
+        assert.equal(done.result.tokens.total, 1500 + 1500 + 320);
+        const log = done.logLines.map((l: { line: string }) => l.line);
+        assert.ok(log.includes("[triagent] Asking judge-model which findings from different models are the same problem…"));
+        assert.ok(log.includes("[triagent] judge-model compared 2 pairs: 1 the same problem."));
+        assert.ok(!log.some((l: string) => l.includes(judgeKey)));
+
+        // Triage: one finding for a.ts, found by both, with what the other said; b.ts has two.
+        const listed = await issues("main", "&sort=agreement");
+        assert.equal(listed.total, 3);
+        assert.deepEqual(listed.items[0].foundBy, ["fake/model", "fake/apart-quote"]);
+        assert.equal(listed.items[0].path, "src/a.ts");
+        const detail = (await request(`/api/v1/w/${ws}/p/app/issues/${listed.items[0].id}?branch=main`, { session: env.admin })).body;
+        assert.match(detail.content, /^A problem found in src\/a\.ts/, "the first model's wording leads");
+        assert.deepEqual(
+            [detail.alsoFound[0].model, detail.alsoFound[0].category, detail.alsoFound[0].startLine],
+            ["fake/apart-quote", "performance", 201],
+        );
+        assert.deepEqual(
+            listed.items.slice(1).map((x: { path: string; foundBy: string[] }) => [x.path, x.foundBy.length]),
+            [
+                ["src/b.ts", 1],
+                ["src/b.ts", 1],
+            ],
+        );
+
+        // The model was sent the findings' words and where they are, with the key for its own provider: never the code.
+        assert.equal(provider.requests.length, 1);
+        const sent = provider.requests[0];
+        assert.equal(sent?.path, "/v1/chat/completions");
+        assert.equal(sent?.headers.authorization, `Bearer ${judgeKey}`);
+        assert.doesNotMatch(sent?.raw ?? "", /DO-NOT-SEND-THIS-CODE|FAKE-SUGGESTED-CODE|existing_code|suggestion_code/);
+        assert.match(sent?.raw ?? "", /Seen from further off, src\/a\.ts has the same trouble\./);
+        // The second model's findings do quote the code, so it was there to leave out.
+        const theirs = listed.items.find((x: { foundBy: string[] }) => x.foundBy[0] === "fake/apart-quote");
+        const quoted = (await request(`/api/v1/w/${ws}/p/app/issues/${theirs.id}?branch=main`, { session: env.admin })).body;
+        assert.equal(quoted.existingCode, "export const b = 2;\n");
+
+        // Analytics: the tokens are the review's, under "merging", and it's still one review.
+        const history = await env.t.services.history.list({ workspaceId: await workspaceId() });
+        const merging = history.filter((h) => h.details.scan?.id === done.id && h.details.merging);
+        assert.deepEqual(
+            merging.map((h) => [h.model, h.provider, h.status, h.tokens?.total, h.keySource, h.details.scan?.lead]),
+            [["judge-model", "custom", "done", 320, "workspace", false]],
+        );
+        const a = (await request(`/api/v1/w/${ws}/analytics?days=7`, { session: env.admin })).body;
+        assert.equal(a.reviews.total, 2, "this review and the one before, each once");
+        const byModel = Object.fromEntries(
+            a.reviews.byModel.map((g: { key: string; tokens: number; reviews: number }) => [g.key, [g.reviews, g.tokens]]),
+        );
+        assert.deepEqual(byModel["merging (judge-model)"], [1, 320]);
+        assert.equal(byModel["judge-model"], undefined);
+        assert.equal(a.reviews.latest[0].tokens, 3320);
+        assert.ok(!a.performance.byModel.some((g: { key: string }) => /judge-model/.test(g.key)));
+    });
+
+    test("it fails, or answers nonsense: the review keeps the plain merge and says so", async () => {
+        const id = await judge();
+        for (const [mode, why] of [
+            ["error", "its provider answered 500"],
+            ["nonsense", "its answer wasn't true or false for each pair"],
+        ] as const) {
+            provider.requests.length = 0;
+            provider.mode = mode;
+            const done = await finished(
+                env,
+                ws,
+                (await start({ kind: "full", branch: "main", models: await apart(), options: { judge: id } })).id,
+            );
+            assert.equal(done.status, "done", done.error);
+            assert.equal(done.result.total, 4, "merged by where they are, as without the option");
+            assert.equal(done.result.judge.error, `The model couldn't be asked (${why}), so findings were merged by where they are only.`);
+            assert.deepEqual([done.result.judge.asked, done.result.judge.same, done.result.judge.merged], [0, 0, 0]);
+            assert.ok(
+                done.logLines.some(
+                    (l: { line: string }) =>
+                        l.line === `[triagent] judge-model couldn't be asked (${why}), so findings are merged by where they are only.`,
+                ),
+            );
+            assert.equal(provider.requests.length, 1);
+        }
+        provider.mode = "answer";
+    });
+});
+
+describe("what a runner says a model answered, as the server takes it", () => {
+    let env: ReviewEnv;
+    const ws = "verdicts";
+    const { request, favourite, start, run } = kit(() => env, ws, "verdicts/app");
+    const runner = { id: "runner-verdicts-00", name: "verdicts", version: "1", slots: 1 };
+    const f = (path: string, line: number, content: string, category = "bug") => ({
+        path,
+        content,
+        severity: "high",
+        category,
+        start_line: line,
+        end_line: line,
+    });
+    // a.ts: A at 10, B at 100 (apart); b.ts: A at 10, B at 11 (one finding already); c.ts: only A.
+    const reports = [
+        { label: "a", report: { comments: [f("a.ts", 10, "A in a"), f("b.ts", 10, "A in b"), f("c.ts", 5, "A in c")] } },
+        {
+            label: "b",
+            report: { comments: [f("a.ts", 100, "B in a", "style"), f("b.ts", 11, "B in b"), f("a.ts", 300, "B again in a", "style")] },
+        },
+    ];
+    const ref = (part: number, index: number) => ({ part, index });
+    const pair = (a: [number, number], b: [number, number], same = true) => ({ a: ref(...a), b: ref(...b), same });
+
+    before(async () => {
+        env = await reviewEnv();
+        await patProject(env, ws, { repo: "verdicts/app" });
+        await env.fake.gitRepo("verdicts/app", { "a.ts": "a\n" });
+    });
+    after(() => env.close());
+
+    test("answers are used only if every one is about a pair that was to be asked about", () => {
+        const good = readJudged(
+            { pairs: [pair([0, 0], [1, 0]), pair([0, 0], [1, 2], false)], tokens: { input: 90, output: 10 }, seconds: 3 },
+            reports,
+        );
+        assert.deepEqual(good, {
+            same: [pair([0, 0], [1, 0])],
+            asked: 2,
+            candidates: 2,
+            tokens: { input: 90, output: 10, cacheRead: 0, total: 100 },
+            seconds: 3,
+            error: null,
+        });
+        const refused = (given: unknown) => {
+            const read = readJudged(given, reports);
+            assert.deepEqual([read.same, read.asked], [[], 0]);
+            return read.error ?? "";
+        };
+        assert.match(refused(undefined), /The runner didn't ask \(it may be too old to\)/);
+        assert.match(refused("yes"), /couldn't be read/);
+        assert.match(refused({ pairs: "all" }), /aren't a list of pairs/);
+        assert.match(refused({ pairs: [{ a: ref(0, 0), b: ref(1, 0), same: "true" }] }), /true or false answer/);
+        assert.match(refused({ pairs: [{ a: ref(0, 0), same: true }] }), /doesn't name two findings/);
+        assert.match(refused({ pairs: [pair([0, -1], [1, 0])] }), /doesn't name two findings/);
+        assert.match(refused({ pairs: [pair([0, 0.5], [1, 0])] }), /doesn't name two findings/);
+        // Out of range: a finding, or a model, that isn't there.
+        assert.match(refused({ pairs: [pair([0, 9], [1, 0])] }), /a finding that isn't in the reviews/);
+        assert.match(refused({ pairs: [pair([0, 0], [5, 0])] }), /a finding that isn't in the reviews/);
+        assert.match(refused({ pairs: [pair([1, 0], [1, 2])] }), /two findings of the same model/);
+        assert.match(refused({ pairs: [pair([0, 2], [1, 0])] }), /findings in different files/);
+        // Real findings in one file from two models, but already one finding: not a pair to ask about.
+        assert.match(refused({ pairs: [pair([0, 1], [1, 1])] }), /isn't a pair that was to be asked about/);
+        assert.match(refused({ pairs: [pair([1, 0], [0, 0])] }), /isn't a pair that was to be asked about/);
+        assert.match(refused({ pairs: [pair([0, 0], [1, 0]), pair([0, 0], [1, 0], false)] }), /one pair is there twice/);
+        // One bad pair loses the good ones too.
+        assert.match(refused({ pairs: [pair([0, 0], [1, 0]), pair([0, 2], [1, 0])] }), /different files/);
+        assert.match(refused({ pairs: Array.from({ length: 201 }, () => pair([0, 0], [1, 0])) }), /more than 200 of them/);
+        // What the runner says went wrong is passed on, cleaned, with what it used.
+        const failed = readJudged(
+            { pairs: [], tokens: { input: 5, output: 0 }, error: "its provider answered 500 for sk-secret" },
+            reports,
+            (t) => t.replace("sk-secret", "[redacted]"),
+        );
+        assert.equal(
+            failed.error,
+            "The model couldn't be asked (its provider answered 500 for [redacted]), so findings were merged by where they are only.",
+        );
+        assert.equal(failed.tokens?.total, 5);
+    });
+
+    test("200 pairs is the most a review has asked, and the most it takes", () => {
+        const many = (label: string, category: string) => ({
+            label,
+            report: {
+                comments: Array.from({ length: 20 }, (_, i) =>
+                    f("big.ts", 10 + i * 100 + (category === "bug" ? 0 : 40), `${label} ${i}`, category),
+                ),
+            },
+        });
+        const parts = [many("a", "bug"), many("b", "style")];
+        const { pairs, total } = candidatePairs(parts.map((p) => p.report.comments));
+        assert.equal(total, 400);
+        assert.equal(pairs.length, 200);
+        const all = readJudged({ pairs: pairs.map((p) => ({ ...p, same: false })) }, parts);
+        assert.deepEqual([all.asked, all.candidates, all.error], [200, 400, null]);
+        // The 201st closest pair is a real pair, but not one that was to be asked about.
+        const next = candidatePairs(
+            parts.map((p) => p.report.comments),
+            201,
+        ).pairs[200];
+        assert.match(readJudged({ pairs: [{ ...next, same: true }] }, parts).error ?? "", /isn't a pair that was to be asked about/);
+    });
+
+    test("through the runner's API: the job carries the model's credentials, and bad answers never lose the review", async () => {
+        const runs = env.t.services.runs;
+        const models = [await favourite("fake/a"), await favourite("fake/b")];
+        const post = (id: string, what: string, body: object) =>
+            fetch(`${env.url}/internal/runner/jobs/${id}/${what}`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${env.secret}`, "content-type": "application/json" },
+                body: JSON.stringify({ runner, ...body }),
+            });
+        const parts = reports.map((r) => ({ status: "done", report: r.report, tokens: 100, seconds: 1 }));
+        const finish = async (judged: unknown, options: object = { judge: true }) => {
+            const started = await start({ kind: "full", branch: "main", models, options });
+            const job = await runs.claim(runner);
+            assert.equal(job?.id, started.id);
+            const res = await post(started.id, "finish", { status: "done", parts, ...(judged === undefined ? {} : { judged }) });
+            assert.equal(res.status, 200, await res.clone().text());
+            return { job, run: await run(started.id) };
+        };
+
+        // "The first that can": the review's first model, with the key the review itself uses for it.
+        const first = await finish({
+            pairs: [pair([0, 0], [1, 0]), pair([0, 0], [1, 2], false)],
+            total: 2,
+            tokens: { input: 90, output: 10 },
+            seconds: 2,
+        });
+        assert.deepEqual(first.job?.judge, { ...first.job?.models[0], label: "fake/a" });
+        assert.equal(first.job?.judge?.apiKey, MODEL_KEY);
+        assert.equal(first.run.options.judge, "first");
+        assert.equal(first.run.model.judge.label, "fake/a");
+        assert.deepEqual(
+            [
+                first.run.result.total,
+                first.run.result.judge.asked,
+                first.run.result.judge.same,
+                first.run.result.judge.merged,
+                first.run.result.judge.error,
+            ],
+            [4, 2, 1, 1, null],
+        );
+        assert.equal(first.run.result.tokens.total, 300);
+        // Its key is taken out of whatever the runner logs, like the models' own.
+        assert.equal(JSON.stringify(first.run).includes(MODEL_KEY), false);
+
+        // Answers that can't be used, and a runner too old to ask: the review is saved, merged by place only, saying why.
+        for (const [judged, why] of [
+            [{ pairs: [pair([0, 2], [1, 0])] }, /The runner's answers weren't used \(one pairs findings in different files\)/],
+            [{ pairs: [pair([0, 0], [9, 9])] }, /a finding that isn't in the reviews/],
+            ["drop table", /couldn't be read/],
+            [undefined, /The runner didn't ask \(it may be too old to\).*Update the runner\./],
+        ] as const) {
+            const bad = await finish(judged);
+            assert.equal(bad.run.status, "done", bad.run.error);
+            assert.equal(bad.run.result.total, 5, "as without the option");
+            assert.match(bad.run.result.judge.error, why);
+            assert.equal(bad.run.result.judge.merged, 0);
+        }
+
+        // Without the option the job names no model to ask, and answers a runner sends anyway are ignored.
+        const off = await finish({ pairs: [pair([0, 0], [1, 0])] }, {});
+        assert.equal(off.job?.judge, undefined);
+        assert.equal(off.run.result.judge, undefined);
+        assert.equal(off.run.result.total, 5);
+    });
+
+    test("a favourite removed since, or without its key: nobody is asked, and the review says why", async () => {
+        const runs = env.t.services.runs;
+        const models = [await favourite("fake/a"), await favourite("fake/b")];
+        const other = await favourite("fake/other");
+        const started = await start({ kind: "full", branch: "main", models, options: { judge: other } });
+        const gone = await request(`/api/v1/w/${ws}/settings/models/favourites/${other}`, { method: "DELETE", session: env.admin });
+        assert.equal(gone.status, 200, gone.text);
+        const job = await runs.claim(runner);
+        assert.equal(job?.id, started.id);
+        assert.equal(job?.judge, undefined);
+        await runs.finish(runner, started.id, { status: "done", parts: reports.map((r) => ({ status: "done", report: r.report })) });
+        const done = await run(started.id);
+        assert.equal(done.status, "done");
+        assert.equal(done.result.total, 5);
+        assert.equal(
+            done.result.judge.error,
+            "No model was asked: the favourite model chosen to be asked has been removed. Findings were merged by where they are only.",
+        );
+        assert.ok(done.logLines.some((l: { line: string }) => /No model will be asked which findings are the same problem/.test(l.line)));
     });
 });

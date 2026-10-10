@@ -24,6 +24,20 @@ export interface ClaimedJob {
     models?: (RunnerModel & { label: string; maxTokensBudget?: number | null })[];
     /** Review exactly these commits, whatever the pull request or branch is at by now (a model of a finished review, run again). */
     commit?: { head: string; base: string | null };
+    /**
+     * A model to ask whether findings the reviews left apart are the same problem, with this job's
+     * credentials for it (as `models` has for theirs). Absent unless the review chose to.
+     */
+    judge?: RunnerModel & { label: string };
+}
+
+/** What the model asked said about pairs of findings (judge.ts), sent with how the job ended. */
+export interface JudgedPairs {
+    pairs: { a: { part: number; index: number }; b: { part: number; index: number }; same: boolean }[];
+    total: number;
+    tokens: { input: number; output: number } | null;
+    seconds: number;
+    error?: string;
 }
 
 /** How one model's review went, in a job with several. */
@@ -125,6 +139,7 @@ export class ServerClient {
             status: "done" | "failed" | "cancelled";
             report?: unknown;
             parts?: FinishPart[];
+            judged?: JudgedPairs;
             error?: string | null;
             headSha?: string | null;
             baseSha?: string | null;

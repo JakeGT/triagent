@@ -387,6 +387,11 @@ export interface RunOptionsInput {
         /** Mark findings only one model found as lower confidence. */
         markSingles?: boolean;
     };
+    /**
+     * Ask a model whether findings from different models are the same problem: true or "first" for the
+     * review's first model that can be asked, or a favourite model's id.
+     */
+    judge?: boolean | string | null;
 }
 export type ProjectOptions = RunOptionsInput;
 
@@ -552,6 +557,19 @@ export interface Run {
         github?: string[];
         /** With a rule about agreement: how many models had to find a critical finding, and how many such findings there were. */
         agreement?: { models: number; critical: number };
+        /** The review had a model asked which findings are the same problem: how that went. */
+        judge?: {
+            label: string | null;
+            candidates: number;
+            asked: number;
+            same: number;
+            /** Findings fewer because of it. */
+            merged: number;
+            tokens: { total: number } | null;
+            seconds: number | null;
+            /** Why nothing was asked or its answers weren't used. */
+            error: string | null;
+        };
         /** One model of a finished review run again: what its findings added to the report, or why they weren't added. */
         rerun?: {
             of: string;
@@ -737,6 +755,8 @@ export interface Favourite {
     ready: boolean;
     /** What it still needs, as "Add …" would finish it. */
     missing: string | null;
+    /** Whether it can be the model a review asks which findings are the same problem: any but one on Amazon Bedrock. */
+    canJudge?: boolean;
 }
 
 export interface ReviewModel {

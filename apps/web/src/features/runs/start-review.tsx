@@ -249,7 +249,13 @@ export function StartReviewForm({
                 </div>
             )}
             {choices.data && several && (
-                <ReviewOptions value={options ?? choices.data.options ?? {}} models={models.length} onChange={setOptions} />
+                <ReviewOptions
+                    value={options ?? choices.data.options ?? {}}
+                    models={models.length}
+                    choices={choices.data}
+                    chosen={models}
+                    onChange={setOptions}
+                />
             )}
             <FieldError message={start.error ? errorMessage(start.error) : null} />
             <div className="flex flex-wrap items-center justify-end gap-2">

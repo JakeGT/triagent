@@ -80,6 +80,7 @@ export function optionsText(run: Pick<Run, "options">): string[] {
     if (o.agreement.failAt !== null)
         out.push(`The pull request check fails only for criticals at least ${o.agreement.failAt} models found.`);
     if (o.agreement.markSingles) out.push("Findings only one model found are marked as lower confidence.");
+    if (o.judge) out.push("A model is asked which findings from different models are the same problem.");
     return out;
 }
 
@@ -98,6 +99,7 @@ const PHASES: Record<string, string> = {
     planning: "Planning",
     reviewing: "Reviewing",
     summarising: "Summarising",
+    merging: "Comparing the models' findings",
     uploading: "Saving the findings",
     finished: "Finished",
 };
@@ -160,6 +162,15 @@ export function findingsText(run: Pick<Run, "result">): string {
     if (!r || r.total === null || r.total === undefined) return "";
     const critical = r.bySeverity?.critical ?? 0;
     return `${plural(r.total, "finding")}${critical ? ` (${critical} critical)` : ""}`;
+}
+
+/** How asking a model about a review's findings went, in words. */
+export function judgeText(j: NonNullable<NonNullable<Run["result"]>["judge"]>): string {
+    if (j.error) return j.error;
+    if (!j.asked) return "No findings from different models were left to compare.";
+    const more = j.candidates > j.asked ? ` (the closest of ${j.candidates.toLocaleString("en-GB")})` : "";
+    const fewer = j.merged ? `, so there ${j.merged === 1 ? "is 1 finding" : `are ${j.merged} findings`} fewer` : "";
+    return `${j.label ?? "A model"} compared ${plural(j.asked, "pair")} of findings${more}: ${j.same} the same problem${fewer}.${j.tokens ? ` ${j.tokens.total.toLocaleString("en-GB")} tokens.` : ""}`;
 }
 
 /** "Second attempt", "Third attempt", "Attempt 5". */

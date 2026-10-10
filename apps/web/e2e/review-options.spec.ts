@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
+import { FakeProvider } from "../../../tests/fakes/model-provider";
 import { ADMIN_PASSWORD, ADMIN_USER } from "./constants";
 import { type Api, expect, signInPage, test, unique } from "./fixtures";
 import { fakeGithub } from "./showcase";
@@ -36,6 +37,8 @@ async function reviewable(
     admin: Api,
     models: readonly string[],
     files: Record<string, string> = { "src/app.ts": "export const app = 1;\n" },
+    /** A server of the workspace's own to use instead of OpenRouter (its address), for tests where a model is really asked something. */
+    custom: string | null = null,
 ) {
     const ws = unique("opt");
     const repo = `acme/${ws}`;
@@ -45,8 +48,10 @@ async function reviewable(
     await admin.post("/api/v1/workspaces", { slug: ws, name: `Org ${ws}` });
     await admin.post(`/api/v1/w/${ws}/projects`, { slug: "app", name: "App", repoUrl: `https://github.com/${repo}` });
     await admin.put(`/api/v1/w/${ws}/p/app/settings/github/token`, { token });
-    await admin.put(`/api/v1/w/${ws}/settings/review-model/keys/openrouter`, { key: `sk-or-${randomBytes(12).toString("hex")}` });
-    await admin.patch(`/api/v1/w/${ws}/settings/review-model`, { model: models[0] });
+    const provider = custom ? "custom" : "openrouter";
+    if (custom) await admin.patch(`/api/v1/w/${ws}/settings/review-model/providers/custom`, { url: custom, protocol: "openai" });
+    await admin.put(`/api/v1/w/${ws}/settings/review-model/keys/${provider}`, { key: `sk-or-${randomBytes(12).toString("hex")}` });
+    await admin.patch(`/api/v1/w/${ws}/settings/review-model`, { provider, model: models[0] });
     const ids: string[] = [];
     for (const model of models) {
         const have = ((await admin.get(`/api/v1/w/${ws}/models`)).favourites as { id: string; model: string }[]).find(
@@ -55,7 +60,7 @@ async function reviewable(
         const id =
             have?.id ??
             (
-                (await admin.post(`/api/v1/w/${ws}/settings/models/favourites`, { provider: "openrouter", model })).favourites as {
+                (await admin.post(`/api/v1/w/${ws}/settings/models/favourites`, { provider, model })).favourites as {
                     id: string;
                     model: string;
                 }[]
@@ -209,3 +214,58 @@ for (const theme of ["light", "dark"] as const) {
         await expect(page.getByText("Found by 1 of 2")).toHaveCount(1);
     });
 }
+
+test.describe("asking a model which findings are the same problem", () => {
+    // Every model here is on a server of this test's own (127.0.0.1), so the question never leaves the machine.
+    const provider = new FakeProvider();
+    test.beforeAll(async () => {
+        await provider.start();
+    });
+    test.afterAll(async () => {
+        await provider.stop();
+    });
+
+    test("chosen on Start a review with the model to ask; the run says how many it merged", async ({ page, admin }) => {
+        test.slow();
+        const { ws } = await reviewable(admin, ["fake/model", "fake/apart", "judge-model"], undefined, `${provider.url}/v1`);
+        await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+        await page.goto(`/w/${ws}/p/app/start-review?kind=full`);
+        const form = page.getByRole("region", { name: "What to review" });
+        await form.getByRole("button", { name: "Change the models" }).click();
+        await form.getByRole("checkbox", { name: "fake/apart" }).check();
+        const options = form.getByRole("group", { name: "Options" });
+        const ask = options.getByRole("checkbox", { name: "Ask a model whether findings from different models are the same problem" });
+        await expect(options.getByLabel("Model to ask")).toHaveCount(0);
+        await ask.check();
+        // The review's first model unless another is chosen; any favourite can be.
+        const who = options.getByLabel("Model to ask");
+        await expect(who).toHaveValue("first");
+        await expect(who.getByRole("option")).toHaveText([
+            "The review's first model that can be (fake/model)",
+            "fake/model",
+            "fake/apart",
+            "judge-model",
+        ]);
+        await who.selectOption({ label: "judge-model" });
+        await axe(page, "Start a review with a model to ask about the findings");
+        await noSidewaysScroll(page);
+
+        await form.getByRole("button", { name: "Start review" }).click();
+        const panel = page.getByTestId("run-panel");
+        await expect(panel.getByTestId("run-options")).toContainText(
+            "A model is asked which findings from different models are the same problem.",
+        );
+        await expect(panel.getByText("Done", { exact: true })).toBeVisible({ timeout: 30_000 });
+        await expect(panel.getByTestId("run-judge")).toHaveText(
+            "judge-model compared 1 pair of findings: 1 the same problem, so there is 1 finding fewer. 320 tokens.",
+        );
+        await expect(panel.getByTestId("run-log")).toContainText("[triagent] judge-model compared 1 pair: 1 the same problem.");
+        await axe(page, "a run that asked a model about its findings");
+        expect(provider.requests.at(-1)?.body.model).toBe("judge-model");
+
+        // One finding, found by both, where there would have been two.
+        await page.goto(`/w/${ws}/p/app/issues?branch=main`);
+        await expect(page.getByText("Found by all 2 models")).toHaveCount(1);
+        await expect(page.getByRole("row")).toHaveCount(2);
+    });
+});

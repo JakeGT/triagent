@@ -250,6 +250,8 @@ export interface ReviewDetails {
      * record (the first model's) carries what the merged report did to the branch (counts, addedIds).
      */
     scan?: { id: string; models: string[]; lead: boolean; status: "done" | "partial" | "failed" | "cancelled"; findings: number | null };
+    /** Not a review: the model a review asked which findings are the same problem, with the tokens that took. */
+    merging?: boolean;
     /** One model of a review run again by itself: which attempt of that model's this was (2 for the first time it was run again). */
     attempt?: number;
 }
@@ -385,6 +387,11 @@ export interface Job {
             keySource?: "workspace" | "instance";
             budget?: number | null;
         }[];
+        /**
+         * The model it asks which findings are the same problem, when it chose to have one asked (its
+         * `judge` option); or why there's none to ask, and it merges by place only.
+         */
+        judge?: { id?: string | null; provider: string; model: string; label: string } | { error: string };
     } | null;
     /** The credentials handed to the runner, sealed, so log lines can be redacted; cleared when it ends. */
     credentials: string | null;

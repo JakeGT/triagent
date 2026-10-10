@@ -64,6 +64,11 @@ export interface FavouriteView {
     ready: boolean;
     /** What it still needs, as "Add …" would finish it. */
     missing: string | null;
+    /**
+     * Whether it can be the model asked which findings are the same problem (a review's `judge`): any but
+     * one on Amazon Bedrock, whose requests only Open Code Review knows how to sign.
+     */
+    canJudge: boolean;
 }
 
 export interface FavouritesView {
@@ -347,6 +352,7 @@ export class ModelSetup {
                 isDefault: f.id === stored.defaultId,
                 ready: missing === null,
                 missing,
+                canJudge: protocolOf(spec, stored.options?.[spec.id] ?? {}) !== "anthropic-bedrock",
             };
         });
         return {

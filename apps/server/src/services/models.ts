@@ -25,6 +25,7 @@
 // The result says which of OCR's protocols to use and carries everything OCR needs for it (services/
 // model-setup.ts): a URL and key, or for Amazon Bedrock a region and an AWS access key.
 
+import { JUDGE_FIRST } from "@triagent/shared";
 import { MAX_MODELS, modelLabels } from "../domain/merge.ts";
 import type { Job, JobKind, Project, Repos, ReviewRecord, Workspace } from "../store/types.ts";
 import { type Allowances, nextMonthStart, resetDay } from "./allowances.ts";
@@ -269,6 +270,34 @@ export class Models {
         }
         const labels = modelLabels(named);
         return { ready: true, models: models.map((m, i) => ({ ...m, label: labels[i] as string })) };
+    }
+
+    /**
+     * The model a review asks which findings are the same problem: `which` is JUDGE_FIRST (the first of the
+     * review's own models that can be asked) or a favourite's id. Always with the workspace's own key, and
+     * never a model on Amazon Bedrock. When there's none to ask, why: the review then merges by place only.
+     */
+    async judgeFor(
+        workspace: Workspace,
+        models: readonly RunModel[],
+        which: string,
+        repos: Repos = this.core.store,
+    ): Promise<{ model: RunModel } | { error: string }> {
+        const can = (m: RunModel) => m.keySource === "workspace" && m.protocol !== "anthropic-bedrock";
+        if (which === JUDGE_FIRST) {
+            const first = models.find(can);
+            return first
+                ? { model: first }
+                : { error: "none of this review's models can be asked: they're on Amazon Bedrock, or the instance's" };
+        }
+        const own = models.find((m) => m.id === which);
+        if (own) return can(own) ? { model: own } : { error: `${own.label} is on Amazon Bedrock, where a model can't be asked` };
+        const r = await this.setup.resolveFavourite(repos, workspace, which);
+        if (!r) return { error: "the favourite model chosen to be asked has been removed" };
+        const name = r.favourite.name ?? r.favourite.model;
+        if (!r.ready) return { error: `${name} needs ${r.missing} in Settings → Models first` };
+        if (r.model.protocol === "anthropic-bedrock") return { error: `${name} is on Amazon Bedrock, where a model can't be asked` };
+        return { model: { ...r.model, ready: true, id: r.favourite.id, label: name, keySource: "workspace" } };
     }
 
     /**
