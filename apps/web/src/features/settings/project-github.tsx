@@ -71,7 +71,8 @@ export function ProjectGithub() {
  * can't wait for them: what to change on GitHub.
  */
 export function ChecksNote({ data }: { data: GithubSettings }) {
-    if (data.checksReadable !== false) return null;
+    // With nothing connected, what an earlier connection was refused says nothing about the next one.
+    if (data.checksReadable !== false || data.mode === "none") return null;
     return (
         <Alert data-testid="checks-note">
             <AlertTitle>Triagent can't see this repository's checks</AlertTitle>
