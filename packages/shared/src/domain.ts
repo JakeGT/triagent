@@ -29,3 +29,7 @@ export type ReportScope = (typeof REPORT_SCOPES)[number];
 /** How a change was made, shown in activity and audit logs. */
 export const VIAS = ["web", "token", "mcp", "link", "github", "system", "cli"] as const;
 export type Via = (typeof VIAS)[number];
+
+/** How many patterns for files that don't need a review a project can have, and how long each can be. */
+export const MAX_SKIP_PATHS = 50;
+export const MAX_SKIP_PATH_LENGTH = 200;

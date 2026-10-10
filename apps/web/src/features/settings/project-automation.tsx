@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { MAX_SKIP_PATH_LENGTH, MAX_SKIP_PATHS } from "@triagent/shared";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
 import { CheckField, ChoiceField, Field, FieldError, NativeSelect } from "@/components/field";
@@ -89,14 +90,17 @@ function fromForm(f: Form): Automation {
 }
 
 /** The patterns typed, one on each line, within what the server takes. */
-function skipPaths(text: string): string[] {
+export function skipPaths(text: string): string[] {
     const patterns = text
         .split("\n")
         .map((p) => p.trim())
         .filter(Boolean);
-    if (patterns.length > 50) throw new Error("Files that don't need a review: at most 50 patterns.");
-    const long = patterns.find((p) => p.length > 200);
-    if (long) throw new Error(`Files that don't need a review: "${long.slice(0, 40)}…" is longer than 200 characters.`);
+    if (patterns.length > MAX_SKIP_PATHS) throw new Error(`Files that don't need a review: at most ${MAX_SKIP_PATHS} patterns.`);
+    const long = patterns.find((p) => p.length > MAX_SKIP_PATH_LENGTH);
+    if (long) throw new Error(`Files that don't need a review: "${long.slice(0, 40)}…" is longer than ${MAX_SKIP_PATH_LENGTH} characters.`);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what's refused
+    if (patterns.some((p) => /[\u0000-\u001f\u007f]/.test(p)))
+        throw new Error("Files that don't need a review: a pattern can't contain tabs or other control characters.");
     return patterns;
 }
 

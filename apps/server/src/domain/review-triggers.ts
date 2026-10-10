@@ -33,9 +33,6 @@ export function isBot(user: { login?: string | null; type?: string | null } | nu
 
 // ---- paths a project doesn't review ---------------------------------------------------------------
 
-export const MAX_SKIP_PATHS = 50;
-export const MAX_SKIP_PATH_LENGTH = 200;
-
 /** One path segment against a pattern segment: `*` is any run of characters, `?` any one. Never a regular expression. */
 function segmentMatches(pattern: string, text: string): boolean {
     let p = 0;

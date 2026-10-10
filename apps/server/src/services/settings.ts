@@ -3,9 +3,9 @@
 // and are never returned.
 
 import { randomBytes } from "node:crypto";
+import { MAX_SKIP_PATH_LENGTH, MAX_SKIP_PATHS } from "@triagent/shared";
 import { z } from "zod";
 import { MAX_MODELS } from "../domain/merge.ts";
-import { MAX_SKIP_PATH_LENGTH, MAX_SKIP_PATHS } from "../domain/review-triggers.ts";
 import { badRequest, conflict } from "../errors.ts";
 import type { JobKind, Project, Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
