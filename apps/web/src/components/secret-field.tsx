@@ -56,7 +56,7 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
 
     const save = async () => {
         if (!value.trim()) {
-            setError(`Enter the new ${label.toLowerCase()}.`);
+            setError(`Enter the new ${midSentence(label)}.`);
             return;
         }
         setBusy(true);
