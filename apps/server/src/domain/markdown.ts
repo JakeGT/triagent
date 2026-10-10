@@ -71,7 +71,10 @@ export function issueMarkdown(v: IssueDetail, branch: string): string {
         `- **Branch:** ${branch}`,
         `- **Revision:** ${v.rev}`,
     ];
-    if (v.foundBy) facts.push(`- **Found by:** ${v.foundBy.map(oneLine).join(", ")}`);
+    if (v.foundBy)
+        facts.push(
+            `- **Found by:** ${v.foundBy.map(oneLine).join(", ")}${v.lowerConfidence ? " (lower confidence: no other model found it)" : ""}`,
+        );
     if (v.duplicateOf) facts.push(`- **Duplicate of:** ${v.duplicateOf}`);
     if (v.needsDiscussion) facts.push("- **Needs discussion:** yes (agree an approach before fixing)");
     const out = [`## ${v.id}: ${oneLine(v.title)}`, "", ...facts, "", v.content];

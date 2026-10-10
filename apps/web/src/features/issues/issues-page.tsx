@@ -13,6 +13,7 @@ import { LoadError, LoadingRows } from "@/components/load-state";
 import { InlineCode } from "@/components/markdown";
 import { CategoryMark, SeverityMark, StatusMark } from "@/components/marks";
 import { EmptyState, PageMeta } from "@/components/page";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { lines, plural } from "@/lib/format";
@@ -197,6 +198,11 @@ export function IssuesPage() {
                                     Found by{" "}
                                     {x.foundBy.length === modelCount ? `all ${modelCount} models` : `${x.foundBy.length} of ${modelCount}`}
                                     <span className="sr-only">: {x.foundBy.join(", ")}</span>
+                                    {x.lowerConfidence && (
+                                        <Badge variant="outline" className="ms-1.5 font-normal text-muted-foreground">
+                                            Lower confidence
+                                        </Badge>
+                                    )}
                                 </span>
                             )}
                         </div>
@@ -321,7 +327,14 @@ export function IssuesPage() {
                         {summary && <span className="sr-only"> on branch {branch}</span>}
                     </p>
                 </div>
-                <IssueFilters search={search} counts={data?.counts} models={data?.models} onChange={filter} searchRef={searchRef} />
+                <IssueFilters
+                    search={search}
+                    counts={data?.counts}
+                    models={data?.models}
+                    markSingles={data?.markSingles}
+                    onChange={filter}
+                    searchRef={searchRef}
+                />
                 {selectedIds.length > 0 && canTriage && (
                     <BulkBar
                         ids={selectedIds}

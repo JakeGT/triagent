@@ -355,6 +355,24 @@ export function effectiveOptions(asked: RunOptions, models: number): RunOptions 
     return { ...asked, agreement: { ...asked.agreement, failAt } };
 }
 
+/** What a review's agreement rule made of its findings: the rule, and the critical findings enough models found. */
+export interface Agreed {
+    /** At least this many models: the rule, or every model that finished when fewer did than the rule asks. */
+    models: number;
+    critical: number;
+}
+
+/**
+ * The critical findings of a merged report that at least `failAt` of its models found. When fewer models
+ * finished than that, all that did must have: a rule nothing could meet would pass every review.
+ */
+export function agreedCritical(report: RawReport, failAt: number): Agreed {
+    const finished = Array.isArray(report.models) ? report.models.length : 1;
+    const models = Math.max(1, Math.min(failAt, finished));
+    const found = (c: RawReport["comments"][number]) => (Array.isArray(c.found_by) ? c.found_by.length : 1);
+    return { models, critical: report.comments.filter((c) => c.severity === "critical" && found(c) >= models).length };
+}
+
 /** Why a queued review won't start: its project now uses another repository. */
 const movedOn = (job: Pick<Job, "repository">, now: string) =>
     `This project now uses ${now}, but this review was queued for ${job.repository?.fullName}. Start it again to review ${now}.`;
@@ -641,6 +659,9 @@ export class Runs {
             throw badRequest(
                 `These options are for reviews with two or more models, and this one has ${count === 1 ? "one" : "none"}. Choose more models, or leave the options out.`,
             );
+        const failAt = options.agreement.failAt;
+        if (failAt !== null && failAt > count)
+            throw badRequest(`This review has ${count} models, so agreement.failAt can be at most ${count}.`);
     }
 
     /**
@@ -1174,6 +1195,8 @@ export class Runs {
                 });
                 if (parts.some((p) => p.report)) {
                     report = mergeReports(parts.map((p): ModelReport => ({ label: p.label, report: p.report, error: p.error })));
+                    // Kept with the report: triage lists such findings after the others, wherever it's read.
+                    if (known?.options?.agreement.markSingles) report.mark_singles = true;
                     metrics = reportMetrics(report);
                     gaps = reviewGaps(report);
                 } else unreadable = `No model finished: ${parts.map((p) => `${p.label}: ${p.error}`).join(" ")}`.slice(0, 2000);
@@ -1259,6 +1282,7 @@ export class Runs {
                     ...(held.startedAt ? { startedAt: held.startedAt } : {}),
                     queueSeconds: seconds(held.queuedAt, held.startedAt) ?? 0,
                 };
+                const failAt = held.options?.agreement.failAt ?? null;
                 const result = {
                     total: metrics?.findings.total ?? null,
                     bySeverity: metrics?.findings.bySeverity ?? null,
@@ -1269,6 +1293,7 @@ export class Runs {
                     filesReviewed: metrics?.files?.reviewed ?? null,
                     ocrVersion: metrics?.ocrVersion ?? null,
                     seconds: seconds(held.startedAt, finishedAt) ?? null,
+                    ...(upload && report && failAt ? { agreement: agreedCritical(report, failAt) } : {}),
                     ...(parts
                         ? {
                               models: parts.map((p) => ({
@@ -1505,7 +1530,8 @@ export class Runs {
         if (job.status === "done" || job.status === "partial") {
             const bySeverity = (job.result?.bySeverity ?? { critical: 0, high: 0, medium: 0, low: 0 }) as Record<Severity, number>;
             const total = Number(job.result?.total ?? 0);
-            const status = finishedStatus({ status: job.status, total, bySeverity, failOnCritical });
+            const agreed = (job.result?.agreement as Agreed | undefined) ?? null;
+            const status = finishedStatus({ status: job.status, total, bySeverity, failOnCritical, agreed });
             const view = await this.reports.view(this.store, project, job.branch).catch(() => null);
             const urgent = view
                 ? view.filter(
@@ -1537,6 +1563,7 @@ export class Runs {
                         gaps: (job.result?.gaps as never) ?? null,
                         models: job.model?.models?.map((m) => m.label) ?? null,
                         failOnCritical,
+                        agreed,
                         commit: sha,
                         issuesUrl: this.issuesUrl(workspace, project, job.branch),
                         issueUrl: (id) => this.issuesUrl(workspace, project, job.branch, id),

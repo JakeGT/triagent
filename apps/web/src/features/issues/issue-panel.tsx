@@ -479,6 +479,7 @@ function IssueView({ id }: { id: string }) {
                         <p className="text-sm text-muted-foreground">
                             {issue.foundBy.join(", ")}. The finding above is {issue.foundBy[0]}'s
                             {issue.alsoFound.length ? "; what the others said is below." : "."}
+                            {issue.lowerConfidence && " No other model found it, so this review marks it as lower confidence."}
                         </p>
                         {issue.alsoFound.map((o) => (
                             <details key={o.model} className="group rounded-md border bg-background">

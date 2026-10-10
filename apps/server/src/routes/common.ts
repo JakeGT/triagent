@@ -31,6 +31,11 @@ export const IssueQuery = BranchQuery.extend({
     needsDiscussion: z.enum(["true", "false"]).optional(),
     duplicates: z.enum(["true", "false"]).optional(),
     adjusted: z.enum(["true", "false"]).optional().describe("Only issues whose rating someone corrected"),
+    foundBy: z.string().regex(/^\d+$/).optional().describe("Only findings at least this many models found (reviews run with several)"),
+    lowerConfidence: z
+        .enum(["true", "false"])
+        .optional()
+        .describe("Only findings marked as lower confidence (one model found them, and the review asked for that), or only the others"),
     ids: z.string().optional().describe("Comma-separated issue ids"),
     sort: z.enum(ISSUE_SORTS).optional(),
     limit: z.string().regex(/^\d+$/).optional(),

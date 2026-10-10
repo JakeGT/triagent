@@ -5,6 +5,7 @@ import { ChangedElsewhere } from "@/components/changed-elsewhere";
 import { CheckField, ChoiceField, Field, FieldError, NativeSelect } from "@/components/field";
 import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
+import { ReviewOptions } from "@/components/review-options";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -21,6 +22,8 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h);
 /** A week, and a day, in minutes. */
 const MAX_LIMIT = 10_080;
 const MAX_STALL = 1440;
+/** The most models a review can have (the server's limit). */
+const MAX_MODELS = 5;
 
 /** Number inputs are edited as text, so a half-typed value isn't forced into a number. */
 interface Form {
@@ -222,6 +225,14 @@ export function ProjectAutomation() {
                         description="Which models review this project's code. Someone starting a review can choose others for that review."
                     >
                         <ProjectModels ws={ws} value={d.models} disabled={!editable} onChange={(models) => set({ models })} />
+                        <ReviewOptions
+                            legend="When a review has several models"
+                            value={d.options}
+                            models={MAX_MODELS}
+                            project
+                            disabled={!editable}
+                            onChange={(options) => set({ options })}
+                        />
                     </SettingsSection>
                     <SettingsSection title="Pull requests">
                         <Toggle

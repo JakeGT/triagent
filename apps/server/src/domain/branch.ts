@@ -30,6 +30,8 @@ export interface IssueSummary {
     addedBy: string | null;
     /** The models that found it, when the review ran with several; null otherwise. */
     foundBy: string[] | null;
+    /** Only one of the review's models found it, and the review asked for such findings to be marked. */
+    lowerConfidence: boolean;
     sourceUrl: string | null;
     noteCount: number;
     rev: number;
@@ -167,6 +169,7 @@ export class BranchView {
             hasSuggestion: x.suggestionCode !== null,
             addedBy: x.addedBy,
             foundBy: x.foundBy ? [...x.foundBy] : null,
+            lowerConfidence: x.lowerConfidence,
             sourceUrl: this.sourceUrl(x),
             noteCount: r?.notes.length ?? 0,
             rev: r?.rev ?? 0,
@@ -229,6 +232,7 @@ export class BranchView {
             if (f.needsDiscussion !== null && Boolean(r?.needsDiscussion) !== f.needsDiscussion) return false;
             if (f.duplicates !== null && Boolean(r?.duplicateOf) !== f.duplicates) return false;
             if (f.foundBy !== null && (x.foundBy?.length ?? 1) < f.foundBy) return false;
+            if (f.lowerConfidence !== null && x.lowerConfidence !== f.lowerConfidence) return false;
             if (f.assignee) {
                 const a = r?.assignee ?? null;
                 if (f.assignee.toLowerCase() === "none" ? a !== null : (a ?? "").toLowerCase() !== f.assignee.toLowerCase()) return false;
@@ -261,6 +265,8 @@ export class BranchView {
             counts: this.counts(all),
             /** The models the review ran with, when it ran with several (findings say which found them). */
             models: this.review.meta.models,
+            /** Whether findings only one of them found are marked as lower confidence (`lowerConfidence` on each). */
+            markSingles: this.review.meta.markSingles,
             items: full ? page.map((x) => this.detail(x)) : page.map((x) => this.summary(x)),
         };
     }

@@ -32,6 +32,8 @@ export interface RawReport {
     tool_calls?: unknown;
     /** A review run with several models: those that produced a report, in order. */
     models?: unknown;
+    /** …and whether it asked for findings only one of them found to be marked as lower confidence. */
+    mark_singles?: unknown;
     [key: string]: unknown;
 }
 
@@ -64,6 +66,8 @@ export interface Issue {
     readonly foundBy: readonly string[] | null;
     /** What the other models that found it said. */
     readonly alsoFound: readonly OtherFinding[];
+    /** Only one of the review's models found it, and the review asked for such findings to be marked. */
+    readonly lowerConfidence: boolean;
 }
 
 export interface OtherFinding {
@@ -112,6 +116,8 @@ export interface ReviewMeta {
     warnings: ReportWarning[];
     /** The models a review ran with, when it ran with several (domain/merge.ts); null otherwise. */
     models: string[] | null;
+    /** The review asked for findings only one model found to be marked as lower confidence. */
+    markSingles: boolean;
 }
 
 export interface Review {
@@ -326,6 +332,7 @@ export function parseReport(raw: unknown, upload: UploadMeta | null): Review {
     // Who found what only means something when there was more than one model to ask.
     const models = modelNames(raw.models);
     const several = models !== null && models.length > 1;
+    const markSingles = several && raw.mark_singles === true;
     const used = new Set<string>();
     const coerced: string[] = []; // values OCR sent that we don't recognise: reported, not hidden
     const issues: Issue[] = raw.comments.map((c, i) => {
@@ -356,6 +363,7 @@ export function parseReport(raw: unknown, upload: UploadMeta | null): Review {
             addedBy: typeof c.added_by === "string" ? c.added_by : null,
             foundBy: several ? modelNames(c.found_by) : null,
             alsoFound: several ? otherFindings(c.also) : [],
+            lowerConfidence: markSingles && modelNames(c.found_by)?.length === 1,
         });
     });
 
@@ -416,6 +424,7 @@ export function parseReport(raw: unknown, upload: UploadMeta | null): Review {
             summary: raw.summary ?? null,
             warnings,
             models: several ? models : null,
+            markSingles,
         },
         issues,
         byId: new Map(issues.map((x) => [x.id, x])),
@@ -431,13 +440,17 @@ export function parseReport(raw: unknown, upload: UploadMeta | null): Review {
 
 export const EMPTY_REVIEW: Review = parseReport({ comments: [], project_summary: "" }, null);
 
-/** Lower is more urgent: severity, then category, then position in the report. */
+/**
+ * Lower is more urgent: severity, then category, then position in the report. Findings marked as lower
+ * confidence (only one model found them, and the review asked) come after the others of their severity.
+ */
 export function priorityCompare(
-    a: Pick<Issue, "severity" | "category" | "index">,
-    b: Pick<Issue, "severity" | "category" | "index">,
+    a: Pick<Issue, "severity" | "category" | "index"> & { lowerConfidence?: boolean },
+    b: Pick<Issue, "severity" | "category" | "index"> & { lowerConfidence?: boolean },
 ): number {
     return (
         SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity) ||
+        Number(a.lowerConfidence ?? false) - Number(b.lowerConfidence ?? false) ||
         CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category) ||
         a.index - b.index
     );

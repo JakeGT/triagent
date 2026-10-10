@@ -60,6 +60,12 @@ const filterProps = {
         .max(10)
         .optional()
         .describe("Only findings at least this many models found (for reviews run with several models)"),
+    lowerConfidence: z
+        .boolean()
+        .optional()
+        .describe(
+            "Only findings marked as lower confidence (true), or only the others (false). A review run with several models can ask for findings only one model found to be marked",
+        ),
 };
 const editProps = {
     status: z.enum(STATUSES).optional(),
@@ -112,8 +118,9 @@ const line = (x: {
     title: string;
     assignee?: string | null;
     foundBy?: string[] | null;
+    lowerConfidence?: boolean;
 }) =>
-    `- ${x.id} [${x.severity}/${x.category}/${x.status}${x.assignee ? ` @${x.assignee}` : ""}] \`${x.path}${x.startLine ? `:${x.startLine}` : ""}\` — ${x.title}${x.foundBy ? ` (found by ${x.foundBy.join(", ")})` : ""}`;
+    `- ${x.id} [${x.severity}/${x.category}/${x.status}${x.assignee ? ` @${x.assignee}` : ""}] \`${x.path}${x.startLine ? `:${x.startLine}` : ""}\` — ${x.title}${x.foundBy ? ` (found by ${x.foundBy.join(", ")}${x.lowerConfidence ? ": lower confidence" : ""})` : ""}`;
 
 function tool(t: Tool): Tool {
     return t;
@@ -216,7 +223,8 @@ export const TOOLS: Tool[] = [
     tool({
         name: "list_issues",
         title: "List issues",
-        description: "Issues on a branch, most urgent first, with filters. Returns one line per issue; use get_issue for details.",
+        description:
+            "Issues on a branch, most urgent first, with filters. Returns one line per issue; use get_issue for details. After a review run with several models, each says which found it, and (when the review asked for that) whether it's lower confidence: only one model found it.",
         permission: "read",
         readOnly: true,
         input: z.object({
@@ -638,7 +646,7 @@ export const TOOLS: Tool[] = [
                 "The models for this review only, as ids from list_models (up to five; they review it at the same time and their findings are merged). Default: the project's models for this kind of review.",
             ),
             options: RunOptionsInput.optional().describe(
-                "Options for this review, when it has two or more models. Anything left out is off; without `options` at all, the project's own apply.",
+                "Options for this review, when it has two or more models: agreement rules (fail the pull request's check only for critical findings several models found; mark findings one model found as lower confidence). Anything left out is off; without `options` at all, the project's own apply.",
             ),
         }),
         async run(ctx, args) {

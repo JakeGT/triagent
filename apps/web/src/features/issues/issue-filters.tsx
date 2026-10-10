@@ -119,7 +119,17 @@ const flagDraft = (s: IssueSearch): FlagDraft =>
     Object.fromEntries(FLAGS.map((f) => [f, s[f] === undefined ? "" : String(s[f])])) as FlagDraft;
 
 /** Path, assignee and the yes/no flags. Applied with a button, so changing a select never reloads the list by itself. */
-function MoreFilters({ search, onChange }: { search: IssueSearch; onChange(next: IssueSearch): void }) {
+function MoreFilters({
+    search,
+    markSingles,
+    onChange,
+}: {
+    search: IssueSearch;
+    /** The review marks findings only one model found: offer that as a filter (and whenever it's already on). */
+    markSingles: boolean;
+    onChange(next: IssueSearch): void;
+}) {
+    const offered = FLAGS.filter((f) => f !== "lowerConfidence" || markSingles || search.lowerConfidence !== undefined);
     const n = ["path", "assignee", ...FLAGS].filter((k) => search[k as keyof IssueSearch] !== undefined).length;
     const [open, setOpen] = useState(false);
     const [path, setPath] = useState(search.path ?? "");
@@ -165,7 +175,7 @@ function MoreFilters({ search, onChange }: { search: IssueSearch; onChange(next:
                     <Field label="Assignee" hint='A name, or "none" for unassigned'>
                         {(p) => <Input {...p} value={assignee} onChange={(e) => setAssignee(e.target.value)} />}
                     </Field>
-                    {FLAGS.map((f: Flag) => (
+                    {offered.map((f: Flag) => (
                         <Field key={f} label={FLAG_LABEL[f].yes}>
                             {(p) => (
                                 <NativeSelect
@@ -193,6 +203,7 @@ export function IssueFilters({
     search,
     counts,
     models,
+    markSingles,
     onChange,
     searchRef,
 }: {
@@ -200,6 +211,8 @@ export function IssueFilters({
     counts: Counts | undefined;
     /** The models the review ran with, when it ran with several. */
     models?: string[] | null;
+    /** The review marks findings only one model found as lower confidence. */
+    markSingles?: boolean;
     onChange(next: IssueSearch, options?: { replace?: boolean }): void;
     searchRef: RefObject<HTMLInputElement | null>;
 }) {
@@ -260,7 +273,7 @@ export function IssueFilters({
                 onToggle={(v) => onChange(withFilter(search, { category: toggle(search.category, v) }))}
             />
             {models && models.length > 1 && <FoundBy models={models} search={search} onChange={onChange} />}
-            <MoreFilters search={search} onChange={onChange} />
+            <MoreFilters search={search} markSingles={Boolean(markSingles)} onChange={onChange} />
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm">

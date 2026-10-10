@@ -32,7 +32,7 @@ import type { Core } from "./core.ts";
 import type { History } from "./history.ts";
 import { type FavouriteView, ModelSetup, type Place, type ResolvedModel } from "./model-setup.ts";
 import { type ProviderSpec, providerById } from "./providers.ts";
-import { INSTANCE_MODEL, MIN_TOKENS_BUDGET, Settings } from "./settings.ts";
+import { type Automation, INSTANCE_MODEL, MIN_TOKENS_BUDGET, Settings } from "./settings.ts";
 
 export interface RunModel extends ResolvedModel {
     ready: true;
@@ -92,6 +92,8 @@ export interface ModelsView {
     fallback: string[];
     /** For a project: what each kind of review uses when the run doesn't choose, and which rule says so. */
     rules?: Record<JobKind, { ids: string[]; from: Exclude<ModelRule, "run"> }>;
+    /** For a project: its own options for reviews with several models, which a run that doesn't choose its own gets. */
+    options?: Automation["options"];
 }
 
 /** The budget a running review holds out of its workspace's allowance: its instance-key model's. */
@@ -298,7 +300,8 @@ export class Models {
             const chosen = await this.chosen(repos, project, kind, null);
             return chosen ? { ids: [...chosen.ids], from: chosen.from as "kind" | "project" } : { ids: fallback, from: "default" as const };
         };
-        return { ...view, rules: { pr: await rule("pr"), changes: await rule("changes"), full: await rule("full") } };
+        const { options } = await this.settings.automation(repos, project);
+        return { ...view, rules: { pr: await rule("pr"), changes: await rule("changes"), full: await rule("full") }, options };
     }
 
     /** Why a model's person-given URL can't be used now (see services/model-urls.ts), or null. */

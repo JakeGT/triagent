@@ -5,7 +5,7 @@
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
 // (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5" (five seconds of work, saying so all the while), "fake/silent-5" (five seconds without a word), "fake/spend-25000" (says it has used that many tokens, before any sleep), "fake/orphan" (leaves a process behind
 // in its group), and for reviews with several models "wordy" (the same findings, put another way, two lines
-// lower) and "extra" (one more finding, at line 40 of the first file). It also prints what tests check: its arguments, which environment variables it got,
+// lower), "extra" (one more finding, at line 40 of the first file) and "alarm" (one more, critical, at line 80 of it). It also prints what tests check: its arguments, which environment variables it got,
 // the model key (the server must redact it), its user config (~/.opencodereview/config.json, which the
 // runner writes for Amazon Bedrock, taking the model from it as OCR does), and the review rules it found. Like the real one, it leaves
 // out files the root .gitignore matches and files git calls binary, and reads rule files rule.json names.
@@ -149,6 +149,18 @@ const report = {
         })),
         ...(model.includes("extra") && files[0]
             ? [{ path: files[0], content: `Only ${model} noticed this.`, severity: "low", category: "style", start_line: 40, end_line: 40 }]
+            : []),
+        ...(model.includes("alarm") && files[0]
+            ? [
+                  {
+                      path: files[0],
+                      content: `Only ${model} thinks this is critical.`,
+                      severity: "critical",
+                      category: "security",
+                      start_line: 80,
+                      end_line: 80,
+                  },
+              ]
             : []),
     ],
     project_summary: args[0] === "scan" ? "## Top issues\n\n- **Everything**: it's all fake.\n" : "",

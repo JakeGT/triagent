@@ -22,6 +22,7 @@ import {
     kindText,
     linesOf,
     modelProgressText,
+    optionsText,
     progressText,
     RunStatusBadge,
     runModelLabels,
@@ -101,6 +102,7 @@ function RunDetailView({ runId }: { runId: string }) {
     const prUrl = safeHref(r.pr?.url ?? null);
     const active = r.status === "queued" || r.status === "running";
     const shown = linesOf(r.all, logModel);
+    const options = optionsText(r);
     const logChoice = (label: string | null) => (
         <Button
             key={label ?? ""}
@@ -222,6 +224,18 @@ function RunDetailView({ runId }: { runId: string }) {
                                     {r.requestedModels ? " chosen for this review" : ""}
                                 </span>
                             )}
+                        </dd>
+                    </>
+                )}
+                {options.length > 0 && (
+                    <>
+                        <dt className="text-muted-foreground">Options</dt>
+                        <dd data-testid="run-options">
+                            <ul className="grid gap-0.5">
+                                {options.map((o) => (
+                                    <li key={o}>{o}</li>
+                                ))}
+                            </ul>
                         </dd>
                     </>
                 )}

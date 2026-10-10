@@ -148,6 +148,8 @@ export interface IssueSummary {
     addedBy: string | null;
     /** The models that found it, when the review ran with several; null otherwise. */
     foundBy: string[] | null;
+    /** Only one of the review's models found it, and the review asked for such findings to be marked. */
+    lowerConfidence?: boolean;
     sourceUrl: string | null;
     noteCount: number;
     rev: number;
@@ -189,6 +191,8 @@ export interface Counts {
 export interface IssueList {
     /** The models the review ran with, when it ran with several. */
     models?: string[] | null;
+    /** Whether findings only one of them found are marked as lower confidence. */
+    markSingles?: boolean;
     branch: string;
     total: number;
     offset: number;
@@ -374,7 +378,14 @@ export interface Automation {
 }
 
 /** A review's options as they're asked for (anything left out is off), and a project's own. */
-export type RunOptionsInput = Record<string, never>;
+export interface RunOptionsInput {
+    agreement?: {
+        /** Fail the pull request's check only for critical findings at least this many models found. */
+        failAt?: number | null;
+        /** Mark findings only one model found as lower confidence. */
+        markSingles?: boolean;
+    };
+}
 export type ProjectOptions = RunOptionsInput;
 
 /** A project's sets of models: for every review, or for one kind of review (which wins). */
@@ -404,6 +415,8 @@ export interface ModelChoices {
     /** With nothing chosen anywhere: the default favourite, or the instance's model. */
     fallback: string[];
     rules?: Record<RunKind, { ids: string[]; from: "kind" | "project" | "default" }>;
+    /** For a project: its own options for reviews with several models, used by reviews that don't choose theirs. */
+    options?: ProjectOptions;
 }
 
 export interface GithubSettings {
@@ -535,6 +548,8 @@ export interface Run {
         counts: { added: number; carriedOver: number; removed: number; reopened: number } | null;
         tokens: { input: number; output: number; cacheRead: number; total: number } | null;
         github?: string[];
+        /** With a rule about agreement: how many models had to find a critical finding, and how many such findings there were. */
+        agreement?: { models: number; critical: number };
         /** A review run with several models: how each went. */
         models?: {
             label: string;

@@ -28,15 +28,41 @@ export const ModelIds = z.array(z.string().min(1).max(64)).max(MAX_MODELS);
  * A review's options for several models, as they're asked for (packages/shared/src/run-options.ts):
  * anything left out is off.
  */
-export const RunOptionsInput = z.object({}).strict();
+export const RunOptionsInput = z
+    .object({
+        agreement: z
+            .object({
+                failAt: z
+                    .number()
+                    .int()
+                    .min(2)
+                    .max(MAX_MODELS)
+                    .nullable()
+                    .optional()
+                    .describe(
+                        "Fail the pull request's check only for critical findings at least this many of the review's models found (2 up to the number of models). Null or left out: any critical finding fails it, as the project's failOnCritical says",
+                    ),
+                markSingles: z
+                    .boolean()
+                    .optional()
+                    .describe("Mark findings only one model found as lower confidence: listed after the others of their severity"),
+            })
+            .strict()
+            .optional()
+            .describe("Rules about how many models found a finding. They change the check and how findings are listed, nothing else"),
+    })
+    .strict();
 export type RunOptionsInput = z.infer<typeof RunOptionsInput>;
 
 /** A project's own, for reviews that don't say. */
 export const ProjectOptionsInput = RunOptionsInput;
 
 /** The options asked for, in full: what wasn't said is off. */
-export function runOptions(_input: RunOptionsInput | null | undefined): RunOptions {
-    return structuredClone(NO_OPTIONS);
+export function runOptions(input: RunOptionsInput | null | undefined): RunOptions {
+    return {
+        ...structuredClone(NO_OPTIONS),
+        agreement: { failAt: input?.agreement?.failAt ?? null, markSingles: input?.agreement?.markSingles ?? false },
+    };
 }
 
 /** A project's sets of models: for every review (`all`), or for one kind of review. */

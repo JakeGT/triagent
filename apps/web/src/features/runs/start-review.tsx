@@ -9,13 +9,14 @@ import { type ReactNode, useId, useState } from "react";
 import { toast } from "sonner";
 import { type Choice, ChoiceField, Field, FieldError, FieldHint, NativeSelect } from "@/components/field";
 import { ModelChips, ModelChoice, modelLabels, modelOptions } from "@/components/model-choice";
+import { optionsFor, ReviewOptions } from "@/components/review-options";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api, errorMessage, paths } from "@/lib/api";
 import { branchesQuery, keys, modelsQuery, pullRequestsQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
-import type { Run, RunKind } from "@/lib/types";
+import type { Run, RunKind, RunOptionsInput } from "@/lib/types";
 
 export interface StartReviewDefaults {
     kind?: RunKind;
@@ -80,6 +81,9 @@ export function StartReviewForm({
     const [chosen, setChosen] = useState<string[] | null>(null);
     const [choosing, setChoosing] = useState(false);
     const models = chosen ?? rule?.ids ?? [];
+    // Options for several models: the project's own, until someone changes them for this review.
+    const [options, setOptions] = useState<RunOptionsInput | null>(null);
+    const several = models.length > 1;
     // Suggestions: the open pull requests, and the branches this project knows of.
     const prs = useQuery(pullRequestsQuery(ws, slug));
     const branches = useQuery(branchesQuery(ws, slug));
@@ -105,6 +109,7 @@ export function StartReviewForm({
                 ...(kind !== "pr" && branch.trim() ? { branch: branch.trim() } : {}),
                 ...(kind === "changes" && base.trim() ? { base: base.trim() } : {}),
                 ...(chosen ? { models: chosen } : {}),
+                ...(options && several ? { options: optionsFor(options, models.length) } : {}),
             }),
         onSuccess: (run) => {
             toast.success(run.status === "queued" ? `Queued: ${run.title}.` : `Already ${run.status}: ${run.title}.`);
@@ -242,6 +247,9 @@ export function StartReviewForm({
                         )}
                     </div>
                 </div>
+            )}
+            {choices.data && several && (
+                <ReviewOptions value={options ?? choices.data.options ?? {}} models={models.length} onChange={setOptions} />
             )}
             <FieldError message={start.error ? errorMessage(start.error) : null} />
             <div className="flex flex-wrap items-center justify-end gap-2">

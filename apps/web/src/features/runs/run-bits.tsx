@@ -71,6 +71,17 @@ export function NextReviewModels({ ws, slug, automatic }: { ws: string; slug: st
     );
 }
 
+/** A run's options for several models, each in words; none when it has none. */
+export function optionsText(run: Pick<Run, "options">): string[] {
+    const o = run.options;
+    if (!o) return [];
+    const out: string[] = [];
+    if (o.agreement.failAt !== null)
+        out.push(`The pull request check fails only for criticals at least ${o.agreement.failAt} models found.`);
+    if (o.agreement.markSingles) out.push("Findings only one model found are marked as lower confidence.");
+    return out;
+}
+
 /** "12m 3s", "45s". */
 export function duration(seconds: number | null | undefined): string {
     if (seconds === null || seconds === undefined) return "";

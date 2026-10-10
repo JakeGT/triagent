@@ -102,6 +102,8 @@ export interface CommentInput {
     /** The models it ran with, when there were several. */
     models?: readonly string[] | null;
     failOnCritical: boolean;
+    /** The review's agreement rule, if it has one: the check fails only for critical findings this many models found. */
+    agreed?: { models: number; critical: number } | null;
     commit: string;
     /** Links into Triagent: the branch's issues, and one issue. */
     issuesUrl: string;
@@ -138,9 +140,17 @@ export function commentBody(c: CommentInput): string {
         );
     if (c.gaps)
         lines.push(`> [!WARNING]`, `> **Partial review.** ${plain(c.gaps.note, 600)} Review it again from Triagent, or push again.`, "");
-    if (c.failOnCritical && c.bySeverity.critical)
+    // With an agreement rule, only the critical findings enough models found count.
+    const failing = c.agreed ? c.agreed.critical : c.bySeverity.critical;
+    const enough = c.agreed ? ` at least ${c.agreed.models} models found` : "";
+    if (c.failOnCritical && failing)
         lines.push(
-            `The **Triagent** check fails because of ${c.bySeverity.critical} critical finding${c.bySeverity.critical === 1 ? "" : "s"}. Fix ${c.bySeverity.critical === 1 ? "it" : "them"}, or mark ${c.bySeverity.critical === 1 ? "it" : "them"} won't fix in Triagent, and push again.`,
+            `The **Triagent** check fails because of ${failing} critical finding${failing === 1 ? "" : "s"}${enough}. Fix ${failing === 1 ? "it" : "them"}, or mark ${failing === 1 ? "it" : "them"} won't fix in Triagent, and push again.`,
+            "",
+        );
+    else if (c.failOnCritical && c.agreed && c.bySeverity.critical)
+        lines.push(
+            `The **Triagent** check passes: this review fails it only for critical findings at least ${c.agreed.models} models found, and ${c.bySeverity.critical === 1 ? "the one critical finding wasn't" : `none of the ${c.bySeverity.critical} critical findings was`}.`,
             "",
         );
     lines.push(
@@ -160,6 +170,8 @@ export function finishedStatus(input: {
     total: number;
     bySeverity: Record<Severity, number>;
     failOnCritical: boolean;
+    /** The review's agreement rule, if it has one: only critical findings this many models found fail the check. */
+    agreed?: { models: number; critical: number } | null;
 }): { state: "success" | "failure"; description: string } {
     const s = input.bySeverity;
     const counts = input.total
@@ -168,6 +180,10 @@ export function finishedStatus(input: {
               .join(", ")
         : "No findings";
     const description = `${counts}${input.status === "partial" ? " (partial review)" : ""}`;
+    if (input.agreed)
+        return input.failOnCritical && input.agreed.critical
+            ? { state: "failure", description: `${input.agreed.critical} critical found by ${input.agreed.models}+ models: ${description}` }
+            : { state: "success", description };
     if (input.failOnCritical && s.critical) return { state: "failure", description: `${s.critical} critical: ${description}` };
     return { state: "success", description };
 }

@@ -58,3 +58,10 @@ If the branch's current report still has unresolved issues, the upload is refuse
 ## Choose a review's models
 
 `start_review` runs with the project's models for that kind of review (pull request, branch changes, full scan), which fall back to the project's models, then the workspace's default. To use others for one review, pass `models`: up to five ids from `list_models`, in order (they review at the same time; the first one's wording leads when findings are merged). `get_run` shows each model's own progress while it runs (`progress.models`) and how each ended (`result.models`, with `reason` `stalled`, `timeLimit` or `overBudget` for one that was stopped). `list_models` lists the workspace's favourite models, which is the default and whether each is ready, and with `project` what each kind of review of it uses. Only choose models when asked to: each one spends its own tokens.
+
+## Options for reviews with several models
+
+A review with two or more models can be given `options` in `start_review`. Each is off unless you pass it, and without `options` at all the project's own apply; a review with one model takes none. Only use them when asked to.
+
+- `agreement: { failAt: 2 }`: the pull request's check fails only for critical findings at least that many of the models found (2 up to the number of models). Every finding is still listed.
+- `agreement: { markSingles: true }`: findings only one model found are marked `lowerConfidence` and listed after the others of their severity. Pass `lowerConfidence: false` to `list_issues` or `claim_next_issue` to leave them for later, or `true` to see only them.

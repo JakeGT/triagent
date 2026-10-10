@@ -14,7 +14,7 @@ import {
     type Status,
 } from "@triagent/shared";
 
-export const FLAGS = ["hasSuggestion", "needsDiscussion", "duplicates", "adjusted"] as const;
+export const FLAGS = ["hasSuggestion", "needsDiscussion", "duplicates", "adjusted", "lowerConfidence"] as const;
 export type Flag = (typeof FLAGS)[number];
 
 export const FLAG_LABEL: Record<Flag, { yes: string; no: string }> = {
@@ -22,6 +22,7 @@ export const FLAG_LABEL: Record<Flag, { yes: string; no: string }> = {
     needsDiscussion: { yes: "Needs discussion", no: "Doesn't need discussion" },
     duplicates: { yes: "Duplicates", no: "Not duplicates" },
     adjusted: { yes: "Rating corrected", no: "Rating not corrected" },
+    lowerConfidence: { yes: "Lower confidence (one model found it)", no: "Not lower confidence" },
 };
 
 export const PAGE_SIZE = 100;
@@ -41,6 +42,8 @@ export interface IssueSearch {
     needsDiscussion?: boolean;
     duplicates?: boolean;
     adjusted?: boolean;
+    /** Only findings marked as lower confidence, or only the others (reviews that asked for the mark). */
+    lowerConfidence?: boolean;
     /** Only findings at least this many models found (reviews run with several). */
     foundBy?: number;
     sort?: IssueSort;
@@ -113,6 +116,7 @@ export function issueApiQuery(s: IssueSearch, pageSize = PAGE_SIZE): Record<stri
         needsDiscussion: bool(s.needsDiscussion),
         duplicates: bool(s.duplicates),
         adjusted: bool(s.adjusted),
+        lowerConfidence: bool(s.lowerConfidence),
         foundBy: s.foundBy ? String(s.foundBy) : undefined,
         sort: s.sort,
         limit: String(pageSize),
