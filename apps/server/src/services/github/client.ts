@@ -227,11 +227,6 @@ export class GitHubClient {
         return this.diff(`${this.r(t)}/compare/${seg(base)}...${seg(head)}`);
     }
 
-    /** A pull request's diff as it is now. Null when it's too large. */
-    pullDiff(t: RepoTarget, number: number): Promise<string | null> {
-        return this.diff(`${this.r(t)}/pulls/${number}`);
-    }
-
     /**
      * The files a pull request changes (a renamed file under both names), or null when there are more
      * than `max`.
