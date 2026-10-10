@@ -92,7 +92,10 @@ export interface FinishPart {
 /** Why a model's review was stopped before it finished: it went quiet, or passed the time limit or its token budget. */
 export type StopReason = "stalled" | "timeLimit" | "overBudget";
 
-/** A model of a running job that its runner should stop, while the job's other models carry on. */
+/**
+ * A model of a running job that its runner should stop, while the job's other models carry on. The runner
+ * gives it a while to finish by itself first, and only one it had to stop comes back failed, as `overBudget`.
+ */
 export interface ModelStop {
     /** Its place in the job's models. */
     index: number;
@@ -1005,7 +1008,7 @@ export class Runs {
             return next;
         });
         this.progressed(job);
-        // A model that has passed its token budget is stopped; the others carry on.
+        // A model that has passed its token budget is to be stopped (if it doesn't finish by itself soon); the others carry on.
         return { cancel: Boolean(job.cancelRequested), stop: overBudget(job) };
     }
 

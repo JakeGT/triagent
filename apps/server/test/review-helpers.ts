@@ -58,6 +58,8 @@ export async function reviewEnv(options: { store?: Store; env?: Record<string, s
                 name: `test-runner-${env.runners.length + 1}`,
                 concurrency: extra.concurrency ?? 1,
                 modelParallelism: 5,
+                // A model over its token budget is stopped at once, so tests of that needn't wait.
+                overBudgetGraceSeconds: 0,
                 cacheDir: path.join(dir, "cache"),
                 workDir: path.join(dir, "work"),
                 pollMs: 100,

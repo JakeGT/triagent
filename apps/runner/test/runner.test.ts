@@ -713,6 +713,7 @@ describe("a job's life", () => {
                 name: "test",
                 concurrency: 1,
                 modelParallelism: 5,
+                overBudgetGraceSeconds: 0,
                 cacheDir: path.join(dir, "cache"),
                 workDir: path.join(dir, "work"),
                 pollMs: 1000,
@@ -789,6 +790,7 @@ describe("time limits and stalled reviews", () => {
             name: "test",
             concurrency: 1,
             modelParallelism: 5,
+            overBudgetGraceSeconds: 0,
             cacheDir: path.join(dir, "cache"),
             workDir: path.join(dir, "work"),
             pollMs: 1000,
@@ -991,13 +993,14 @@ describe("several models at once", () => {
         rmSync(dir, { recursive: true, force: true });
     });
 
-    const runner = (name: string, extra: { modelParallelism?: number; ocrBin?: string } = {}) =>
+    const runner = (name: string, extra: { modelParallelism?: number; overBudgetGraceSeconds?: number; ocrBin?: string } = {}) =>
         new Runner({
             serverUrl: url,
             secret: "s".repeat(40),
             name: "test",
             concurrency: 1,
             modelParallelism: 5,
+            overBudgetGraceSeconds: 0,
             cacheDir: path.join(dir, `cache-${name}`),
             workDir: path.join(dir, `work-${name}`),
             pollMs: 1000,
@@ -1197,18 +1200,90 @@ describe("several models at once", () => {
         );
     });
 
-    test("a model the server stops for passing its token budget is stopped alone, and says why", async () => {
-        // As the server does: the model whose own tokens have passed its budget of 20,000 is named.
-        orders.set("budget", ({ progress: sent }) => {
-            const models = sent.findLast((p) => p.models)?.models ?? [];
-            return {
-                stop: models.flatMap((m, index) =>
-                    (m.tokens ?? 0) > 20_000 && m.phase !== "failed"
-                        ? [{ index, label: m.label, reason: "overBudget" as const, budget: 20_000 }]
-                        : [],
-                ),
-            };
-        });
+    /** As the server does: every model whose own tokens have passed its budget of 20,000 is named, each time, until it ends. */
+    const overBudget = ({ progress: sent }: { progress: Sent[] }) => {
+        const models = sent.findLast((p) => p.models)?.models ?? [];
+        return {
+            stop: models.flatMap((m, index) =>
+                (m.tokens ?? 0) > 20_000 && !["done", "failed", "cancelled"].includes(m.phase ?? "")
+                    ? [{ index, label: m.label, reason: "overBudget" as const, budget: 20_000 }]
+                    : [],
+            ),
+        };
+    };
+
+    test("a model over its token budget that finishes by itself in the time it's given keeps its findings", async () => {
+        orders.set("grace", overBudget);
+        await runner("grace", { overBudgetGraceSeconds: 30 }).execute(job("grace", ["fake/spend-25000-sleep-3", "fake/model"]));
+        assert.equal(outcomes.get("grace")?.status, "done", outcomes.get("grace")?.error ?? "");
+        assert.deepEqual(
+            parts("grace").map((p) => [p.status, p.reason ?? null, (p.report as { comments?: unknown[] } | undefined)?.comments?.length]),
+            [
+                ["done", null, 1],
+                ["done", null, 1],
+            ],
+        );
+        assert.deepEqual(
+            last("grace").map((m) => [m.phase, m.reason ?? null]),
+            [
+                ["done", null],
+                ["done", null],
+            ],
+        );
+        // Told again and again while it carried on, it was only given the time once.
+        const said = (logs.get("grace") ?? []).filter((l) => l.includes("Passed its token budget"));
+        assert.deepEqual(said, [
+            "[fake/spend-25000-sleep-3] [triagent] Passed its token budget of 20,000 tokens; it has 30 seconds to finish by itself.",
+        ]);
+    });
+
+    test("one that is still going after the time it's given is stopped, and says it didn't finish by itself", async () => {
+        orders.set("outlasts", overBudget);
+        const t0 = Date.now();
+        await runner("outlasts", { overBudgetGraceSeconds: 2 }).execute(job("outlasts", ["fake/spend-25000-sleep-30", "fake/sleep-4"]));
+        const took = Date.now() - t0;
+        assert.ok(took >= 2000 && took < 12_000, `took ${took}ms`);
+        assert.deepEqual(
+            parts("outlasts").map((p) => [p.status, p.reason ?? null]),
+            [
+                ["failed", "overBudget"],
+                ["done", null],
+            ],
+        );
+        assert.equal(
+            parts("outlasts")[0]?.error,
+            "Stopped: it passed its token budget of 20,000 tokens and didn't finish by itself within 2 seconds.",
+        );
+        const log = logs.get("outlasts") ?? [];
+        assert.ok(
+            log.includes(
+                "[fake/spend-25000-sleep-30] [triagent] Passed its token budget of 20,000 tokens; it has 2 seconds to finish by itself.",
+            ),
+        );
+    });
+
+    test("cancelling while a model over its budget has time left stops it at once", async () => {
+        orders.set("grace-cancel", (heard) => ({
+            ...overBudget(heard),
+            cancel: heard.log.some((l) => l.includes("Passed its token budget")),
+        }));
+        const t0 = Date.now();
+        await runner("grace-cancel", { overBudgetGraceSeconds: 600 }).execute(
+            job("grace-cancel", ["fake/spend-25000-sleep-30", "fake/sleep-30"]),
+        );
+        assert.ok(Date.now() - t0 < 10_000, `took ${Date.now() - t0}ms`);
+        assert.equal(outcomes.get("grace-cancel")?.status, "cancelled");
+        assert.deepEqual(
+            parts("grace-cancel").map((p) => [p.status, p.reason ?? null]),
+            [
+                ["cancelled", null],
+                ["cancelled", null],
+            ],
+        );
+    });
+
+    test("with no time given, a model the server stops for passing its token budget is stopped at once, alone, and says why", async () => {
+        orders.set("budget", overBudget);
         const t0 = Date.now();
         await runner("budget").execute(job("budget", ["fake/sleep-3", "fake/spend-25000-sleep-30", "fake/spend-9000-sleep-2"]));
         assert.ok(Date.now() - t0 < 10_000, `took ${Date.now() - t0}ms`);
@@ -1234,6 +1309,21 @@ describe("several models at once", () => {
         );
         const log = logs.get("budget") ?? [];
         assert.ok(log.includes("[fake/spend-25000-sleep-30] [triagent] Failed: Stopped: it passed its token budget of 20,000 tokens."));
+    });
+
+    test("how many models run at once, and how long one over its budget gets, are the runner's settings", () => {
+        const env = { TRIAGENT_SERVER_URL: "http://server:8080", TRIAGENT_RUNNER_SECRET: "s".repeat(40) };
+        assert.deepEqual([loadConfig(env).modelParallelism, loadConfig(env).overBudgetGraceSeconds], [5, 120]);
+        const set = loadConfig({ ...env, RUNNER_MODEL_PARALLELISM: "2", RUNNER_OVER_BUDGET_GRACE_SECONDS: "0" });
+        assert.deepEqual([set.modelParallelism, set.overBudgetGraceSeconds], [2, 0]);
+        assert.throws(
+            () => loadConfig({ ...env, RUNNER_MODEL_PARALLELISM: "0" }),
+            /RUNNER_MODEL_PARALLELISM must be a whole number from 1 to 32/,
+        );
+        assert.throws(
+            () => loadConfig({ ...env, RUNNER_OVER_BUDGET_GRACE_SECONDS: "3601" }),
+            /RUNNER_OVER_BUDGET_GRACE_SECONDS must be a whole number from 0 to 3600/,
+        );
     });
 
     test("a server that only says whether to cancel (an older one) stops nothing", async () => {

@@ -35,7 +35,10 @@ export interface FinishPart {
     reason?: "stalled" | "timeLimit" | "overBudget";
 }
 
-/** A model the server wants stopped while the job's others carry on: by its place in the job's `models`. */
+/**
+ * A model the server wants stopped while the job's others carry on: by its place in the job's `models`. The
+ * runner gives it a while to finish by itself first (RUNNER_OVER_BUDGET_GRACE_SECONDS).
+ */
 export interface ModelStop {
     index: number;
     label?: string;

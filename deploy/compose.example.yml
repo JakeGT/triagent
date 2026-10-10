@@ -80,6 +80,8 @@ services:
       # A review's models run at once, up to this many (an OCR process each): with RUNNER_CONCURRENCY that's
       # up to 2 × 5 processes within mem_limit and pids_limit below.
       RUNNER_MODEL_PARALLELISM: "5"
+      # A model past its token budget gets this long to finish by itself (keeping its findings) before it's stopped.
+      RUNNER_OVER_BUDGET_GRACE_SECONDS: "120"
     secrets: [triagent_runner_secret]
     # Not on "data": the runner can't reach the database at all.
     networks: [runners, egress]

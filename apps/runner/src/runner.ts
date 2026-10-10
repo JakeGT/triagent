@@ -9,7 +9,9 @@
 //
 // A job with several models runs one OCR per model at once, each with a HOME, environment and limits of
 // its own, all reading the same checkout (OCR 1.12.12 writes nothing into it: its sessions go under HOME).
-// One model failing, stalling or being stopped for passing its token budget leaves the others alone.
+// One model failing, stalling or being stopped for passing its token budget leaves the others alone. OCR
+// ends a review that reaches its budget by itself, keeping what it found, so a model the server says is
+// over budget is given a while to do that, and only stopped if it's still going after it.
 
 import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -142,6 +144,8 @@ export function ocrArgs(job: Pick<ClaimedJob, "kind" | "maxTokensBudget">, base:
 class Stop extends Error {}
 
 const minutes = (n: number) => `${n} minute${n === 1 ? "" : "s"}`;
+/** "2 minutes", "90 seconds". */
+const span = (seconds: number) => (seconds % 60 === 0 ? minutes(seconds / 60) : `${seconds} second${seconds === 1 ? "" : "s"}`);
 
 /** The models a job reviews with, in order: those it lists, or its one model. */
 export function modelsOf(job: Pick<ClaimedJob, "model" | "models">): NonNullable<ClaimedJob["models"]> {
@@ -168,8 +172,11 @@ interface Slot {
     progress: ModelProgress;
     groups: Set<string>;
     stop: (() => void) | null;
-    /** Set when the server says it has passed its token budget (null when it gave no figure): it's being stopped for that. */
-    overBudget: { budget: number | null } | null;
+    /**
+     * Set when the server says it has passed its token budget (null when it gave no figure). It has until
+     * `timer` runs out to finish by itself; `stopped` once it didn't, and was stopped for it.
+     */
+    overBudget: { budget: number | null; timer: ReturnType<typeof setTimeout> | null; stopped: boolean } | null;
 }
 
 /** One job in progress: its log buffer, heartbeat and the OCR process (or one per model). */
@@ -190,7 +197,15 @@ export class JobRun {
     private readonly timers: ReturnType<typeof setInterval>[] = [];
     private flushing: Promise<void> = Promise.resolve();
 
-    constructor(job: Pick<ClaimedJob, "id" | "git" | "model" | "models">, server: Pick<ServerClient, "events" | "heartbeat">) {
+    /** How long a model over its token budget gets to finish by itself. */
+    private readonly graceSeconds: number;
+
+    constructor(
+        job: Pick<ClaimedJob, "id" | "git" | "model" | "models">,
+        server: Pick<ServerClient, "events" | "heartbeat">,
+        graceSeconds = 120,
+    ) {
+        this.graceSeconds = graceSeconds;
         this.job = job;
         this.server = server;
         // The job's own secrets come out before anything leaves the runner (the server redacts again).
@@ -286,22 +301,32 @@ export class JobRun {
         return this.slot(i).progress.tokens ?? 0;
     }
 
-    /** One model's OCR process has started; it's stopped at once if the job, or the model, already is. */
+    /** One model's OCR process has started; it's stopped at once if the job already is. */
     attachModel(i: number, stop: () => void): void {
         const slot = this.slot(i);
         slot.stop = stop;
-        if (this.cancelled || this.lost || slot.overBudget) stop();
+        if (this.cancelled || this.lost) stop();
     }
 
-    /** One model's OCR process has ended. */
+    /** One model's OCR process has ended: if it was over its budget, it's no longer waited for. */
     detachModel(i: number): void {
-        this.slot(i).stop = null;
+        const slot = this.slot(i);
+        slot.stop = null;
+        if (slot.overBudget?.timer) clearTimeout(slot.overBudget.timer);
     }
 
-    /** The budget the server stopped this model for passing (null when it gave no figure), or undefined if it didn't. */
+    /**
+     * The budget this model was stopped for passing, having not finished by itself in time (null when the
+     * server gave no figure), or undefined if it wasn't stopped for that.
+     */
     stoppedOverBudget(i: number): number | null | undefined {
         const over = this.slot(i).overBudget;
-        return over ? over.budget : undefined;
+        return over?.stopped ? over.budget : undefined;
+    }
+
+    /** "… and didn't finish by itself within 2 minutes", for a model stopped after its time to finish; nothing when it got none. */
+    get graceText(): string {
+        return this.graceSeconds ? ` and didn't finish by itself within ${span(this.graceSeconds)}` : "";
     }
 
     /** What the server said back: stop everything, or only the models it names (the others carry on). */
@@ -313,9 +338,30 @@ export class JobRun {
     private stopModel(order: ModelStop): void {
         const slot = this.slots[order.index];
         // Only a model that is running: one that has ended, or hasn't had its turn, has nothing to stop.
+        // The server names it every time until it ends: only the first starts the wait.
         if (!slot?.stop || slot.overBudget || order.reason !== "overBudget") return;
-        slot.overBudget = { budget: typeof order.budget === "number" ? order.budget : null };
-        slot.stop();
+        const over: NonNullable<Slot["overBudget"]> = {
+            budget: typeof order.budget === "number" ? order.budget : null,
+            timer: null,
+            stopped: false,
+        };
+        slot.overBudget = over;
+        const stop = () => {
+            over.timer = null;
+            if (!slot.stop) return;
+            over.stopped = true;
+            slot.stop();
+        };
+        const passed = `Passed its token budget${over.budget === null ? "" : ` of ${over.budget.toLocaleString("en-GB")} tokens`}`;
+        // OCR winds a review up by itself when it reaches its budget, and its findings are kept: give it the chance.
+        this.sayFor(
+            order.index,
+            this.graceSeconds ? `${passed}; it has ${span(this.graceSeconds)} to finish by itself.` : `${passed}; stopping it.`,
+        );
+        if (this.graceSeconds) {
+            over.timer = setTimeout(stop, this.graceSeconds * 1000);
+            over.timer.unref();
+        } else stop();
     }
 
     /** Send buffered lines and progress; a cancellation or a lost job stops OCR. */
@@ -478,7 +524,7 @@ export class Runner {
 
     /** Run one job from start to finish, and report how it went. */
     async execute(job: ClaimedJob): Promise<void> {
-        const run = new JobRun(job, this.server);
+        const run = new JobRun(job, this.server, this.config.overBudgetGraceSeconds);
         this.active.set(job.id, run);
         run.begin();
         try {
@@ -708,7 +754,7 @@ export class Runner {
             part = {
                 status: "failed",
                 reason: "overBudget",
-                error: `Stopped: it passed its token budget${overBudget === null ? "" : ` of ${overBudget.toLocaleString("en-GB")} tokens`}.`,
+                error: `Stopped: it passed its token budget${overBudget === null ? "" : ` of ${overBudget.toLocaleString("en-GB")} tokens`}${run.graceText}.`,
                 ...(report ? { report } : {}),
             };
         else if (exit.code !== 0)
