@@ -1,5 +1,6 @@
 // Instance administration of models: the instance's model key, provider and model, the workspaces allowed
-// to use it (with monthly token allowances), and instance-wide model prices. Instance administrators
+// to use it (with monthly token allowances), and instance-wide model prices. Also how many reviews run at
+// once: on the instance, in a workspace, and in one given a limit of its own. Instance administrators
 // only, in the browser; keys are never returned.
 
 import { MODEL_PROTOCOLS } from "@triagent/shared/model";
@@ -47,6 +48,17 @@ export function guardKeyDestination(
         throw forbidden("Changing the address a provider's key is sent to needs the secrets permission, signed in through the browser.");
     const { principal, services } = ctx;
     if (!(principal?.kind === "session" && services.accounts.recentlyAuthenticated(principal.session))) throw reauthRequired(services);
+}
+
+/** The limits and the runners, for Settings → Instance → Reviews. */
+async function reviewsView(services: Services) {
+    const [limits, runners] = await Promise.all([services.reviewLimits.read(), services.runs.runners()]);
+    return {
+        limits: { instance: limits.instance, perWorkspace: limits.perWorkspace },
+        defaults: services.reviewLimits.defaults,
+        saved: limits.saved,
+        ...runners,
+    };
 }
 
 export const instanceModelRoutes: Route[] = [
@@ -137,7 +149,7 @@ export const instanceModelRoutes: Route[] = [
         path: "/api/v1/instance/workspaces",
         scope: "instance",
         tag: "Instance",
-        summary: "Every workspace, with its instance-key allowance and this month's use of it",
+        summary: "Every workspace, with its instance-key allowance and this month's use of it, and its own limit on reviews at once",
         async handler({ services }) {
             return json(await services.allowances.workspaces());
         },
@@ -163,6 +175,58 @@ export const instanceModelRoutes: Route[] = [
         summary: "Stop a workspace using the instance key",
         async handler({ services, params, actor }) {
             return json(await services.allowances.removeGrant(actor, params.workspaceId as string));
+        },
+    }),
+    route({
+        method: "PUT",
+        path: "/api/v1/instance/workspaces/{workspaceId}/review-limit",
+        scope: "instance",
+        tag: "Instance",
+        summary: "Give a workspace its own limit on reviews running at once, in place of the one for every workspace",
+        description:
+            "From 1 to 100, lower or higher than the limit for every workspace. The instance's limit still applies: a workspace never runs more than that.",
+        body: z.object({ limit: z.number().describe("How many of the workspace's reviews may run at once") }),
+        async handler({ services, params, body, actor }) {
+            return json(await services.reviewLimits.setWorkspace(actor, params.workspaceId as string, body.limit));
+        },
+    }),
+    route({
+        method: "DELETE",
+        path: "/api/v1/instance/workspaces/{workspaceId}/review-limit",
+        scope: "instance",
+        tag: "Instance",
+        summary: "Take away a workspace's own limit: it uses the one for every workspace again",
+        async handler({ services, params, actor }) {
+            return json(await services.reviewLimits.setWorkspace(actor, params.workspaceId as string, null));
+        },
+    }),
+    route({
+        method: "GET",
+        path: "/api/v1/instance/reviews",
+        scope: "instance",
+        tag: "Instance",
+        summary: "How many reviews may run at once, and the connected runners with what each is doing",
+        description:
+            "`limits` are what apply now; `defaults` are the environment's (`REVIEW_CONCURRENCY`, `REVIEW_CONCURRENCY_PER_WORKSPACE`), which apply until limits are saved (`saved` is then null). Each runner has `slots` (how many reviews it works on at once) and `busy` (how many it's working on now). Limits above the runners' slots change nothing: reviews wait for a runner with room.",
+        async handler({ services }) {
+            return json(await reviewsView(services));
+        },
+    }),
+    route({
+        method: "PUT",
+        path: "/api/v1/instance/reviews",
+        scope: "instance",
+        tag: "Instance",
+        summary: "Set how many reviews may run at once on the instance and in one workspace",
+        description:
+            "Both from 1 to 100. Applies to the next review to start: a running review is never stopped, so after lowering a limit no more start until enough have finished. No restart is needed.",
+        body: z.object({
+            instance: z.number().describe("At once on this instance"),
+            perWorkspace: z.number().describe("At once in one workspace (one without a limit of its own)"),
+        }),
+        async handler({ services, body, actor }) {
+            await services.reviewLimits.set(actor, body);
+            return json(await reviewsView(services));
         },
     }),
     route({

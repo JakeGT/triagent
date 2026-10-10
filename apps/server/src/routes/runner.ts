@@ -12,12 +12,24 @@ import { ApiError, notFound } from "../errors.ts";
 import { parseJson } from "../http/mount.ts";
 import { type HandlerResult, json, type RequestContext, type Route, route } from "../http/route.ts";
 import type { Services } from "../services/index.ts";
+import type { RunnerHello } from "../services/runs.ts";
 
 const Runner = z.object({
     id: z.string().regex(/^[\w-]{8,64}$/),
     name: z.string().min(1).max(100),
     version: z.string().max(40).nullable().optional(),
     slots: z.number().int().min(0).max(100),
+    // How many jobs it works on at once in all (`slots` is how many more it can take). Older runners don't say.
+    capacity: z.number().int().min(1).max(100).nullable().optional(),
+});
+
+/** The runner as the services know it. */
+const hello = (r: z.infer<typeof Runner>): RunnerHello => ({
+    id: r.id,
+    name: r.name,
+    version: r.version ?? null,
+    slots: r.slots,
+    ...(typeof r.capacity === "number" ? { capacity: r.capacity } : {}),
 });
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
@@ -58,7 +70,7 @@ const Job = z.object({ runner: Runner });
 export const runnerRoutes: Route[] = [
     internal(
         { method: "POST", path: "/internal/runner/claim", summary: "Take the next job this runner may start, if any", body: Job },
-        async (services, body) => json({ job: await services.runs.claim({ ...body.runner, version: body.runner.version ?? null }) }),
+        async (services, body) => json({ job: await services.runs.claim(hello(body.runner)) }),
     ),
     internal(
         {
@@ -67,8 +79,7 @@ export const runnerRoutes: Route[] = [
             summary: "Renew the job's lease; says whether it has been cancelled, and which of its models to stop",
             body: Job,
         },
-        async (services, body, params) =>
-            json(await services.runs.heartbeat({ ...body.runner, version: body.runner.version ?? null }, params.jobId as string)),
+        async (services, body, params) => json(await services.runs.heartbeat(hello(body.runner), params.jobId as string)),
     ),
     internal(
         {
@@ -85,7 +96,7 @@ export const runnerRoutes: Route[] = [
         },
         async (services, body, params) =>
             json(
-                await services.runs.events({ ...body.runner, version: body.runner.version ?? null }, params.jobId as string, {
+                await services.runs.events(hello(body.runner), params.jobId as string, {
                     ...(body.lines ? { lines: body.lines } : {}),
                     ...(body.progress ? { progress: body.progress } : {}),
                 }),
@@ -123,7 +134,7 @@ export const runnerRoutes: Route[] = [
         },
         async (services, body, params) =>
             json(
-                await services.runs.finish({ ...body.runner, version: body.runner.version ?? null }, params.jobId as string, {
+                await services.runs.finish(hello(body.runner), params.jobId as string, {
                     status: body.status,
                     report: body.report,
                     ...(body.parts ? { parts: body.parts } : {}),

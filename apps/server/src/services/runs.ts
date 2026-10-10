@@ -28,6 +28,7 @@ import {
     type Project,
     type Repos,
     type ReviewRecord,
+    type RunnerRecord,
     type Workspace,
 } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
@@ -36,6 +37,7 @@ import { COMMENT_MARKER, type Github, NotConnected, RepositoryChanged, sameRepos
 import type { History } from "./history.ts";
 import type { Models, RunModel } from "./models.ts";
 import type { Reports } from "./reports.ts";
+import { ReviewLimitSettings } from "./review-limits.ts";
 import { type RunOptionsInput, runOptions, type Settings } from "./settings.ts";
 
 export const LOG_CAP_BYTES = 2 * 1024 * 1024;
@@ -78,7 +80,10 @@ export interface RunnerHello {
     id: string;
     name: string;
     version: string | null;
+    /** How many more jobs it can take now. */
     slots: number;
+    /** How many it works on at once in all. A runner older than this doesn't say: it's worked out from the jobs it holds. */
+    capacity?: number | null;
 }
 
 /** How one model's review went, in a run with several (in the order the job gave them). */
@@ -572,6 +577,7 @@ export class Runs {
     private readonly history: History;
     private readonly models: Models;
     private readonly settings: Settings;
+    private readonly limits: ReviewLimitSettings;
     /** Redacting functions by job, so a log batch doesn't decrypt the job's secrets each time. */
     private readonly redactions = new Map<string, (text: string) => string>();
     private readonly progressSent = new Map<string, { at: number; timer: ReturnType<typeof setTimeout> | null }>();
@@ -582,8 +588,17 @@ export class Runs {
     /** Called once a run has finished and its report is saved (automation refreshes the branch's status). */
     onFinished: (job: Job, project: Project) => void = () => {};
 
-    constructor(core: Core, github: Github, reports: Reports, history: History, models: Models, settings: Settings) {
+    constructor(
+        core: Core,
+        github: Github,
+        reports: Reports,
+        history: History,
+        models: Models,
+        settings: Settings,
+        limits: ReviewLimitSettings = new ReviewLimitSettings(core),
+    ) {
         this.core = core;
+        this.limits = limits;
         this.github = github;
         this.reports = reports;
         this.history = history;
@@ -662,6 +677,29 @@ export class Runs {
     }
 
     /**
+     * The connected runners, each with how many reviews it can work on at once (`slots`) and how many it's
+     * working on now (`busy`), and how many reviews are running and queued on the whole instance. For
+     * instance administrators: runners serve every workspace.
+     */
+    async runners() {
+        const [runners, active] = await Promise.all([this.connectedRunners(), this.store.jobs.active()]);
+        const running = active.filter((j) => j.status === "running");
+        return {
+            runners: runners
+                .map((r) => ({
+                    name: r.name,
+                    version: r.version,
+                    slots: r.slots,
+                    busy: running.filter((j) => j.runnerId === r.id).length,
+                    lastSeenAt: r.lastSeenAt,
+                }))
+                .sort((a, b) => a.name.localeCompare(b.name)),
+            running: running.length,
+            queued: active.length - running.length,
+        };
+    }
+
+    /**
      * Whether reviews in the workspace can start now, and if not, why: in one project, if given (its own
      * models may be chosen), and for one review of it (its kind's models, or those it was asked to use).
      */
@@ -700,17 +738,26 @@ export class Runs {
             if (j.status !== "queued" || reasons.has(waitsOn(j)) || !p) continue;
             reasons.set(waitsOn(j), (await this.readiness(workspace, p, j)).reason);
         }
-        const cfg = this.core.config;
-        const allRunning = everyActive.filter((j) => j.status === "running").length;
+        const limits = await this.limits.read();
+        const wsLimit = ReviewLimitSettings.forWorkspace(limits, workspace.id);
+        const everyRunning = everyActive.filter((j) => j.status === "running");
+        const allRunning = everyRunning.length;
         const wsRunning = active.filter((j) => j.status === "running").length;
-        const busy =
-            wsRunning >= cfg.reviewConcurrencyPerWorkspace
-                ? "Waiting for this workspace's running review to finish."
-                : allRunning >= cfg.reviewConcurrency
-                  ? "Waiting for a free slot: the instance is running as many reviews as it allows."
-                  : "Waiting for a runner to pick it up.";
-        const mine = (j: Job) => !filter.projectId || j.projectId === filter.projectId;
         const runners = await this.connectedRunners();
+        const busyOn = (r: RunnerRecord) => everyRunning.filter((j) => j.runnerId === r.id).length;
+        // The limits can allow more than the runners can do: then reviews wait for a runner with room.
+        const freeSlots = runners.reduce((n, r) => n + Math.max(0, r.slots - busyOn(r)), 0);
+        const busy =
+            wsRunning >= wsLimit
+                ? wsLimit === 1
+                    ? "Waiting for this workspace's running review to finish."
+                    : `Waiting for one of this workspace's running reviews to finish (it runs ${wsLimit} at once).`
+                : allRunning >= limits.instance
+                  ? "Waiting for a free slot: the instance is running as many reviews as it allows."
+                  : runners.length && !freeSlots
+                    ? "Waiting for a free runner slot: every connected runner is busy."
+                    : "Waiting for a runner to pick it up.";
+        const mine = (j: Job) => !filter.projectId || j.projectId === filter.projectId;
         const recent = (
             await this.store.jobs.list(
                 {
@@ -724,10 +771,11 @@ export class Runs {
         return {
             ready: readiness.ready,
             waiting: readiness.reason,
-            concurrency: { instance: cfg.reviewConcurrency, workspace: cfg.reviewConcurrencyPerWorkspace },
+            // `workspace` is this workspace's own limit: never another's, and never more than the instance's.
+            concurrency: { instance: limits.instance, workspace: wsLimit },
             runnersConnected: runners.length,
             runners: filter.runnerDetails
-                ? runners.map((r) => ({ name: r.name, slots: r.slots, version: r.version, lastSeenAt: r.lastSeenAt }))
+                ? runners.map((r) => ({ name: r.name, slots: r.slots, busy: busyOn(r), version: r.version, lastSeenAt: r.lastSeenAt }))
                 : [],
             running: active.filter((j) => j.status === "running" && mine(j)).map((j) => this.view(j, projects.get(j.projectId) ?? null)),
             queued: active
@@ -1164,11 +1212,15 @@ export class Runs {
         if (Date.now() - last < 15_000) return;
         this.runnerSeen.set(r.id, Date.now());
         if (this.runnerSeen.size > 1000) this.runnerSeen.delete(this.runnerSeen.keys().next().value as string);
+        // Kept as how many it works on at once. A runner that only says how many more it can take (an older
+        // one) is taken to have that many and the jobs it holds.
+        const capacity =
+            r.capacity ?? r.slots + (await this.store.jobs.active()).filter((j) => j.status === "running" && j.runnerId === r.id).length;
         await this.store.runners.seen({
             id: r.id,
             name: CLEAN_ONLY(r.name),
             version: r.version === null ? null : CLEAN_ONLY(r.version),
-            slots: r.slots,
+            slots: Math.min(capacity, 100),
             lastSeenAt: now(),
         });
     }
@@ -1178,11 +1230,16 @@ export class Runs {
         await this.noteRunner(runner);
         if (!runner.slots) return null;
         await this.sweep();
-        const cfg = this.core.config;
         const picked = await this.store.transaction(async (tx) => {
+            // Read here, with the queue, so a limit an admin just saved applies to this very claim. Lowering one
+            // below what's running stops nothing: no more start until enough have finished.
+            const limits = await this.limits.read(tx);
             const active = await tx.jobs.active();
             const running = active.filter((j) => j.status === "running");
-            if (running.length >= cfg.reviewConcurrency) return null;
+            if (running.length >= limits.instance) return null;
+            // Never more than the runner works on at once, whatever it says it has room for.
+            if (typeof runner.capacity === "number" && running.filter((j) => j.runnerId === runner.id).length >= runner.capacity)
+                return null;
             const runningIn = new Map<string, number>();
             for (const j of running) runningIn.set(j.workspaceId, (runningIn.get(j.workspaceId) ?? 0) + 1);
             const queuedIn = new Map<string, Job[]>();
@@ -1195,7 +1252,7 @@ export class Runs {
                     (queuedIn.get(a)?.[0]?.queuedAt ?? "").localeCompare(queuedIn.get(b)?.[0]?.queuedAt ?? ""),
             );
             for (const workspaceId of order) {
-                if ((runningIn.get(workspaceId) ?? 0) >= cfg.reviewConcurrencyPerWorkspace) continue;
+                if ((runningIn.get(workspaceId) ?? 0) >= ReviewLimitSettings.forWorkspace(limits, workspaceId)) continue;
                 const workspace = await tx.workspaces.get(workspaceId);
                 if (!workspace) continue;
                 for (const job of queuedIn.get(workspaceId) ?? []) {

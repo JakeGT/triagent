@@ -18,6 +18,7 @@ import { Oidc } from "./oidc.ts";
 import { Prices } from "./prices.ts";
 import { Projects } from "./projects.ts";
 import { Reports } from "./reports.ts";
+import { ReviewLimitSettings } from "./review-limits.ts";
 import { Runs } from "./runs.ts";
 import { SecretBox, Secrets } from "./secrets.ts";
 import { Settings } from "./settings.ts";
@@ -46,6 +47,7 @@ export interface Services {
     catalogue: Catalogue;
     prices: Prices;
     allowances: Allowances;
+    reviewLimits: ReviewLimitSettings;
     analytics: AnalyticsService;
     invites: Invites;
     /** The identity provider, when AUTH_MODE=oidc. */
@@ -70,12 +72,13 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
     const projects = new Projects(core);
     const catalogue = new Catalogue({ enabled: config.openrouterCatalogue, ...(options.fetch ? { fetch: options.fetch } : {}) });
     const prices = new Prices(core, catalogue);
-    const allowances = new Allowances(core, clock, setup);
+    const reviewLimits = new ReviewLimitSettings(core);
+    const allowances = new Allowances(core, clock, setup, reviewLimits);
     const models = new Models(core, history, allowances, setup, settings);
     const modelLists = new ModelLists(setup, catalogue, options.fetch ? { fetch: options.fetch } : {});
     const webhooks = new Webhooks(core, settings);
     const github = new Github(core, settings, projects);
-    const runs = new Runs(core, github, reports, history, models, settings);
+    const runs = new Runs(core, github, reports, history, models, settings, reviewLimits);
     const automation = new Automation(core, github, runs, reports, settings);
     webhooks.automation = automation;
     const invites = new Invites(core);
@@ -98,6 +101,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         catalogue,
         prices,
         allowances,
+        reviewLimits,
         analytics: new AnalyticsService(core, projects, reports, prices, () => clock().getTime()),
         github,
         runs,

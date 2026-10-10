@@ -443,6 +443,7 @@ export interface RunnerRecord {
     id: string;
     name: string;
     version: string | null;
+    /** How many reviews it works on at once. */
     slots: number;
     lastSeenAt: string;
 }

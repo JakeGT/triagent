@@ -9,6 +9,7 @@ import type { Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
 import { monthStart } from "./history.ts";
 import { type ModelChoice, ModelSetup, type Resolution, type SecretKind } from "./model-setup.ts";
+import { ReviewLimitSettings } from "./review-limits.ts";
 
 const MAX_ALLOWANCE = 1e12;
 const INSTANCE = { kind: "instance" } as const;
@@ -35,11 +36,18 @@ export class Allowances {
     private readonly core: Core;
     private readonly clock: () => Date;
     private readonly setup: ModelSetup;
+    private readonly limits: ReviewLimitSettings;
 
-    constructor(core: Core, clock: () => Date = () => new Date(), setup: ModelSetup = new ModelSetup(core)) {
+    constructor(
+        core: Core,
+        clock: () => Date = () => new Date(),
+        setup: ModelSetup = new ModelSetup(core),
+        limits: ReviewLimitSettings = new ReviewLimitSettings(core),
+    ) {
         this.core = core;
         this.clock = clock;
         this.setup = setup;
+        this.limits = limits;
     }
 
     now(): Date {
@@ -94,18 +102,23 @@ export class Allowances {
         return `This month's allowance of ${tokens(monthlyTokens)} tokens is used up; it resets on ${resetDay(now)}.`;
     }
 
-    /** Every workspace, with its grant and this month's instance-key tokens, for the instance page. */
+    /**
+     * Every workspace, with its grant and this month's instance-key tokens, and its own limit on reviews at
+     * once (null: the one for every workspace, `reviewLimits.perWorkspace`), for the instance page.
+     */
     async workspaces() {
         const repos = this.core.store;
         const now = this.clock();
-        const [workspaces, grantList, used] = await Promise.all([
+        const [workspaces, grantList, used, limits] = await Promise.all([
             repos.workspaces.list(),
             repos.modelGrants.list(),
             repos.reviewHistory.tokensByWorkspace(monthStart(now), "instance"),
+            this.limits.read(repos),
         ]);
         const grants = new Map(grantList.map((g) => [g.workspaceId, g]));
         return {
             resetsAt: nextMonthStart(now).toISOString(),
+            reviewLimits: { instance: limits.instance, perWorkspace: limits.perWorkspace },
             items: workspaces
                 .map((w) => {
                     const g = grants.get(w.id) ?? null;
@@ -118,6 +131,7 @@ export class Allowances {
                         grant: g ? { monthlyTokens: g.monthlyTokens, grantedBy: g.grantedBy, grantedAt: g.grantedAt } : null,
                         used: u,
                         remaining: g ? Math.max(0, g.monthlyTokens - u) : null,
+                        reviewLimit: Object.hasOwn(limits.workspaces, w.id) ? (limits.workspaces[w.id] as number) : null,
                     };
                 })
                 .sort((a, b) => Number(Boolean(b.grant)) - Number(Boolean(a.grant)) || a.name.localeCompare(b.name)),
