@@ -34,11 +34,14 @@ three marks that carry information everywhere they appear:
 - the **agreement dots**: one dot per model, filled for each model that found the finding;
 - `path:line` in the monospaced face.
 
-The landing page uses the same surfaces, type and marks at a larger scale, with real, working samples of the product
-in place of illustration.
+The landing page uses the same surfaces, type and marks at a larger scale, and it is the one place allowed to be
+loud: its pictures are working pieces of the product that the reader plays with, in place of illustration. Its
+headline is written as a diff (one line struck out in the removed tint, one added), because a change is what
+Triagent's users read all day and a change is what it offers them.
 
 **The memorable thing:** one finding row — severity mark, sentence, `path:line`, agreement dots — and three models'
-reviews collapsing into it.
+reviews collapsing into it. On the landing page that is literal: three reviewers with switches, and their findings
+flying into one list.
 
 **Directions considered and rejected:**
 
@@ -46,6 +49,8 @@ reviews collapsing into it.
   about where Triagent is used is dark, and the gradient and glows carried no information.
 - *Terminal vernacular everywhere* (monospace UI, green on black): a costume. Only agents and CI meet Triagent in a
   terminal; people triage in a table.
+- *A quiet landing page* (headline beside a small storyboard, then sections of text): correct and forgettable. It
+  described the product where it could have handed it over.
 - *Card dashboard* (rounded stat tiles, icon feature cards): shows six numbers on a screen and ranks nothing.
 
 ## Colour
@@ -72,7 +77,7 @@ Neutrals are tinted toward the action blue (hue 240). There is no accent colour:
 | Text and display | Atkinson Hyperlegible Next | Made to keep similar letters apart. Findings are full of identifiers, and `l`, `I`, `1`, `O`, `0` must not be confused |
 | Data and code | Atkinson Hyperlegible Mono | The same letterforms for paths, commits, diffs and counts, with a slashed zero |
 
-**Scale:** 12 / 14 / 15 / 16 / 18 / 20 / 24, and 30 / 36 / 48 / 60 on the landing page only. Nothing below 12.
+**Scale:** 12 / 14 / 15 / 16 / 18 / 20 / 24, and 30 / 36 / 48 / 72 on the landing page only. Nothing below 12.
 **Body:** interface text is 14 px (see exceptions). Text meant to be read — a finding, a note, a reviewer's summary,
 landing-page prose — is 15 px or more, line-height 1.45–1.6, at most 80 characters a line.
 Numbers in tables are tabular and right-aligned. Monospace is for code, paths, ids, commands and counts only.
@@ -109,8 +114,10 @@ list.
 
 ## Motion
 
-- **The one orchestrated moment:** the storyboard at the top of the landing page (a pull request opened, reviewed by
-  three models, merged into one list, triaged). It can be paused, and it stands still under reduced motion.
+- **The one orchestrated moment:** the reviewers at the top of the landing page switching on one after another as
+  the page opens, each finding flying to its row in the list. After that the switches are the reader's, and every
+  flight answers one. Under reduced motion all three start on and nothing flies.
+- **Started by the reader, never by scrolling:** the landing page's three agents working through a list.
 - **Not animated:** anything in the app used all day — changing a status, opening a finding, switching tabs,
   filtering. Sections do not fade or slide in as the page scrolls. Nothing counts up.
 - Menus, dialogs and toasts keep their short open and close transitions, because they explain where a thing came from.
@@ -159,7 +166,10 @@ Names come first and ids second: "Read and triage (`write`)", "PR #12 Redesign t
   header has no room for its label.
 - **V4 — the landing page's section links are hidden on a phone.** The page is one column read top to bottom, and
   every section is reached by scrolling.
-- **Landing page — the agent's terminal is dark in both themes.** It is a picture of a terminal.
+- **Landing page — the part about agents is dark in both themes.** Agents meet Triagent in a terminal, and that part
+  of the page is a picture of one.
+- **Landing page — the headline, the section headings over full-width demos and the closing call are centred.**
+  They sit over something centred and as wide as the page. Prose beside a picture stays left-aligned.
 
 ## Default check
 

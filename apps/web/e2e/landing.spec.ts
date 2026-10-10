@@ -65,16 +65,50 @@ test("the demo list filters, opens findings and can be triaged by hand or by an 
     await expect(page.getByTestId("agent-log")).toHaveCount(0);
 });
 
-test("the hero's review can be paused and played, and rests on its last frame with reduced motion", async ({ page }) => {
+test("the hero's reviewers switch on by themselves, and switching one off says what goes with it", async ({ page }) => {
     await page.goto("/");
-    const stage = page.getByTestId("review-stage");
-    await stage.getByRole("button", { name: "Pause" }).click();
-    await expect(stage.getByRole("button", { name: /^Play/ })).toBeVisible();
+    const bench = page.getByTestId("bench");
+    // It plays itself once: one reviewer after another, each finding flying to its row.
+    await expect(page.getByTestId("bench-summary")).toHaveText("14 findings from 3 reviewers, 8 to triage", { timeout: 10_000 });
+    await expect(page.getByTestId("bench-list").getByRole("listitem")).toHaveCount(8);
+    await expect(page.getByTestId("bench-note-gpt-5")).toHaveText("5 findings, 2 that only it found");
 
+    await bench.getByRole("switch", { name: "mistral-large" }).click();
+    await expect(page.getByTestId("bench-summary")).toHaveText("9 findings from 2 reviewers, 6 to triage");
+    await expect(page.getByTestId("bench-missed")).toHaveText("With mistral-large off, 2 findings are missed.");
+    await expect(page.getByTestId("bench-list").getByRole("listitem")).toHaveCount(6);
+    await bench.getByRole("switch", { name: "gpt-5" }).click();
+    await bench.getByRole("switch", { name: "claude-sonnet-4.5" }).click();
+    await expect(page.getByTestId("bench-summary")).toHaveText("Switch a reviewer on.");
+    await expect(page.getByTestId("bench-list").getByRole("listitem")).toHaveCount(0);
+
+    // Back on: its findings land, and nothing is left in the air.
+    await bench.getByRole("switch", { name: "gpt-5" }).click();
+    await expect(page.getByTestId("bench-summary")).toHaveText("5 findings from 1 reviewer, 5 to triage");
+    await expect(bench.locator('[aria-hidden="true"][class*="absolute"]')).toHaveCount(0);
+});
+
+test("with less motion asked for, every reviewer is on from the start and the switches still work", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.reload();
-    await expect(stage.getByRole("button", { name: "Play again" })).toBeVisible();
-    await expect(stage).toContainText("Fixed in");
+    await page.goto("/");
+    await expect(page.getByTestId("bench-summary")).toHaveText("14 findings from 3 reviewers, 8 to triage");
+    await page.getByTestId("bench").getByRole("switch", { name: "gpt-5" }).click();
+    await expect(page.getByTestId("bench-missed")).toHaveText("With gpt-5 off, 2 findings are missed.");
+});
+
+test("three agents sent through the list each take a different issue, and leave the one flagged for discussion", async ({ page }) => {
+    await page.goto("/");
+    const race = page.getByTestId("agent-race");
+    await expect(page.getByTestId("race-log")).toContainText("claude mcp add");
+    await race.getByRole("button", { name: "Send them in" }).click();
+    await expect(page.getByTestId("race-count")).toHaveText("7 of 8 resolved", { timeout: 20_000 });
+    await expect(race.getByRole("listitem").filter({ hasText: "written in three places" })).toContainText("Needs discussion");
+    await expect(page.getByTestId("race-log")).toContainText("waiting for a person");
+    // Each of the three did some of it.
+    for (const agent of ["Claude Code", "Codex", "Cursor"]) await expect(race.getByText(agent).first()).toBeVisible();
+    await race.getByRole("button", { name: "Start again" }).click();
+    await expect(page.getByTestId("race-count")).toHaveText("0 of 8 resolved");
+    await expect(page.getByTestId("race-log")).toContainText("claude mcp add");
 });
 
 for (const theme of ["light", "dark"] as const) {
@@ -84,7 +118,7 @@ for (const theme of ["light", "dark"] as const) {
             if (/Content Security Policy/i.test(m.text())) violations.push(m.text());
         });
         await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
-        // Reduced motion rests the hero on its last, fullest frame.
+        // Reduced motion starts the hero with every reviewer on.
         await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto("/");
         await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -100,7 +134,7 @@ test("the page follows the reader's theme, and the switch says what it gives", a
     await page.addInitScript(() => localStorage.getItem("triagent-theme") ?? localStorage.setItem("triagent-theme", "light"));
     await page.goto("/");
     await expect(page.locator("html")).toHaveClass(/light/);
-    // Nothing is forced dark on a light page but the picture of an agent's terminal.
+    // Nothing is forced dark on a light page but the part about agents: a picture of a terminal.
     await expect(page.locator(".dark")).toHaveCount(1);
     await expect(page.locator(".dark")).toContainText("claude mcp add");
     const light = await page.locator("header").evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -118,32 +152,32 @@ test("the page fits a phone without scrolling sideways", async ({ page }) => {
     expect(overflow).toBeLessThanOrEqual(0);
 });
 
-// 1280 and 1440: beside the headline, at a little over half the column. 360 and 820: under it, at full width.
+// 1280 and 1440: reviewers beside the list. 820: in a row above it. 360: one under another.
 for (const width of [360, 820, 1280, 1440]) {
-    test(`nothing in the hero's review spills out of its window at ${width}px`, async ({ page }) => {
+    test(`nothing in the hero spills out of it at ${width}px, and the dots line up`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
-        // Reduced motion rests it on the last frame, the one with the longest lines.
         await page.emulateMedia({ reducedMotion: "reduce" });
         await page.goto("/");
-        const stage = page.getByTestId("review-stage");
-        await expect(stage).toContainText("Fixed in");
-        const spills = await stage.evaluate((el) => {
-            const box = el.getBoundingClientRect();
-            return [...el.querySelectorAll("*")]
-                .filter((child) => {
-                    const r = child.getBoundingClientRect();
-                    return r.width > 0 && (r.right > box.right + 0.5 || r.left < box.left - 0.5);
-                })
-                .map((child) => `${child.tagName} ${child.textContent?.slice(0, 40)}`);
-        });
-        expect(spills).toEqual([]);
-        // What belongs on the right (the file of each finding) ends at the same edge on every row.
-        const rights = await stage
-            .locator("li p:last-child span.font-mono")
-            .evaluateAll((els) =>
-                els.filter((e) => e.classList.contains("shrink-0")).map((e) => Math.round(e.getBoundingClientRect().right)),
-            );
-        expect(rights.length).toBe(4);
+        const bench = page.getByTestId("bench");
+        await expect(page.getByTestId("bench-list").getByRole("listitem")).toHaveCount(8);
+        for (const part of [bench, page.getByRole("heading", { level: 1 })]) {
+            const spills = await part.evaluate((el) => {
+                const box = el.getBoundingClientRect();
+                return [...el.querySelectorAll("*")]
+                    .filter((child) => {
+                        const r = child.getBoundingClientRect();
+                        return r.width > 1 && (r.right > box.right + 0.5 || r.left < box.left - 0.5);
+                    })
+                    .map((child) => `${child.tagName} ${child.textContent?.slice(0, 40)}`);
+            });
+            expect(spills).toEqual([]);
+        }
+        // Each row's dots end at the same edge.
+        const rights = await page
+            .getByTestId("bench-list")
+            .locator("li > span:last-child")
+            .evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().right)));
+        expect(rights.length).toBe(8);
         expect(new Set(rights).size).toBe(1);
     });
 }

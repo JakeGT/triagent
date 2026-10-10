@@ -1,25 +1,23 @@
-// The front door, for everyone: what Triagent is, told as a page rather than a dashboard. It follows the
-// reader's theme and uses the app's own surfaces, type and marks; its only pictures are pieces of the
-// product: a review played out beside the headline, a miniature of the Issues page to try, how three
-// reviews become one list, and an agent's terminal. Everything shown is made up and stays in the browser;
-// the page asks the server only whether you're signed in, to offer the right button.
+// The front door, for everyone: what Triagent is, shown by letting people play with it. The headline is a
+// diff (three reviews out, one list in); under it are three reviewers to switch on and off and the list
+// their findings fly into; further down, a miniature of the Issues page to triage, and three agents to
+// send through a list at once. It follows the reader's theme and uses the app's own surfaces, type and
+// marks. Everything shown is made up and stays in the browser; the page asks the server only whether
+// you're signed in, to offer the right button.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Moon, Sun } from "lucide-react";
+import { Check, Moon, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "@/components/logo";
-import { SeverityMark } from "@/components/marks";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/context/theme-provider";
 import { meQuery } from "@/lib/queries";
 import { cn } from "@/lib/utils";
-import { ReviewStage } from "./review-stage";
-import { agreement, FINDINGS, MODELS } from "./sample";
+import { AgentRace } from "./agent-race";
+import { Bench } from "./bench";
+import { agreement, FINDINGS } from "./sample";
 import { TryIt } from "./try-it";
-
-/** Every model's findings before merging: one for each model that found each finding. */
-const RAW = FINDINGS.reduce((n, f) => n + f.foundBy.length, 0);
 
 /** Some of the seventeen, not all of them: the line that lists them says so. */
 const PROVIDERS = [
@@ -38,14 +36,16 @@ const PROVIDERS = [
 /** The one column every section sits on. */
 const COLUMN = "mx-auto max-w-6xl px-5 sm:px-8";
 /** Prose: a size to read at, and never a line too long to follow. */
-const PROSE = "max-w-[65ch] text-base leading-normal text-pretty";
+const PROSE = "max-w-[62ch] text-lg leading-normal text-pretty";
+/** The room between one section and the next. */
+const BAND = "py-14 sm:py-24";
 const LINK = "text-primary underline underline-offset-2 hover:no-underline";
 
-/** A section's heading and, under it, what the section is about. */
-function SectionHeading({ id, title, children }: { id: string; title: string; children?: ReactNode }) {
+/** A section's heading and, under it, what the section is about. Centred over something as wide as the page. */
+function SectionHeading({ id, title, centred, children }: { id: string; title: string; centred?: boolean; children?: ReactNode }) {
     return (
-        <div className="grid gap-3">
-            <h2 id={id} className="max-w-[28ch] scroll-mt-20 text-2xl leading-tight font-semibold tracking-tight text-balance sm:text-3xl">
+        <div className={cn("grid gap-4", centred && "justify-items-center text-center")}>
+            <h2 id={id} className="max-w-[24ch] scroll-mt-20 text-3xl leading-[1.1] font-semibold tracking-tight text-balance sm:text-4xl">
                 {title}
             </h2>
             {children && <p className={cn(PROSE, "text-muted-foreground")}>{children}</p>}
@@ -122,133 +122,32 @@ const REASONS: { title: string; text: string }[] = [
     },
 ];
 
-/** The idea in four figures, each leading to the next, taken from the sample review. */
-function InNumbers() {
-    const steps: { n: number; label: string; note: string }[] = [
-        { n: MODELS.length, label: "models", note: "review the same pull request" },
-        { n: RAW, label: "findings", note: "between them, many said twice" },
-        { n: FINDINGS.length, label: "to triage", note: "once the same ones are merged" },
-        { n: 1, label: "list", note: "for your team and your agents" },
-    ];
-    return (
-        <div className="grid gap-4">
-            {/* One under another on a phone, where the order needs no arrows; side by side from there up. */}
-            <ol className="grid gap-x-12 gap-y-5 md:grid-cols-4">
-                {steps.map((s, i) => (
-                    <li key={s.label} className="relative grid content-start gap-0.5">
-                        {i > 0 && (
-                            <ArrowRight
-                                className="absolute -start-9 top-2.5 size-5 text-muted-foreground max-md:hidden"
-                                aria-hidden="true"
-                            />
-                        )}
-                        <p className="flex items-baseline gap-2">
-                            <span className="font-mono text-3xl leading-none font-semibold tabular-nums">{s.n}</span>
-                            <span className="text-base font-semibold">{s.label}</span>
-                        </p>
-                        <p className="text-base leading-normal text-muted-foreground">{s.note}</p>
-                    </li>
-                ))}
-            </ol>
-            <p className="text-[0.9375rem] text-muted-foreground">
-                These are the figures of the made-up review in{" "}
-                <a href="#try" className={LINK}>
-                    Try it
-                </a>
-                , below, not a measurement.
-            </p>
-        </div>
-    );
-}
-
-/** Three reviewers' findings as one list: who found each, then how much they agreed. */
-function MergePicture() {
+/** How much the three reviewers agreed, as a bar of one block for each finding. */
+function Agreement() {
     const rows = agreement(FINDINGS);
-    const shown = FINDINGS.slice(0, 3);
     return (
         <figure className="grid min-w-0 gap-5 rounded-lg border bg-card p-5 sm:p-6">
-            <figcaption className="text-base font-semibold">Found by several, listed once</figcaption>
-            <ul className="grid grid-cols-[minmax(0,1fr)] divide-y border-y">
-                {shown.map((f) => (
-                    <li key={f.id} className="flex min-w-0 items-center gap-3 py-2.5">
-                        <SeverityMark severity={f.severity} className="shrink-0 text-xs" />
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{f.title}</span>
-                        <span className="flex shrink-0 items-center gap-1" aria-hidden="true">
-                            {MODELS.map((m) => (
-                                <span
-                                    key={m}
-                                    className={cn(
-                                        "size-2.5 rounded-full",
-                                        f.foundBy.includes(m) ? "bg-primary" : "border border-foreground/30",
-                                    )}
-                                />
+            <figcaption className="text-base font-semibold">
+                The sample review: {FINDINGS.length} findings, by how many reviewers found them
+            </figcaption>
+            {/* The counts are small enough to count the blocks. */}
+            <ul className="grid gap-3">
+                {rows.map((r) => (
+                    <li key={r.models} className="grid grid-cols-[6.5rem_minmax(0,1fr)_1.5rem] items-center gap-3 text-base">
+                        <span>{["One only", "Two", "All three"][r.models - 1]}</span>
+                        <span className="flex gap-1" aria-hidden="true">
+                            {FINDINGS.filter((f) => f.foundBy.length === r.models).map((f) => (
+                                <span key={f.id} className="h-5 w-8 rounded-sm bg-primary sm:w-12" />
                             ))}
                         </span>
-                        <span className="sr-only">
-                            Found by {f.foundBy.length} of {MODELS.length} models
-                        </span>
+                        <span className="text-end font-mono font-semibold tabular-nums">{r.count}</span>
                     </li>
                 ))}
             </ul>
-            <div className="grid gap-3">
-                <p className="text-sm text-muted-foreground">
-                    The sample review: {FINDINGS.length} findings, by how many models found them
-                </p>
-                {/* A bar of one block for each finding: the counts are small enough to count. */}
-                <ul className="grid gap-2">
-                    {rows.map((r) => (
-                        <li key={r.models} className="grid grid-cols-[6.5rem_minmax(0,1fr)_1.5rem] items-center gap-3 text-sm">
-                            <span>{["One model", "Two models", "All three"][r.models - 1]}</span>
-                            <span className="flex gap-0.5" aria-hidden="true">
-                                {FINDINGS.filter((f) => f.foundBy.length === r.models).map((f) => (
-                                    <span key={f.id} className="h-3 w-8 rounded-sm bg-primary sm:w-10" />
-                                ))}
-                            </span>
-                            <span className="text-end font-mono font-semibold tabular-nums">{r.count}</span>
-                        </li>
-                    ))}
-                </ul>
-            </div>
-            <p className="text-sm leading-normal text-muted-foreground">
-                Agreement is a signal, not a verdict. Here the uncapped backoff was found by one model only, and it's real.
+            <p className="text-[0.9375rem] leading-normal text-muted-foreground">
+                Agreement is a signal, not a verdict. Here the uncapped backoff was found by one reviewer only, and it's real.
             </p>
         </figure>
-    );
-}
-
-/** A picture of a terminal, so dark in both themes (the `dark` class gives its subtree the dark theme's colours). */
-function AgentConsole() {
-    const mcp = `${window.location.origin}/mcp`;
-    // [id, mark, text]: the ids are only keys.
-    const lines: [string, string, string][] = [
-        ["add", "$", `claude mcp add --transport http triagent ${mcp} \\`],
-        ["header", " ", '    --header "Authorization: Bearer tri_…"'],
-        ["gap-1", "", ""],
-        ["ask", "›", "Work through the review findings on this branch."],
-        ["gap-2", "", ""],
-        ["claim-1", "→", 'claim_next_issue({ branch: "payments/retry" })'],
-        ["got-1", "←", "ocr-3fa9c1d2  critical  src/api/payments.ts:84  found by 3 of 3"],
-        ["fix-1", "→", 'update_issue({ status: "resolved", note: "Added the ownership check and a test." })'],
-        ["done-1", "←", "resolved"],
-        ["claim-2", "→", 'claim_next_issue({ branch: "payments/retry" })'],
-        ["got-2", "←", "ocr-71b0e4aa  high  src/payments/retry.ts:41  found by 2 of 3"],
-    ];
-    return (
-        <div className="dark min-w-0 overflow-hidden rounded-lg border border-border bg-[#11161a] text-foreground">
-            <p className="border-b border-border px-4 py-2.5 text-sm text-muted-foreground">A coding agent, connected over MCP</p>
-            <pre
-                className="overflow-x-auto p-4 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap sm:text-sm sm:leading-relaxed"
-                // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable regions must be reachable by keyboard
-                tabIndex={0}
-            >
-                {lines.map(([id, mark, text]) => (
-                    <span key={id} className={cn("block min-h-[1lh] ps-5 -indent-5", mark === "←" && "text-muted-foreground")}>
-                        {mark && <span className="me-2 inline-block w-3 indent-0 text-muted-foreground select-none">{mark}</span>}
-                        {text}
-                    </span>
-                ))}
-            </pre>
-        </div>
     );
 }
 
@@ -256,7 +155,7 @@ export function LandingPage() {
     const me = useQuery(meQuery);
     const signedIn = me.isSuccess;
     const enter = (size: "default" | "lg") => (
-        <Button asChild size={size} className={cn(size === "lg" && "h-11 px-5 text-base")}>
+        <Button asChild size={size} className={cn(size === "lg" && "h-12 px-6 text-base")}>
             {signedIn ? <Link to="/dashboard">Open dashboard</Link> : <Link to="/sign-in">Sign in</Link>}
         </Button>
     );
@@ -280,17 +179,17 @@ export function LandingPage() {
                         aria-label="On this page"
                         className="flex items-center gap-x-4 text-sm font-medium whitespace-nowrap text-primary max-md:hidden lg:gap-x-5"
                     >
-                        <a href="#how-title" className="py-1 underline-offset-4 hover:underline">
-                            How it works
+                        <a href="#models" className="py-1 underline-offset-4 hover:underline">
+                            Several models
                         </a>
                         <a href="#try" className="py-1 underline-offset-4 hover:underline">
                             Try it
                         </a>
-                        <a href="#models" className="py-1 underline-offset-4 hover:underline">
-                            Several models
-                        </a>
                         <a href="#agents" className="py-1 underline-offset-4 hover:underline">
                             Agents
+                        </a>
+                        <a href="#how-title" className="py-1 underline-offset-4 hover:underline">
+                            Setting up
                         </a>
                         <a href="#yours" className="py-1 underline-offset-4 hover:underline">
                             Running it
@@ -304,90 +203,54 @@ export function LandingPage() {
             </header>
 
             <main id="main">
-                <section aria-labelledby="hero-title" className={cn(COLUMN, "grid gap-10 pt-10 pb-8 sm:gap-12 sm:pt-16 sm:pb-12")}>
-                    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-x-12 gap-y-10 lg:grid-cols-12">
-                        <div className="grid gap-6 lg:col-span-6">
-                            <h1
-                                id="hero-title"
-                                className="text-4xl leading-[1.08] font-semibold tracking-tight sm:text-5xl lg:text-[2.5rem] xl:text-5xl"
-                            >
-                                <span className="block">Every model's review.</span>{" "}
-                                <span className="block">One list to work through.</span>
-                            </h1>
-                            <p className="max-w-[60ch] text-lg leading-normal text-pretty text-muted-foreground">
-                                Triagent reviews your pull requests with the models you choose, merges what they find into a single list,
-                                and lets your team and your coding agents work through it together.
-                            </p>
-                            <div className="flex flex-wrap items-center gap-3">
-                                {enter("lg")}
-                                <Button asChild variant="outline" size="lg" className="h-11 px-5 text-base">
-                                    <a href="#try">Try it here</a>
-                                </Button>
-                            </div>
-                            <p className="text-[0.9375rem] text-muted-foreground">
-                                Self-hosted and free software, built on Open Code Review.
-                            </p>
-                        </div>
-                        <div className="min-w-0 lg:col-span-6">
-                            <ReviewStage />
-                        </div>
-                    </div>
-                    <p className="max-w-[75ch] text-base leading-normal text-pretty text-muted-foreground" data-testid="providers">
-                        Bring your own keys, for 17 providers, among them{" "}
-                        <span className="text-foreground">
-                            {PROVIDERS.slice(0, -1).join(", ")} and {PROVIDERS.at(-1)}
-                        </span>
-                        .
-                    </p>
-                </section>
-
-                <section aria-labelledby="idea-title">
-                    <div className={cn(COLUMN, "grid gap-10 py-8 sm:py-12")}>
-                        <SectionHeading id="idea-title" title="More reviewers, less to read">
-                            Models miss different things, so ask more than one. The trouble is reading three reviews. Triagent reads them
-                            for you and hands back one list.
-                        </SectionHeading>
-                        <InNumbers />
-                    </div>
-                </section>
-
-                <section aria-labelledby="how-title">
-                    <div className={cn(COLUMN, "grid gap-10 py-8 sm:py-12")}>
-                        <SectionHeading id="how-title" title="From pull request to fixed, in four steps" />
-                        <ol className="grid gap-x-12 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
-                            {STEPS.map((s, i) => (
-                                <li key={s.title} className="grid content-start gap-1">
-                                    <span className="font-mono text-base text-muted-foreground tabular-nums" aria-hidden="true">
-                                        {i + 1}
-                                    </span>
-                                    <h3 className="text-lg font-semibold">{s.title}</h3>
-                                    <p className="text-base leading-normal text-muted-foreground">{s.text}</p>
-                                </li>
-                            ))}
-                        </ol>
-                    </div>
-                </section>
-
-                <section aria-labelledby="try">
-                    <div className={cn(COLUMN, "grid grid-cols-[minmax(0,1fr)] gap-8 py-8 sm:py-12")}>
-                        <SectionHeading id="try" title="This is the triage list. It works.">
-                            A made-up pull request, reviewed by three models. Filter it, open a finding, see how another model put the same
-                            thing, deal with it yourself or hand the next one to an agent. Nothing you do here leaves this page.
-                        </SectionHeading>
-                        <div className="text-sm">
-                            <TryIt />
+                <section aria-labelledby="hero-title" className={cn(COLUMN, "grid gap-10 pt-10 pb-14 sm:gap-12 sm:pt-14 sm:pb-24")}>
+                    <div className="grid justify-items-center gap-7 text-center">
+                        {/* The headline is the change Triagent makes, written the way a change is: one line out, one in. */}
+                        <h1
+                            id="hero-title"
+                            className="grid max-w-full gap-1.5 text-start text-[clamp(1.75rem,6.6vw,4.5rem)] leading-[1.06] font-semibold tracking-tight sm:gap-2"
+                        >
+                            <span className="flex items-baseline gap-[0.45em] rounded-md bg-diff-del px-[0.4em] py-[0.14em]">
+                                <span className="font-mono text-[0.62em] font-normal text-sev-critical select-none" aria-hidden="true">
+                                    −
+                                </span>
+                                <span className="sr-only">Not </span>
+                                <span className="text-foreground/75 line-through decoration-foreground/50 decoration-[0.055em]">
+                                    Three reviews to read.
+                                </span>
+                            </span>{" "}
+                            <span className="flex items-baseline gap-[0.45em] rounded-md bg-diff-add px-[0.4em] py-[0.14em]">
+                                <span className="font-mono text-[0.62em] font-normal text-st-resolved select-none" aria-hidden="true">
+                                    +
+                                </span>
+                                <span>One list to work through.</span>
+                            </span>
+                        </h1>
+                        <p className="max-w-[58ch] text-lg leading-normal text-pretty text-muted-foreground sm:text-xl sm:leading-normal">
+                            Triagent reviews your pull requests with the models you choose, merges what they find into a single list, and
+                            lets your team and your coding agents work through it together.
+                        </p>
+                        <div className="flex flex-wrap items-center justify-center gap-3">
+                            {enter("lg")}
+                            <Button asChild variant="outline" size="lg" className="h-12 px-6 text-base">
+                                <a href="#try">Try it here</a>
+                            </Button>
                         </div>
                     </div>
+                    <div className="grid gap-4">
+                        <Bench />
+                        <p className="justify-self-center text-center text-[0.9375rem] text-muted-foreground">
+                            A made-up pull request. The switches work: turn a reviewer off and see what goes with it.
+                        </p>
+                    </div>
                 </section>
 
-                <section aria-labelledby="models">
-                    <div
-                        className={cn(COLUMN, "grid grid-cols-[minmax(0,1fr)] items-start gap-x-16 gap-y-10 py-8 sm:py-12 lg:grid-cols-2")}
-                    >
+                <section aria-labelledby="models" className="border-t">
+                    <div className={cn(COLUMN, BAND, "grid grid-cols-[minmax(0,1fr)] items-center gap-x-16 gap-y-10 lg:grid-cols-2")}>
                         <div className="grid gap-6">
                             <SectionHeading id="models" title="Ask more than one reviewer">
-                                Each model reviews the same change. Findings at the same place become one, marked with every model that
-                                found it. The first model's wording leads; the others' are a click away.
+                                Models miss different things. Each one reviews the same change, and findings at the same place become one,
+                                marked with every model that found it. The first model's wording leads; the others' are a click away.
                             </SectionHeading>
                             <Points>
                                 <li>Sort and filter by agreement, in the app, the API and the tools agents use.</li>
@@ -395,13 +258,39 @@ export function LandingPage() {
                                 <li>Each model keeps its own record, so you can see what it found, cost and took.</li>
                             </Points>
                         </div>
-                        <MergePicture />
+                        <div className="grid gap-5">
+                            <Agreement />
+                            <p className="text-base leading-normal text-pretty text-muted-foreground" data-testid="providers">
+                                Bring your own keys, for 17 providers, among them{" "}
+                                <span className="text-foreground">
+                                    {PROVIDERS.slice(0, -1).join(", ")} and {PROVIDERS.at(-1)}
+                                </span>
+                                .
+                            </p>
+                        </div>
                     </div>
                 </section>
 
-                <section aria-labelledby="agents">
+                <section aria-labelledby="try" className="border-t bg-muted">
+                    <div className={cn(COLUMN, BAND, "grid grid-cols-[minmax(0,1fr)] gap-10")}>
+                        <SectionHeading id="try" title="This is the triage list. It works." centred>
+                            Filter it, open a finding, see how another model put the same thing, deal with it yourself or hand the next one
+                            to an agent. Nothing you do here leaves this page.
+                        </SectionHeading>
+                        <div className="text-sm">
+                            <TryIt />
+                        </div>
+                    </div>
+                </section>
+
+                {/* Where agents work is a terminal: this part of the page is dark in both themes. */}
+                <section aria-labelledby="agents" className="dark bg-[#0b0f12] text-foreground">
                     <div
-                        className={cn(COLUMN, "grid grid-cols-[minmax(0,1fr)] items-start gap-x-16 gap-y-10 py-8 sm:py-12 lg:grid-cols-2")}
+                        className={cn(
+                            COLUMN,
+                            BAND,
+                            "grid grid-cols-[minmax(0,1fr)] items-start gap-x-14 gap-y-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]",
+                        )}
                     >
                         <div className="grid gap-6">
                             <SectionHeading id="agents" title="Built for the agents doing the fixing">
@@ -414,39 +303,67 @@ export function LandingPage() {
                                 <li>Findings flagged for discussion wait for a person. Agents leave them alone.</li>
                             </Points>
                         </div>
-                        <AgentConsole />
+                        <AgentRace mcp={`${window.location.origin}/mcp`} />
                     </div>
                 </section>
 
-                <section aria-labelledby="yours">
-                    <div className={cn(COLUMN, "grid gap-10 pt-8 pb-16 sm:pt-12 sm:pb-24")}>
+                <section aria-labelledby="how-title">
+                    <div className={cn(COLUMN, BAND, "grid gap-12")}>
+                        <SectionHeading id="how-title" title="From pull request to fixed, in four steps" />
+                        <ol className="grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
+                            {STEPS.map((s, i) => (
+                                <li key={s.title} className="grid content-start gap-2 border-t-2 border-foreground pt-4">
+                                    <span className="font-mono text-5xl leading-none font-semibold tabular-nums" aria-hidden="true">
+                                        {i + 1}
+                                    </span>
+                                    <h3 className="mt-2 text-xl font-semibold">{s.title}</h3>
+                                    <p className="text-base leading-normal text-muted-foreground">{s.text}</p>
+                                </li>
+                            ))}
+                        </ol>
+                    </div>
+                </section>
+
+                <section aria-labelledby="yours" className="border-t">
+                    <div className={cn(COLUMN, BAND, "grid gap-10")}>
                         <SectionHeading id="yours" title="Yours to run, and careful with what you give it">
                             Triagent reviews code it hasn't seen before with keys that cost money. It's built on the assumption that both
                             deserve care.
                         </SectionHeading>
-                        <dl className="grid gap-x-12 gap-y-8 md:grid-cols-2 xl:grid-cols-3">
+                        {/* Set out the way a pull request lists its checks: what was checked, and that it holds. */}
+                        <ul className="grid grid-cols-[minmax(0,1fr)] overflow-hidden rounded-lg border bg-card md:grid-cols-2">
                             {REASONS.map((r) => (
-                                <div key={r.title} className="grid content-start gap-1">
-                                    <dt className="text-base font-semibold">{r.title}</dt>
-                                    <dd className="max-w-[65ch] text-base leading-normal text-muted-foreground">{r.text}</dd>
-                                </div>
+                                <li
+                                    key={r.title}
+                                    className="flex gap-3.5 border-b p-5 max-md:last:border-b-0 md:odd:border-e md:nth-last-[-n+2]:border-b-0"
+                                >
+                                    <Check className="mt-0.5 size-5 shrink-0 text-st-resolved" aria-hidden="true" />
+                                    <div className="grid min-w-0 content-start gap-1">
+                                        <h3 className="text-base font-semibold">{r.title}</h3>
+                                        <p className="text-base leading-normal text-muted-foreground">{r.text}</p>
+                                    </div>
+                                </li>
                             ))}
-                        </dl>
+                        </ul>
                     </div>
                 </section>
 
                 <section aria-labelledby="start-title" className="border-t bg-muted">
-                    <div className={cn(COLUMN, "grid gap-8 py-8 sm:py-12")}>
-                        <h2 id="start-title" className="text-2xl leading-tight font-semibold tracking-tight text-balance sm:text-4xl">
+                    <div className={cn(COLUMN, BAND, "grid justify-items-center gap-8 text-center")}>
+                        <h2
+                            id="start-title"
+                            className="text-3xl leading-[1.1] font-semibold tracking-tight text-balance sm:text-5xl sm:leading-[1.08]"
+                        >
                             <span className="block">The findings are already there.</span>
                             <span className="block">Make them easy to finish.</span>
                         </h2>
-                        <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex flex-wrap items-center justify-center gap-3">
                             {enter("lg")}
-                            <Button asChild variant="outline" size="lg" className="h-11 px-5 text-base">
+                            <Button asChild variant="outline" size="lg" className="h-12 px-6 text-base">
                                 <a href="#try">Back to the demo</a>
                             </Button>
                         </div>
+                        <p className="text-[0.9375rem] text-muted-foreground">Self-hosted and free software, built on Open Code Review.</p>
                     </div>
                 </section>
             </main>
