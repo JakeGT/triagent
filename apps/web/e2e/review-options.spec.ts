@@ -269,3 +269,96 @@ test.describe("asking a model which findings are the same problem", () => {
         await expect(page.getByRole("row")).toHaveCount(2);
     });
 });
+
+for (const theme of ["light", "dark"] as const) {
+    test(`Compare models only: the branch keeps its report, and the comparison has a page of its own (${theme})`, async ({
+        page,
+        admin,
+    }) => {
+        test.slow();
+        const { ws } = await reviewable(admin, ["fake/model", "fake/wordy-extra", "fake/fail"]);
+        // The branch has a report already, from an ordinary review.
+        const review = await admin.post(`/api/v1/w/${ws}/p/app/reviews`, { kind: "full" });
+        await expect.poll(async () => (await admin.get(`/api/v1/w/${ws}/runs/${review.id}`)).status, { timeout: 30_000 }).toBe("done");
+        const before = (await admin.get(`/api/v1/w/${ws}/p/app/branches`)).items;
+
+        await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
+        await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+        await page.goto(`/w/${ws}/p/app/start-review?kind=full`);
+        const form = page.getByRole("region", { name: "What to review" });
+        await form.getByRole("button", { name: "Change the models" }).click();
+        await form.getByRole("checkbox", { name: "fake/wordy-extra" }).check();
+        await form.getByRole("checkbox", { name: "fake/fail" }).check();
+        const options = form.getByRole("group", { name: "Options" });
+        await expect(options.getByRole("checkbox")).toHaveCount(5);
+        await options.getByRole("checkbox", { name: "Compare models only" }).check();
+        // What's about the report and the check goes: a comparison touches neither.
+        await expect(options.getByRole("checkbox")).toHaveText(["", ""]);
+        await expect(options.getByRole("checkbox", { name: "Retry failed models once automatically" })).toHaveCount(0);
+        await expect(options.getByRole("checkbox", { name: /^Ask a model/ })).toBeVisible();
+        await expect(form.getByRole("button", { name: "Start comparison" })).toBeVisible();
+        await axe(page, `Start a review, comparing only (${theme})`);
+        await form.getByRole("button", { name: "Start comparison" }).click();
+
+        const panel = page.getByTestId("run-panel");
+        await expect(panel.getByRole("heading", { level: 2 })).toHaveText("Comparison: Full scan of main");
+        await expect(panel.getByTestId("run-options")).toHaveText(
+            "Comparing the models only: the branch's report and triage are left as they are.",
+        );
+        await expect(panel.getByText("Partly done", { exact: true })).toBeVisible({ timeout: 30_000 });
+        const summary = panel.getByTestId("run-comparison");
+        await expect(summary).toContainText("2 findings between them, 1 found by more than one model.");
+        // A comparison has no report for a failed model's findings to join.
+        await expect(panel.getByRole("button", { name: /Run it again/ })).toHaveCount(0);
+        await axe(page, `a comparison's run (${theme})`);
+        await summary.getByRole("link", { name: "See the comparison" }).click();
+
+        // Its own page: each model's figures, what they found in common, and the findings.
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText("Comparison: Full scan of main");
+        await expect(page.getByTestId("comparison-summary")).toContainText("2 findings between them, 1 found by more than one model.");
+        const models = page.getByTestId("comparison-models").getByRole("row");
+        await expect(models).toHaveCount(4);
+        await expect(models.nth(1)).toHaveText(/^fake\/model101[\d,]+No price\ds$/);
+        await expect(models.nth(2)).toHaveText(/^fake\/wordy-extra211[\d,]+No price\ds$/);
+        await expect(models.nth(3)).toContainText("Didn't finish: Open Code Review failed");
+        const overlap = page.getByTestId("comparison-overlap").getByRole("row");
+        await expect(overlap).toHaveText(["Modelfake/modelfake/wordy-extra", "fake/model11", "fake/wordy-extra12"]);
+        const findings = page.getByTestId("comparison-findings").getByRole("listitem");
+        await expect(findings).toHaveCount(2);
+        await expect(findings.nth(0)).toContainText("Found by all 2 models");
+        await expect(findings.nth(1)).toContainText("Found by one model");
+        // Opened from the keyboard (a toast about the run may be over it).
+        await findings.nth(1).locator("summary").press("Enter");
+        await expect(findings.nth(1).getByText("Only fake/wordy-extra noticed this.")).toBeVisible();
+        await axe(page, `a comparison of models (${theme})`);
+        await noSidewaysScroll(page);
+        await page.getByLabel("Show", { exact: true }).selectOption({ label: "Found by one model only" });
+        await expect(findings).toHaveCount(1);
+        await expect(findings).toContainText("fake/wordy-extra");
+        await page.getByLabel("Show", { exact: true }).selectOption({ label: "Found by fake/model" });
+        await expect(findings).toHaveCount(1);
+        await expect(findings).toContainText("Found by all 2 models");
+
+        // The branch is as it was: the one model's report, its one finding.
+        expect((await admin.get(`/api/v1/w/${ws}/p/app/branches`)).items).toEqual(before);
+        await page.getByRole("link", { name: "The run" }).click();
+        await expect(panel.getByRole("heading", { level: 2 })).toHaveText("Comparison: Full scan of main");
+        await page.goto(`/w/${ws}/p/app/issues?branch=main`);
+        await expect(page.getByRole("row")).toHaveCount(2);
+        await expect(page.getByText(/Found by/)).toHaveCount(0);
+    });
+}
+
+test("a comparison that hasn't finished, and a run that isn't one, say so", async ({ page, admin }) => {
+    const { ws, ids } = await reviewable(admin, ["fake/model", "fake/sleep-4"]);
+    const review = await admin.post(`/api/v1/w/${ws}/p/app/reviews`, { kind: "full", models: [ids[0]] });
+    const comparison = await admin.post(`/api/v1/w/${ws}/p/app/reviews`, { kind: "full", models: ids, options: { bakeOff: true } });
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+    await page.goto(`/w/${ws}/p/app/comparisons/${comparison.id}`);
+    await expect(page.getByRole("heading", { name: "Nothing to compare yet" })).toBeVisible();
+    await expect(page.getByText("This comparison hasn't finished yet. The run's page shows how it's going.")).toBeVisible();
+    await axe(page, "a comparison that hasn't finished");
+    await page.goto(`/w/${ws}/p/app/comparisons/${review.id}`);
+    await expect(page.getByRole("alert")).toContainText("No such comparison");
+    await admin.post(`/api/v1/w/${ws}/runs/${comparison.id}/cancel`);
+});

@@ -193,7 +193,7 @@ export function AppSidebar() {
                                             ? `${runs.data.counts.running} running, ${runs.data.counts.queued} queued`
                                             : undefined
                                     }
-                                    active={active_("/runs")}
+                                    active={active_("/runs") || active_("/comparisons")}
                                 >
                                     {(c) => (
                                         <Link to="/w/$ws/p/$project/runs" params={params}>

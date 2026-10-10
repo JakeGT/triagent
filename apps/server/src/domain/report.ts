@@ -172,7 +172,7 @@ function findingHash(c: RawComment): string {
         .digest("hex");
 }
 
-const lineOf = (v: unknown): number | null => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
+export const lineOf = (v: unknown): number | null => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
 
 /** A short list of model names from a report, or null: anything else is ignored, not refused. */
 function modelNames(v: unknown): string[] | null {

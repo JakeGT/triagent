@@ -250,6 +250,8 @@ export interface ReviewDetails {
      * record (the first model's) carries what the merged report did to the branch (counts, addedIds).
      */
     scan?: { id: string; models: string[]; lead: boolean; status: "done" | "partial" | "failed" | "cancelled"; findings: number | null };
+    /** A review run only to compare its models: it counts for the models, and did nothing to its branch. */
+    bakeOff?: boolean;
     /** Not a review: the model a review asked which findings are the same problem, with the tokens that took. */
     merging?: boolean;
     /** One model of a review run again by itself: which attempt of that model's this was (2 for the first time it was run again). */

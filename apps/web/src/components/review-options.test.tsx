@@ -11,6 +11,14 @@ describe("optionsFor", () => {
         expect(optionsFor({ agreement: { failAt: null } }, 2)).toEqual({ agreement: { failAt: null } });
         expect(optionsFor({}, 2)).toEqual({});
     });
+
+    it("a comparison is sent without the options about the report and the check", () => {
+        expect(optionsFor({ bakeOff: true, retryFailed: true, agreement: { failAt: 2, markSingles: true }, judge: "abc" }, 3)).toEqual({
+            bakeOff: true,
+            judge: "abc",
+        });
+        expect(optionsFor({ bakeOff: true, judge: null }, 2)).toEqual({ bakeOff: true });
+    });
 });
 
 describe("ReviewOptions", () => {
@@ -81,5 +89,18 @@ describe("ReviewOptions", () => {
         // None of the review's models can be asked: it says so.
         rerender(<ReviewOptions value={{ judge: "first" }} models={2} choices={choices} chosen={["b"]} onChange={onChange} />);
         expect(screen.getByRole("alert").textContent).toBe("None of this review's models can be asked. Choose a model to ask.");
+    });
+
+    it("comparing only hides what's about the report and the check, and a project is never offered it", async () => {
+        const onChange = vi.fn();
+        const { rerender } = render(<ReviewOptions value={{ retryFailed: true, judge: "first" }} models={2} onChange={onChange} />);
+        await userEvent.click(screen.getByRole("checkbox", { name: "Compare models only" }));
+        expect(onChange).toHaveBeenLastCalledWith({ bakeOff: true, judge: "first" });
+        rerender(<ReviewOptions value={{ bakeOff: true, judge: "first" }} models={2} onChange={onChange} />);
+        expect(screen.getAllByRole("checkbox").map((c) => c.getAttribute("aria-checked"))).toEqual(["true", "true"]);
+        expect(screen.queryByRole("checkbox", { name: "Retry failed models once automatically" })).toBeNull();
+        rerender(<ReviewOptions value={{}} models={5} project onChange={onChange} />);
+        expect(screen.queryByRole("checkbox", { name: "Compare models only" })).toBeNull();
+        expect(screen.getAllByRole("checkbox")).toHaveLength(4);
     });
 });

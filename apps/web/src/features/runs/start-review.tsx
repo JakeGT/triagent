@@ -84,6 +84,7 @@ export function StartReviewForm({
     // Options for several models: the project's own, until someone changes them for this review.
     const [options, setOptions] = useState<RunOptionsInput | null>(null);
     const several = models.length > 1;
+    const comparing = several && options?.bakeOff === true;
     // Suggestions: the open pull requests, and the branches this project knows of.
     const prs = useQuery(pullRequestsQuery(ws, slug));
     const branches = useQuery(branchesQuery(ws, slug));
@@ -261,7 +262,7 @@ export function StartReviewForm({
             <div className="flex flex-wrap items-center justify-end gap-2">
                 {actions}
                 <Button type="submit" disabled={!ready || start.isPending}>
-                    <Play /> {start.isPending ? "Starting…" : "Start review"}
+                    <Play /> {start.isPending ? "Starting…" : comparing ? "Start comparison" : "Start review"}
                 </Button>
             </div>
         </form>

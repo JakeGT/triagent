@@ -1,6 +1,7 @@
 // Starting, watching and cancelling reviews, and a project's pull requests.
 
 import { z } from "zod";
+import { costOf } from "../domain/analytics.ts";
 import { json, type Route, route } from "../http/route.ts";
 import type { Access } from "../services/accounts.ts";
 import { ModelIds, RunOptionsInput } from "../services/settings.ts";
@@ -98,6 +99,23 @@ export const runRoutes: Route[] = [
         summary: "Cancel a queued or running review",
         async handler({ services, access, params, actor }) {
             return json(await services.runs.cancel(actor, (access as Access).workspace, params.runId as string));
+        },
+    }),
+    route({
+        method: "GET",
+        path: `${W}/runs/{runId}/comparison`,
+        scope: "workspace",
+        permission: "read",
+        tag: "Runs",
+        summary: "What a review run only to compare its models found (started with options.bakeOff)",
+        description:
+            "`models`: each model's own findings (`total`, of which `unique` no other found and `shared` another did), by severity, with its tokens, time and cost in US$ (null without a price for it). `overlap[i][j]`: findings models i and j both found. `findings`: the findings once merged, most models agreeing first, each with the models that found it (`foundBy`); at most 500, `truncated` when there were more. 409 until it has finished; 404 for a run that isn't a comparison.",
+        async handler({ services, access, params }) {
+            const workspace = (access as Access).workspace;
+            const { run, comparison } = await services.runs.comparison(workspace, params.runId as string);
+            const price = await services.prices.resolver(workspace.id);
+            const models = comparison.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model)) }));
+            return json({ run, ...comparison, models });
         },
     }),
     route({

@@ -63,20 +63,27 @@ export const RunOptionsInput = z
             .describe(
                 "Ask a model whether findings from different models that the lines and category left apart are the same problem, and merge those it says are (at most 200 pairs a review; it sees the findings' text and where they are, never the code). true or \"first\": the review's first model that can be asked; or a favourite model's id. Not a model on Amazon Bedrock, nor the instance's model",
             ),
+        bakeOff: z
+            .boolean()
+            .optional()
+            .describe(
+                "Compare the models only: the branch's report and triage are left as they are, nothing is posted on the pull request, and the run keeps a comparison of what each model found (GET …/runs/{runId}/comparison). Not with retryFailed or agreement, which are about the report and the check",
+            ),
     })
     .strict();
 export type RunOptionsInput = z.infer<typeof RunOptionsInput>;
 
-/** A project's own, for reviews that don't say. */
-export const ProjectOptionsInput = RunOptionsInput;
+/** A project's own, for reviews that don't say: the same, except comparing only, which is always asked for. */
+export const ProjectOptionsInput = RunOptionsInput.omit({ bakeOff: true });
 
 /** The options asked for, in full: what wasn't said is off. */
-export function runOptions(input: RunOptionsInput | null | undefined): RunOptions {
+export function runOptions(input: RunOptionsInput | z.infer<typeof ProjectOptionsInput> | null | undefined): RunOptions {
     return {
         ...structuredClone(NO_OPTIONS),
         retryFailed: input?.retryFailed ?? false,
         agreement: { failAt: input?.agreement?.failAt ?? null, markSingles: input?.agreement?.markSingles ?? false },
         judge: input?.judge === true ? JUDGE_FIRST : input?.judge || null,
+        bakeOff: (input as RunOptionsInput | null | undefined)?.bakeOff ?? false,
     };
 }
 

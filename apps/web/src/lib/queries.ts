@@ -21,6 +21,7 @@ import type {
     Me,
     Member,
     ModelChoices,
+    ModelComparison,
     Overview,
     Project,
     ProjectListItem,
@@ -217,6 +218,15 @@ export const runListQuery = (ws: string, project: string | null) =>
     queryOptions({
         queryKey: keys.runList(ws, project),
         queryFn: ({ signal }) => api.get<RunList>(`${paths.workspace(ws)}/runs`, { project: project ?? undefined }, { signal }),
+    });
+
+/** A comparison of models: under the run's own key, so it's fetched again when the run moves on. */
+export const modelComparisonQuery = (ws: string, id: string) =>
+    queryOptions({
+        queryKey: [...keys.run(ws, id), "comparison"] as const,
+        queryFn: ({ signal }) =>
+            api.get<ModelComparison>(`${paths.workspace(ws)}/runs/${encodeURIComponent(id)}/comparison`, {}, { signal }),
+        retry: false,
     });
 
 export const pullRequestsQuery = (ws: string, p: string) =>

@@ -346,6 +346,12 @@ const runRoute = createRoute({
     component: lazyRouteComponent(() => import("@/features/runs/run-panel"), "RunPanel"),
 });
 
+const comparisonRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "/comparisons/$runId",
+    component: lazyRouteComponent(() => import("@/features/runs/comparison-page"), "ComparisonPage"),
+});
+
 /** What a link to Start a review can choose already: ?kind=pr&number=12, ?kind=changes&branch=x&base=main. */
 type StartReviewSearch = { kind?: "pr" | "changes" | "full"; number?: number; branch?: string; base?: string };
 
@@ -435,6 +441,7 @@ const routeTree = rootRoute.addChildren([
                 compareRoute,
                 activityRoute,
                 runsRoute.addChildren([runRoute]),
+                comparisonRoute,
                 startReviewRoute,
                 pullRequestsRoute,
                 projectSettingsRoute.addChildren([projectSettingsIndexRoute, ...projectSettingsRoutes]),

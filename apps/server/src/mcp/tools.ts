@@ -3,6 +3,7 @@
 
 import { CATEGORIES, type Permission, SEVERITIES, STATUSES } from "@triagent/shared";
 import { z } from "zod";
+import { costOf } from "../domain/analytics.ts";
 import { MAX_ID, parseFilters } from "../domain/filters.ts";
 import { issueMarkdown, overviewMarkdown, taskMarkdown } from "../domain/markdown.ts";
 import { badRequest, notFound } from "../errors.ts";
@@ -646,7 +647,7 @@ export const TOOLS: Tool[] = [
                 "The models for this review only, as ids from list_models (up to five; they review it at the same time and their findings are merged). Default: the project's models for this kind of review.",
             ),
             options: RunOptionsInput.optional().describe(
-                "Options for this review, when it has two or more models: retryFailed (a model that fails is run once more by itself), agreement rules (fail the pull request's check only for critical findings several models found; mark findings one model found as lower confidence), and judge (a model is asked which findings from different models are the same problem, and those are merged). Anything left out is off; without `options` at all, the project's own apply.",
+                "Options for this review, when it has two or more models: retryFailed (a model that fails is run once more by itself), agreement rules (fail the pull request's check only for critical findings several models found; mark findings one model found as lower confidence), judge (a model is asked which findings from different models are the same problem, and those are merged), and bakeOff (compare the models only: the branch's report and triage are left alone, nothing is posted on the pull request, and get_comparison shows what each model found). Anything left out is off; without `options` at all, the project's own apply.",
             ),
         }),
         async run(ctx, args) {
@@ -733,6 +734,36 @@ export const TOOLS: Tool[] = [
                 text: `${r.title}: ${r.status}${r.error ? ` (${r.error})` : ""}${r.result?.total !== null && r.result?.total !== undefined ? `, ${r.result.total} finding(s) on ${r.branch}` : ""}.\n\n${tail.join("\n")}`,
                 data: r,
             };
+        },
+    }),
+    tool({
+        name: "get_comparison",
+        title: "Get comparison",
+        description:
+            "What a comparison of models found: a review started with options.bakeOff, which leaves the branch's report and triage alone. Each model's findings (how many only it found, how many another found too), tokens, cost and time, and the findings with which models found each.",
+        permission: "read",
+        readOnly: true,
+        input: z.object({ id: z.string().max(40).describe("The comparison's run id") }),
+        async run(ctx, args) {
+            const { run, comparison } = await ctx.services.runs.comparison(ctx.access.workspace, String(args.id));
+            const price = await ctx.services.prices.resolver(ctx.access.workspace.id);
+            const models = comparison.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model)) }));
+            const text = [
+                `${run.title}: ${comparison.total} finding(s) between them, ${comparison.agreed} found by more than one model.`,
+                ...models.map(
+                    (m) =>
+                        `- ${m.label}: ${m.total === null ? `${m.status}${m.error ? ` (${m.error})` : ""}` : `${m.total} finding(s), ${m.unique} only it found, ${m.shared} another found too`}${m.tokens ? `, ${m.tokens.total} tokens` : ""}${m.cost !== null ? `, US$${m.cost.toFixed(4)}` : ""}${m.seconds !== null ? `, ${m.seconds}s` : ""}`,
+                ),
+                "",
+                ...comparison.findings
+                    .slice(0, 50)
+                    .map(
+                        (f) =>
+                            `- [${f.severity}/${f.category}] \`${f.path}${f.startLine ? `:${f.startLine}` : ""}\` — ${f.title} (found by ${f.foundBy.join(", ")})`,
+                    ),
+                ...(comparison.findings.length > 50 ? [`…and ${comparison.total - 50} more (in the data).`] : []),
+            ].join("\n");
+            return { text, data: { run, ...comparison, models } };
         },
     }),
     tool({

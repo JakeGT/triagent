@@ -11,6 +11,7 @@ import { anyOption, JUDGE_FIRST, NO_OPTIONS, type RunOptions, type Severity } fr
 import { candidatePairs, type FindingPair, groupFindings, joinGroups, MAX_JUDGE_PAIRS, samePair } from "@triagent/shared/merge";
 import { modelSecrets, type RunnerModel } from "@triagent/shared/model";
 import { redactDeep, redactor } from "@triagent/shared/redact";
+import { type BakeOff, compareModels } from "../domain/bake-off.ts";
 import { parseFilters } from "../domain/filters.ts";
 import { findingsOf, MAX_MODELS, type ModelReport, mergeReports } from "../domain/merge.ts";
 import { isValidBranch } from "../domain/names.ts";
@@ -316,10 +317,19 @@ interface RerunResult {
 }
 
 /**
- * A job beside a branch's reviews: one model of a finished review run again. It doesn't take over the
- * pull request's check while it's queued or running, and automatic reviews don't count it as a review.
+ * A job beside a branch's reviews: one model of a finished review run again, or a review run only to
+ * compare its models. It doesn't take over the pull request's check, and automatic reviews don't count
+ * it as a review.
  */
-export const onTheSide = (job: Pick<Job, "rerunOf">): boolean => Boolean(job.rerunOf);
+export const onTheSide = (job: Pick<Job, "rerunOf" | "options">): boolean => Boolean(job.rerunOf || job.options?.bakeOff);
+
+/** A run's result as lists show it: a comparison's findings are left for the comparison itself. */
+function listed(result: Job["result"]): Job["result"] {
+    const made = result?.bakeOff as BakeOff | undefined;
+    if (!result || !made) return result;
+    const { findings: _f, ...summary } = made;
+    return { ...result, bakeOff: summary };
+}
 
 type View = ReturnType<Runs["view"]>;
 
@@ -621,7 +631,7 @@ export class Runs {
             elapsedSeconds: seconds(job.startedAt, job.finishedAt ?? (job.startedAt ? now() : null)) ?? null,
             cancelRequested: job.cancelRequested,
             progress: job.status === "running" ? timed(job.progress) : job.progress,
-            result: job.result,
+            result: listed(job.result),
             error: job.error,
             model: job.model,
             requestedModels: job.requestedModels,
@@ -767,6 +777,20 @@ export class Runs {
         };
     }
 
+    /** What a review run only to compare its models found: each model's figures, what they had in common, and the findings. */
+    async comparison(workspace: Workspace, id: string) {
+        const job = await this.jobIn(workspace, id);
+        if (!job.options?.bakeOff) throw notFound("That run isn't a comparison of models. Start one with Compare models only.");
+        const made = (job.result?.bakeOff as BakeOff | undefined) ?? null;
+        if (!made)
+            throw conflict(
+                ACTIVE_JOB_STATUSES.includes(job.status)
+                    ? "This comparison hasn't finished yet."
+                    : `This comparison ${job.status === "cancelled" ? "was cancelled" : "failed"}, so there's nothing to compare. ${job.error ?? ""}`.trim(),
+            );
+        return { run: this.view(job, await this.store.projects.get(job.projectId)), comparison: made };
+    }
+
     // ---- running one model again -------------------------------------------------------------------
 
     /** The runs that ran this review's models again, oldest first, each as it stands now. */
@@ -804,6 +828,7 @@ export class Runs {
         const models = job.model?.models;
         const results = job.result?.models as { label: string; status: string }[] | undefined;
         if (job.rerunOf) return "This run is itself one model being run again. Run it again from the review it belongs to.";
+        if (job.options?.bakeOff) return "A comparison has no report to add to. Start the comparison again instead.";
         if (!models || models.length < 2 || !Array.isArray(results)) return "Only a review with several models has models to run again.";
         const m = models[index];
         const how = results[index];
@@ -978,6 +1003,8 @@ export class Runs {
         const workspace = await this.store.workspaces.get(project.workspaceId);
         if (models && workspace) await this.settings.checkModelIds(this.store, workspace, models);
         if (options && workspace) await this.checkOptions(workspace, project, spec.kind, models, options);
+        // A comparison is its own thing: it neither replaces nor waits for a review of the same pull request or branch.
+        if (options?.bakeOff) spec = { ...spec, title: `Comparison: ${spec.title}`.slice(0, 300), dedupeKey: `compare:${spec.dedupeKey}` };
         const job = await this.enqueue(actor, project, spec, models, options);
         return this.view(job, project);
     }
@@ -996,6 +1023,10 @@ export class Runs {
         const failAt = options.agreement.failAt;
         if (failAt !== null && failAt > count)
             throw badRequest(`This review has ${count} models, so agreement.failAt can be at most ${count}.`);
+        if (options.bakeOff && (options.retryFailed || failAt !== null || options.agreement.markSingles))
+            throw badRequest(
+                "A comparison leaves the branch's report and the pull request's check alone, so retryFailed and agreement don't apply to it. Leave them out, or start an ordinary review.",
+            );
         if (options.judge) {
             const problem = await this.settings.judgeProblem(this.store, workspace, options.judge);
             if (problem) throw badRequest(problem);
@@ -1204,6 +1235,14 @@ export class Runs {
                     // For a runner that gives every model the job's budget: the tightest, so none can overspend.
                     const capped = budgets.filter((b): b is number => b !== null);
                     const maxTokensBudget = chosen.models.some((m) => m.allowance) ? Math.min(...capped) : automation.maxTokensBudget;
+                    // A comparison whose models are down to one since it was asked for can't compare anything, and must
+                    // never run as an ordinary review instead: that would replace the branch's report.
+                    if (job.options?.bakeOff && chosen.models.length < 2) {
+                        const why =
+                            "A comparison needs two or more models, and this one now has one. Start it again and choose its models.";
+                        await this.failQueued(tx, job, project, workspace, why);
+                        continue;
+                    }
                     // Its options: its own, or the project's; none of them apply to a review with one model.
                     const asked = job.options ?? runOptions(automation.options);
                     const options = effectiveOptions(asked, chosen.models.length);
@@ -1683,6 +1722,7 @@ export class Runs {
                 // One model run again: its findings join the report its review made, rather than replacing it.
                 const original = held.rerunOf ? await w.tx.jobs.get(held.rerunOf.jobId) : null;
                 let rerun: RerunResult | null = null;
+                let bakeOff: BakeOff | null = null;
                 if (held.rerunOf) {
                     const of = held.rerunOf;
                     rerun = {
@@ -1700,6 +1740,12 @@ export class Runs {
                         rerun = { ...rerun, ...made.rerun };
                         addedIds = made.addedIds;
                     }
+                } else if (upload && report && parts && held.options?.bakeOff) {
+                    // Only comparing: nothing goes to the branch. What each model found is kept with the run instead.
+                    bakeOff = compareModels(
+                        parts.map((p) => ({ ...p, finished: p.report !== null })),
+                        report,
+                    );
                 } else if (upload && project && report) {
                     // Findings this review reported first (for analytics' finding ages): those not on the branch before it.
                     const before = await this.reports.view(w.tx, project, held.branch).catch(() => null);
@@ -1762,6 +1808,7 @@ export class Runs {
                     ...(reportId ? { reportId } : {}),
                     ...(rerun ? { rerun } : {}),
                     ...(judged ? { judge: judged } : {}),
+                    ...(bakeOff ? { bakeOff } : {}),
                     ...(parts
                         ? {
                               models: parts.map((p) => ({
@@ -1878,6 +1925,7 @@ export class Runs {
                                 ...(p.metrics?.llm ? { llm: p.metrics.llm } : {}),
                                 ...(i === 0 && addedIds ? { addedIds } : {}),
                                 error: p.error ?? (i === 0 ? errorText : null),
+                                ...(held.options?.bakeOff ? { bakeOff: true } : {}),
                                 scan: { ...scan, lead: i === 0 },
                             },
                         });
@@ -2045,7 +2093,8 @@ export class Runs {
         this.finishedBeside(job, project);
         if (!project) return;
         // A model run again reports only once its findings are in the review's report: the check and comment are then that report's.
-        const reports = job.rerunOf ? Boolean((job.result?.rerun as RerunResult | undefined)?.branch) : true;
+        // A comparison never does: it has nothing to say about the pull request.
+        const reports = job.rerunOf ? Boolean((job.result?.rerun as RerunResult | undefined)?.branch) : !job.options?.bakeOff;
         if (job.kind === "pr" && job.pr && job.headSha && workspace && reports)
             this.background(`Reporting ${job.title} to GitHub`, () => this.tellGithub(job, project, workspace, failOnCritical));
         if (onTheSide(job)) return;

@@ -76,6 +76,7 @@ export function optionsText(run: Pick<Run, "options">): string[] {
     const o = run.options;
     if (!o) return [];
     const out: string[] = [];
+    if (o.bakeOff) out.push("Comparing the models only: the branch's report and triage are left as they are.");
     if (o.retryFailed) out.push("Models that fail are run again once automatically.");
     if (o.agreement.failAt !== null)
         out.push(`The pull request check fails only for criticals at least ${o.agreement.failAt} models found.`);

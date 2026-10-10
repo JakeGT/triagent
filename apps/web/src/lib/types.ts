@@ -392,8 +392,10 @@ export interface RunOptionsInput {
      * review's first model that can be asked, or a favourite model's id.
      */
     judge?: boolean | string | null;
+    /** Compare the models only: the branch's report and triage are left alone. Never a project's own. */
+    bakeOff?: boolean;
 }
-export type ProjectOptions = RunOptionsInput;
+export type ProjectOptions = Omit<RunOptionsInput, "bakeOff">;
 
 /** A project's sets of models: for every review, or for one kind of review (which wins). */
 export const MODEL_SETS = ["all", "pr", "changes", "full"] as const;
@@ -557,6 +559,8 @@ export interface Run {
         github?: string[];
         /** With a rule about agreement: how many models had to find a critical finding, and how many such findings there were. */
         agreement?: { models: number; critical: number };
+        /** A comparison of models: its figures (the findings are the comparison's own page's). */
+        bakeOff?: { total: number; agreed: number };
         /** The review had a model asked which findings are the same problem: how that went. */
         judge?: {
             label: string | null;
@@ -658,6 +662,48 @@ export interface RunRetry {
     /** Why its findings weren't added to the report, when it finished but they weren't. */
     notAdded: string | null;
     error: string | null;
+}
+
+/** One model in a comparison of models: its own findings, and what they cost. */
+export interface ComparedModel {
+    label: string;
+    provider: string;
+    model: string;
+    status: "done" | "partial" | "failed" | "cancelled";
+    /** Its findings, of which `unique` no other model found and `shared` another did; null when it didn't finish. */
+    total: number | null;
+    unique: number | null;
+    shared: number | null;
+    bySeverity: Record<Severity, number> | null;
+    tokens: { input: number; output: number; cacheRead: number; total: number } | null;
+    seconds: number | null;
+    error: string | null;
+    /** US$, or null without a price for the model. */
+    cost: number | null;
+}
+
+export interface ComparedFinding {
+    path: string;
+    startLine: number | null;
+    endLine: number | null;
+    severity: Severity;
+    category: string;
+    title: string;
+    content: string;
+    foundBy: string[];
+}
+
+/** What a review run only to compare its models found (GET …/runs/{id}/comparison). */
+export interface ModelComparison {
+    run: Run;
+    models: ComparedModel[];
+    /** `overlap[i][j]`: findings models i and j both found; on the diagonal, model i's own. */
+    overlap: number[][];
+    total: number;
+    agreed: number;
+    findings: ComparedFinding[];
+    /** There were more findings than are listed. */
+    truncated: boolean;
 }
 
 export interface RunDetail extends Run {

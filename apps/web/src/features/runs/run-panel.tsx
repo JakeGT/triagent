@@ -148,7 +148,7 @@ function RunDetailView({ runId }: { runId: string }) {
             <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
                 <dt className="text-muted-foreground">Branch</dt>
                 <dd className="font-mono text-xs">
-                    {r.status === "done" || r.status === "partial" ? (
+                    {(r.status === "done" || r.status === "partial") && !r.options?.bakeOff ? (
                         <Link
                             to="/w/$ws/p/$project/issues"
                             params={{ ws, project: slug }}
@@ -314,7 +314,23 @@ function RunDetailView({ runId }: { runId: string }) {
                         <dd>{duration(r.elapsedSeconds)}</dd>
                     </>
                 )}
-                {(r.status === "done" || r.status === "partial") && r.result && (
+                {r.result?.bakeOff && (
+                    <>
+                        <dt className="text-muted-foreground">Comparison</dt>
+                        <dd data-testid="run-comparison">
+                            {plural(r.result.bakeOff.total, "finding")} between them, {r.result.bakeOff.agreed} found by more than one
+                            model.{" "}
+                            <Link
+                                to="/w/$ws/p/$project/comparisons/$runId"
+                                params={{ ws, project: slug, runId: r.id }}
+                                className="underline"
+                            >
+                                See the comparison
+                            </Link>
+                        </dd>
+                    </>
+                )}
+                {(r.status === "done" || r.status === "partial") && r.result && !r.result.bakeOff && (
                     <>
                         <dt className="text-muted-foreground">Found</dt>
                         <dd>

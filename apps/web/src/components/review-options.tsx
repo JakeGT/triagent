@@ -11,6 +11,8 @@ const FIRST = "first";
 
 /** The options as they'd be sent for a review with this many models: no rule asks for more models than it has. */
 export function optionsFor(value: RunOptionsInput, models: number): RunOptionsInput {
+    // Only comparing: the options about the report and the check aren't sent (a project's own may be on).
+    if (value.bakeOff) return { bakeOff: true, ...(value.judge ? { judge: value.judge } : {}) };
     const failAt = value.agreement?.failAt ?? null;
     return failAt === null ? value : { ...value, agreement: { ...value.agreement, failAt: Math.min(failAt, Math.max(models, 2)) } };
 }
@@ -46,60 +48,83 @@ export function ReviewOptions({
     const names = new Map(modelOptions(choices).map((o) => [o.id, o.label]));
     const first = chosen?.find((id) => able.some((f) => f.id === id));
     const nobody = judge === FIRST && chosen !== undefined && choices !== undefined && first === undefined;
+    const comparing = !project && value.bakeOff === true;
     const setAgreement = (patch: NonNullable<RunOptionsInput["agreement"]>) =>
         onChange({ ...value, agreement: { ...agreement, ...patch } });
     return (
         <fieldset className="grid gap-field" data-testid="review-options">
             <legend className="mb-field text-sm leading-snug font-medium">{legend}</legend>
             <div className="grid gap-2">
-                <CheckField
-                    label="Retry failed models once automatically"
-                    hint="A model that fails or goes quiet is run once more by itself, and its findings are added to the report."
-                >
-                    {(p) => (
-                        <Checkbox
-                            {...p}
-                            checked={value.retryFailed === true}
-                            disabled={disabled}
-                            onCheckedChange={(v) => onChange({ ...value, retryFailed: v === true })}
-                        />
-                    )}
-                </CheckField>
-                <CheckField
-                    label={`Fail the pull request check only for criticals at least ${failAt ?? 2} models found`}
-                    hint="Otherwise any critical finding fails it. Every finding is still kept, whoever found it."
-                >
-                    {(p) => (
-                        <Checkbox
-                            {...p}
-                            checked={failAt !== null}
-                            disabled={disabled}
-                            onCheckedChange={(v) => setAgreement({ failAt: v === true ? 2 : null })}
-                        />
-                    )}
-                </CheckField>
-                {failAt !== null && models > 2 && (
-                    <Field
-                        label="How many models must have found it"
-                        hint={project ? "A review with fewer models than this needs all of them to have found it." : undefined}
-                        width="sm"
-                        className="ps-7"
+                {!project && (
+                    <CheckField
+                        label="Compare models only"
+                        hint="The branch's report and triage are left as they are, and nothing is posted on the pull request. You get a page comparing what each model found."
                     >
                         {(p) => (
-                            <NativeSelect
+                            <Checkbox
                                 {...p}
-                                value={String(failAt)}
+                                checked={comparing}
                                 disabled={disabled}
-                                onChange={(e) => setAgreement({ failAt: Number(e.target.value) })}
-                            >
-                                {Array.from({ length: models - 1 }, (_, i) => i + 2).map((n) => (
-                                    <option key={n} value={String(n)}>
-                                        {project ? `At least ${n}` : n === models ? `All ${n}` : `At least ${n} of ${models}`}
-                                    </option>
-                                ))}
-                            </NativeSelect>
+                                // The options about the report and the check don't apply to a comparison: they're dropped.
+                                onCheckedChange={(v) =>
+                                    onChange(v === true ? { bakeOff: true, judge: value.judge ?? null } : { ...value, bakeOff: false })
+                                }
+                            />
                         )}
-                    </Field>
+                    </CheckField>
+                )}
+                {!comparing && (
+                    <>
+                        <CheckField
+                            label="Retry failed models once automatically"
+                            hint="A model that fails or goes quiet is run once more by itself, and its findings are added to the report."
+                        >
+                            {(p) => (
+                                <Checkbox
+                                    {...p}
+                                    checked={value.retryFailed === true}
+                                    disabled={disabled}
+                                    onCheckedChange={(v) => onChange({ ...value, retryFailed: v === true })}
+                                />
+                            )}
+                        </CheckField>
+                        <CheckField
+                            label={`Fail the pull request check only for criticals at least ${failAt ?? 2} models found`}
+                            hint="Otherwise any critical finding fails it. Every finding is still kept, whoever found it."
+                        >
+                            {(p) => (
+                                <Checkbox
+                                    {...p}
+                                    checked={failAt !== null}
+                                    disabled={disabled}
+                                    onCheckedChange={(v) => setAgreement({ failAt: v === true ? 2 : null })}
+                                />
+                            )}
+                        </CheckField>
+                        {failAt !== null && models > 2 && (
+                            <Field
+                                label="How many models must have found it"
+                                hint={project ? "A review with fewer models than this needs all of them to have found it." : undefined}
+                                width="sm"
+                                className="ps-7"
+                            >
+                                {(p) => (
+                                    <NativeSelect
+                                        {...p}
+                                        value={String(failAt)}
+                                        disabled={disabled}
+                                        onChange={(e) => setAgreement({ failAt: Number(e.target.value) })}
+                                    >
+                                        {Array.from({ length: models - 1 }, (_, i) => i + 2).map((n) => (
+                                            <option key={n} value={String(n)}>
+                                                {project ? `At least ${n}` : n === models ? `All ${n}` : `At least ${n} of ${models}`}
+                                            </option>
+                                        ))}
+                                    </NativeSelect>
+                                )}
+                            </Field>
+                        )}
+                    </>
                 )}
                 <CheckField
                     label="Ask a model whether findings from different models are the same problem"
@@ -146,19 +171,21 @@ export function ReviewOptions({
                     </Field>
                 )}
                 {nobody && <FieldError className="ps-7" message="None of this review's models can be asked. Choose a model to ask." />}
-                <CheckField
-                    label="Mark findings only one model found as lower confidence"
-                    hint="They're labelled, can be filtered, and are listed after the others of their severity. Nothing about triage changes."
-                >
-                    {(p) => (
-                        <Checkbox
-                            {...p}
-                            checked={agreement.markSingles === true}
-                            disabled={disabled}
-                            onCheckedChange={(v) => setAgreement({ markSingles: v === true })}
-                        />
-                    )}
-                </CheckField>
+                {!comparing && (
+                    <CheckField
+                        label="Mark findings only one model found as lower confidence"
+                        hint="They're labelled, can be filtered, and are listed after the others of their severity. Nothing about triage changes."
+                    >
+                        {(p) => (
+                            <Checkbox
+                                {...p}
+                                checked={agreement.markSingles === true}
+                                disabled={disabled}
+                                onCheckedChange={(v) => setAgreement({ markSingles: v === true })}
+                            />
+                        )}
+                    </CheckField>
+                )}
             </div>
         </fieldset>
     );

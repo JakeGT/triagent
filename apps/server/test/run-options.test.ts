@@ -1173,3 +1173,258 @@ describe("what a runner says a model answered, as the server takes it", () => {
         assert.ok(done.logLines.some((l: { line: string }) => /No model will be asked which findings are the same problem/.test(l.line)));
     });
 });
+
+describe("comparing models only", () => {
+    let env: ReviewEnv;
+    const ws = "bakeoff";
+    const { request, favourite, post, start, issues, run, pull, comment, token, mcp } = kit(() => env, ws, "bakeoff/app");
+    const workspaceId = async () => (await env.t.services.store.workspaces.bySlug(ws))?.id as string;
+    const statuses = (sha: string) => env.fake.repo("bakeoff/app").statuses.filter((s) => s.sha === sha);
+    const branch = async (name: string) =>
+        (await request(`/api/v1/w/${ws}/p/app/branches`, { session: env.admin })).body.items.find((b: { name: string }) => b.name === name);
+
+    before(async () => {
+        env = await reviewEnv();
+        await patProject(env, ws, { repo: "bakeoff/app" });
+        await env.fake.gitRepo("bakeoff/app", { "src/a.ts": "export const a = 1;\n" });
+        env.runner();
+    });
+    after(() => env.close());
+
+    test("it needs two or more models, and takes none of the options about the report or the check", async () => {
+        const one = await post({ kind: "full", branch: "main", options: { bakeOff: true } });
+        assert.equal(one.status, 400, one.text);
+        assert.match(one.text, /two or more models/);
+        const models = [await favourite("fake/model"), await favourite("fake/wordy-extra")];
+        for (const extra of [{ retryFailed: true }, { agreement: { failAt: 2 } }, { agreement: { markSingles: true } }]) {
+            const mixed = await post({ kind: "full", branch: "main", models, options: { bakeOff: true, ...extra } });
+            assert.equal(mixed.status, 400, mixed.text);
+            assert.match(
+                mixed.text,
+                /A comparison leaves the branch's report and the pull request's check alone, so retryFailed and agreement don't apply/,
+            );
+        }
+        // A project can't make every review a comparison.
+        const project = await request(`/api/v1/w/${ws}/p/app/settings/automation`, {
+            method: "PATCH",
+            session: env.admin,
+            body: { options: { bakeOff: true } },
+        });
+        assert.equal(project.status, 400, project.text);
+    });
+
+    test("the branch's report, its triage and the pull request are untouched; the run has the comparison", async () => {
+        const models = [await favourite("fake/model"), await favourite("fake/wordy-extra"), await favourite("fake/fail")];
+        // The pull request has a review already, with some triage done.
+        const head = await pull(51, { "src/b.ts": "export const b = 2;\n", "src/c.ts": "export const c = 3;\n" });
+        const review = await finished(env, ws, (await start({ kind: "pr", number: 51 })).id);
+        assert.equal(review.status, "done", review.error);
+        const before = (await issues("pr-51", "&sort=index")).items;
+        assert.equal(before.length, 2);
+        const fixed = await request(`/api/v1/w/${ws}/p/app/issues/${before[0].id}?branch=pr-51`, {
+            method: "PATCH",
+            session: env.admin,
+            body: { status: "resolved", note: "Fixed." },
+        });
+        assert.equal(fixed.status, 200, fixed.text);
+        const was = {
+            branch: await branch("pr-51"),
+            issues: (await issues("pr-51", "&sort=index")).items,
+            statuses: statuses(head).length,
+            comment: comment(51),
+            comments: env.fake.repo("bakeoff/app").comments.get(51)?.length,
+            added: (await request(`/api/v1/w/${ws}/analytics?days=7`, { session: env.admin })).body.findings.added,
+            pulls: (await request(`/api/v1/w/${ws}/p/app/pull-requests`, { session: env.admin })).body.items,
+        };
+
+        const started = await start({ kind: "pr", number: 51, models, options: { bakeOff: true } });
+        assert.equal(started.title, "Comparison: PR #51: Change 51");
+        assert.equal(started.options.bakeOff, true);
+        // An ordinary review of the same commit is still its own thing: neither is taken for the other.
+        const done = await finished(env, ws, started.id);
+        assert.equal(done.status, "partial", done.error);
+        assert.equal(done.branch, "pr-51");
+        assert.equal(done.result.counts, null);
+        assert.equal(done.result.reportId, undefined);
+        assert.equal(done.result.github, undefined, "nothing was posted to GitHub");
+
+        // Nothing about the branch or the pull request has changed.
+        assert.deepEqual(await branch("pr-51"), was.branch);
+        assert.deepEqual((await issues("pr-51", "&sort=index")).items, was.issues);
+        assert.equal((await issues("pr-51")).models, null, "still the one model's report");
+        assert.equal(statuses(head).length, was.statuses, "no status: not pending, not passing, not failing");
+        assert.equal(comment(51), was.comment);
+        assert.equal(env.fake.repo("bakeoff/app").comments.get(51)?.length, was.comments);
+        assert.deepEqual((await request(`/api/v1/w/${ws}/p/app/pull-requests`, { session: env.admin })).body.items, was.pulls);
+        const activity = (await request(`/api/v1/w/${ws}/p/app/activity?branch=pr-51`, { session: env.admin })).body.items;
+        assert.equal(activity.filter((a: { kind: string }) => a.kind === "report").length, 1, "one upload: the review's");
+
+        // The run keeps the comparison; lists carry its figures, not its findings.
+        assert.deepEqual(
+            done.result.bakeOff.models.map((m: { label: string; status: string; total: number; unique: number; shared: number }) => [
+                m.label,
+                m.status,
+                m.total,
+                m.unique,
+                m.shared,
+            ]),
+            [
+                ["fake/model", "done", 2, 0, 2],
+                ["fake/wordy-extra", "done", 3, 1, 2],
+                ["fake/fail", "failed", null, null, null],
+            ],
+        );
+        assert.equal(done.result.bakeOff.findings, undefined);
+        const list = (await request(`/api/v1/w/${ws}/runs?project=app`, { session: env.admin })).body.recent;
+        assert.equal(list.find((r: { id: string }) => r.id === done.id).result.bakeOff.findings, undefined);
+
+        const got = await request(`/api/v1/w/${ws}/runs/${done.id}/comparison`, { session: env.admin });
+        assert.equal(got.status, 200, got.text);
+        const c = got.body;
+        assert.equal(c.run.id, done.id);
+        assert.deepEqual([c.total, c.agreed, c.truncated], [3, 2, false]);
+        assert.deepEqual(c.overlap, [
+            [2, 2, 0],
+            [2, 3, 0],
+            [0, 0, 0],
+        ]);
+        assert.deepEqual(
+            c.models[1].bySeverity,
+            { critical: 0, high: 2, medium: 0, low: 1 },
+            "by the finding's own rating, the lead model's",
+        );
+        assert.deepEqual(c.models[0].tokens, { input: 1200, output: 300, cacheRead: 100, total: 1500 });
+        assert.equal(c.models[2].tokens.total, 40);
+        assert.match(c.models[2].error, /Open Code Review failed/);
+        assert.deepEqual(
+            c.models.map((m: { cost: number | null }) => m.cost),
+            [null, null, null],
+            "no prices yet",
+        );
+        assert.deepEqual(
+            c.findings.map((f: { path: string; foundBy: string[]; severity: string; startLine: number }) => [
+                f.path,
+                f.startLine,
+                f.severity,
+                f.foundBy,
+            ]),
+            [
+                ["src/b.ts", 1, "high", ["fake/model", "fake/wordy-extra"]],
+                ["src/c.ts", 1, "high", ["fake/model", "fake/wordy-extra"]],
+                ["src/b.ts", 40, "low", ["fake/wordy-extra"]],
+            ],
+        );
+        assert.match(c.findings[2].title, /^Only fake\/wordy-extra noticed this/);
+        // With a price for a model, what it cost.
+        const priced = await request(`/api/v1/w/${ws}/settings/model-prices`, {
+            method: "PUT",
+            session: env.admin,
+            body: { model: "fake/model", input: 2, output: 10 },
+        });
+        assert.equal(priced.status, 200, priced.text);
+        const again = (await request(`/api/v1/w/${ws}/runs/${done.id}/comparison`, { session: env.admin })).body;
+        assert.equal(again.models[0].cost, (1200 * 2 + 300 * 10) / 1e6);
+        assert.equal(again.models[1].cost, null);
+
+        // It counts for the models, as a review each did; the backlog doesn't hear of it.
+        const history = await env.t.services.history.list({ workspaceId: await workspaceId() });
+        const scan = history.filter((h) => h.details.scan?.id === done.id);
+        assert.deepEqual(scan.map((h) => [h.model, h.status, h.details.bakeOff, h.details.counts, h.details.addedIds]).sort(), [
+            ["fake/fail", "failed", true, undefined, undefined],
+            ["fake/model", "done", true, undefined, undefined],
+            ["fake/wordy-extra", "done", true, undefined, undefined],
+        ]);
+        const a = (await request(`/api/v1/w/${ws}/analytics?days=7`, { session: env.admin })).body;
+        assert.equal(a.findings.added, was.added);
+        assert.deepEqual(a.reviews.byModel.map((g: { key: string; reviews: number }) => [g.key, g.reviews]).sort(), [
+            ["fake/fail", 1],
+            ["fake/model", 2],
+            ["fake/wordy-extra", 1],
+        ]);
+
+        // It isn't a review to run a model of again, and an ordinary review has no comparison.
+        const rerun = await request(`/api/v1/w/${ws}/runs/${done.id}/models/2/rerun`, { method: "POST", session: env.admin });
+        assert.equal(rerun.status, 409, rerun.text);
+        assert.match(rerun.text, /A comparison has no report to add to/);
+        assert.match((await run(done.id)).rerunnable[0].reason, /A comparison has no report to add to/);
+        const none = await request(`/api/v1/w/${ws}/runs/${review.id}/comparison`, { session: env.admin });
+        assert.equal(none.status, 404, none.text);
+
+        // An agent reads it the same way; anyone who can read the workspace can.
+        const agent = await token("read");
+        const told = await mcp(agent, "get_comparison", { id: done.id });
+        assert.match(told.content[0].text, /3 finding\(s\) between them, 2 found by more than one model/);
+        assert.match(told.content[0].text, /- fake\/wordy-extra: 3 finding\(s\), 1 only it found, 2 another found too, 1500 tokens/);
+        assert.match(told.content[0].text, /- fake\/model: .*US\$0\.0054/);
+        assert.equal(told.structuredContent.findings.length, 3);
+        // But only someone who may start reviews may start one.
+        assert.equal(
+            (await mcp(agent, "start_review", { kind: "full", models: models.slice(0, 2), options: { bakeOff: true } })).isError,
+            true,
+        );
+    });
+
+    test("a branch that has no report gets none from a comparison, and it says so while it runs or if it fails", async () => {
+        const slow = [await favourite("fake/sleep-2"), await favourite("fake/model")];
+        const started = await start({ kind: "full", branch: "main", models: slow, options: { bakeOff: true, judge: null } });
+        assert.equal(started.title, "Comparison: Full scan of main");
+        await eventually(async () => (await run(started.id)).status === "running", "the comparison to start");
+        const early = await request(`/api/v1/w/${ws}/runs/${started.id}/comparison`, { session: env.admin });
+        assert.equal(early.status, 409, early.text);
+        assert.match(early.text, /hasn't finished yet/);
+        // An ordinary scan of the same branch can be asked for meanwhile: it's not the same thing.
+        const scan = await start({ kind: "full", branch: "main", models: [slow[1] as string] });
+        assert.notEqual(scan.id, started.id);
+        const done = await finished(env, ws, started.id);
+        assert.equal(done.status, "done", done.error);
+        await finished(env, ws, scan.id);
+        assert.equal((await issues("main")).models, null, "main has the scan's report, not the comparison's");
+        assert.equal((await issues("main")).total, 1);
+
+        // Every model failing leaves nothing to compare.
+        const failing = [await favourite("fake/fail"), await favourite("fake/fail-b")];
+        const failed = await finished(
+            env,
+            ws,
+            (await start({ kind: "full", branch: "main", models: failing, options: { bakeOff: true } })).id,
+        );
+        assert.equal(failed.status, "failed");
+        const nothing = await request(`/api/v1/w/${ws}/runs/${failed.id}/comparison`, { session: env.admin });
+        assert.equal(nothing.status, 409, nothing.text);
+        assert.match(nothing.text, /This comparison failed, so there's nothing to compare\. No model finished/);
+        assert.equal((await issues("main")).total, 1);
+    });
+});
+
+describe("a comparison whose models are down to one by the time it starts", () => {
+    let env: ReviewEnv;
+    const ws = "bakeone";
+    const { request, favourite, start, run } = kit(() => env, ws, "bakeone/app");
+    const runner = { id: "runner-bakeone-000", name: "bakeone", version: "1", slots: 1 };
+
+    before(async () => {
+        env = await reviewEnv();
+        await patProject(env, ws, { repo: "bakeone/app" });
+        await env.fake.gitRepo("bakeone/app", { "a.ts": "a\n" });
+    });
+    after(() => env.close());
+
+    test("fails saying so, rather than running as a review that would replace the branch's report", async () => {
+        const automation = (body: object) =>
+            request(`/api/v1/w/${ws}/p/app/settings/automation`, { method: "PATCH", session: env.admin, body });
+        const models = [await favourite("fake/a"), await favourite("fake/b")];
+        assert.equal((await automation({ models: { all: models } })).status, 200);
+        // The project's two models, so no models of its own.
+        const started = await start({ kind: "full", branch: "main", options: { bakeOff: true } });
+        assert.equal((await automation({ models: { all: [models[0]] } })).status, 200);
+        assert.equal(await env.t.services.runs.claim(runner), null);
+        const failed = await run(started.id);
+        assert.equal(failed.status, "failed");
+        assert.equal(
+            failed.error,
+            "A comparison needs two or more models, and this one now has one. Start it again and choose its models.",
+        );
+        const branches = (await request(`/api/v1/w/${ws}/p/app/branches`, { session: env.admin })).body.items;
+        assert.deepEqual(branches, []);
+    });
+});
