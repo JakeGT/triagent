@@ -11,7 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { pullRequestsQuery, runListQuery } from "@/lib/queries";
-import { useCan, useProject } from "@/lib/session";
+import { useCan, useMe, useProject } from "@/lib/session";
 import type { Run, RunList } from "@/lib/types";
 import { FirstReviewActions } from "./first-review";
 import { NewReviewButton } from "./new-review-button";
@@ -50,8 +50,14 @@ function RunLink({ run, ws, project }: { run: Run; ws: string; project: string }
     );
 }
 
+/** "At most 4 reviews at once on this instance, 2 in this workspace." */
+export function limitsLine(c: RunList["concurrency"]): string {
+    return `At most ${c.instance} review${c.instance === 1 ? "" : "s"} at once on this instance, ${c.workspace} in this workspace.`;
+}
+
 export function RunsPage() {
     const { ws, slug, project } = useProject();
+    const me = useMe();
     const can = useCan();
     const search = useSearch({ from: "/authed/w/$ws/p/$project/runs" });
     const all = search.all === "1";
@@ -261,8 +267,15 @@ export function RunsPage() {
                             : data.runnersConnected
                               ? `${data.runnersConnected} runner${data.runnersConnected === 1 ? "" : "s"} connected.`
                               : "No runner is connected."}{" "}
-                        At most {data.concurrency.instance} review{data.concurrency.instance === 1 ? "" : "s"} at once on this instance,{" "}
-                        {data.concurrency.workspace} per workspace.
+                        {limitsLine(data.concurrency)}
+                        {me.user.isInstanceAdmin && (
+                            <>
+                                {" "}
+                                <Link to="/w/$ws/settings/instance-reviews" params={{ ws }} className="link">
+                                    Change the limits
+                                </Link>
+                            </>
+                        )}
                     </p>
                 </>
             ) : null}

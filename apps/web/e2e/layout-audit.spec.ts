@@ -103,6 +103,7 @@ for (const theme of ["light", "dark"] as const)
                 ["settings-users", `/w/${s.ws}/settings/users`],
                 ["settings-instance-model", `/w/${s.ws}/settings/instance-model`],
                 ["settings-instance-workspaces", `/w/${s.ws}/settings/instance-workspaces`],
+                ["settings-instance-reviews", `/w/${s.ws}/settings/instance-reviews`],
                 ["settings-github-app", `/w/${s.ws}/settings/github-app`],
                 ["settings-notifications", `/w/${s.ws}/settings/notifications`],
                 ["settings-password", `/w/${s.ws}/settings/password`],

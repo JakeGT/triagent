@@ -9,7 +9,8 @@ import type {
     Catalogue,
     Days,
     InstanceModel,
-    InstanceWorkspace,
+    InstanceReviews,
+    InstanceWorkspaces,
     PriceEntry,
     WorkspacePrices,
 } from "./insights-types";
@@ -23,12 +24,14 @@ export const insightKeys = {
     instanceModel: ["instance", "model"] as const,
     instanceWorkspaces: ["instance", "workspaces"] as const,
     instancePrices: ["instance", "model-prices"] as const,
+    instanceReviews: keys.instanceReviews,
 };
 
 export const instancePaths = {
     model: "/api/v1/instance/model",
     workspaces: "/api/v1/instance/workspaces",
     prices: "/api/v1/instance/model-prices",
+    reviews: "/api/v1/instance/reviews",
 };
 
 export const analyticsQuery = (ws: string, scope: { project?: string; branch?: string; days: Days }) =>
@@ -70,7 +73,12 @@ export const instanceModelQuery = queryOptions({
 
 export const instanceWorkspacesQuery = queryOptions({
     queryKey: insightKeys.instanceWorkspaces,
-    queryFn: ({ signal }) => api.get<{ resetsAt: string; items: InstanceWorkspace[] }>(instancePaths.workspaces, undefined, { signal }),
+    queryFn: ({ signal }) => api.get<InstanceWorkspaces>(instancePaths.workspaces, undefined, { signal }),
+});
+
+export const instanceReviewsQuery = queryOptions({
+    queryKey: insightKeys.instanceReviews,
+    queryFn: ({ signal }) => api.get<InstanceReviews>(instancePaths.reviews, undefined, { signal }),
 });
 
 export const instancePricesQuery = queryOptions({

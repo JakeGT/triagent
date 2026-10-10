@@ -219,10 +219,10 @@ test("instance admins set the instance key and give a workspace a monthly allowa
     await page.getByLabel("Find a workspace").fill(other);
     const row = page.getByTestId(`grant-${other}`);
     await row.getByLabel(`Monthly tokens for Allowance ${other}`).fill("lots");
-    await row.getByRole("button", { name: /Allow/ }).click();
+    await row.getByRole("button", { name: /^Allow / }).click();
     await expect(row.getByRole("alert")).toContainText("at least 1,000");
     await row.getByLabel(`Monthly tokens for Allowance ${other}`).fill("2m");
-    await row.getByRole("button", { name: /Allow/ }).click();
+    await row.getByRole("button", { name: /^Allow / }).click();
     await expect(row.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "0 of 2,000,000 tokens used");
     await expect(row).toContainText("0 of 2M used");
     await axe(page, "instance workspaces");
@@ -253,7 +253,7 @@ test("the instance pages are for instance admins only", async ({ page, admin, ba
     await member.api.ctx.dispose();
     await signInPage(page, member.username, PASSWORD);
     await page.goto(`/w/${ws}/settings/instance-workspaces`);
-    await expect(page.getByText("Only instance administrators can manage allowances.")).toBeVisible();
+    await expect(page.getByText("Only instance administrators can manage allowances and limits.")).toBeVisible();
     await expect(page.getByRole("link", { name: "Instance model key" })).toHaveCount(0);
     const res = await page.request.get("/api/v1/instance/workspaces");
     expect(res.status()).toBe(403);

@@ -219,6 +219,10 @@ const wsSettingsRoutes = [
         lazyRouteComponent(() => import("@/features/settings/instance-workspaces-settings"), "InstanceWorkspacesSettings"),
     ),
     settingsPage(
+        "/instance-reviews",
+        lazyRouteComponent(() => import("@/features/settings/instance-reviews-settings"), "InstanceReviewsSettings"),
+    ),
+    settingsPage(
         "/members",
         lazyRouteComponent(() => import("@/features/settings/members-settings"), "MembersSettings"),
     ),

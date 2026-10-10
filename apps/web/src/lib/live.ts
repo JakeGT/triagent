@@ -20,6 +20,8 @@ export function invalidateFor(queryClient: QueryClient, ws: string, event: Pick<
     // A review's progress arrives up to once a second: refresh what shows runs, and nothing else until it ends.
     if (event.kind === "run") {
         void queryClient.invalidateQueries({ queryKey: keys.runs(ws) });
+        // A review starting or ending changes what the runners are doing (Settings → Instance → Reviews).
+        if (!event.fields.includes("progress")) void queryClient.invalidateQueries({ queryKey: keys.instanceReviews });
         if (event.project && !event.fields.includes("progress"))
             void queryClient.invalidateQueries({ queryKey: keys.pullRequests(ws, event.project) });
         if (event.project && event.fields.includes("finished")) {

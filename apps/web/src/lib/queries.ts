@@ -66,6 +66,7 @@ export const keys = {
     modelChoices: (ws: string, p: string | null) => ["ws", ws, "models", p ?? ""] as const,
     installations: (ws: string) => ["ws", ws, "settings", "github-installations"] as const,
     githubApp: ["instance", "github-app"] as const,
+    instanceReviews: ["instance", "reviews"] as const,
 };
 
 export const meQuery = queryOptions({

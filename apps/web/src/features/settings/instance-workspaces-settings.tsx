@@ -1,7 +1,9 @@
 // Settings → Instance → Workspaces: every workspace, with its allowance of the instance model key (tokens
-// a month) and this month's use of it. Instance admins give, change or remove allowances here.
+// a month) and this month's use of it, and its own limit on reviews running at once. Instance admins give,
+// change or remove allowances and limits here.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { CircleMinus } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
@@ -16,8 +18,10 @@ import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableR
 import { api, errorMessage } from "@/lib/api";
 import { compactCount, count, utcDay } from "@/lib/insights-format";
 import { insightKeys, instancePaths, instanceWorkspacesQuery } from "@/lib/insights-queries";
-import type { InstanceWorkspace } from "@/lib/insights-types";
-import { useMe } from "@/lib/session";
+import type { InstanceWorkspace, ReviewLimits } from "@/lib/insights-types";
+import { keys } from "@/lib/queries";
+import { useMe, useWorkspace } from "@/lib/session";
+import { parseLimit } from "./instance-reviews-settings";
 import { ReadOnlyNote, SettingsPage } from "./settings-page";
 
 const SHOWN = 100;
@@ -30,7 +34,72 @@ export function parseTokens(text: string): number | null {
     return Number.isFinite(n) ? Math.round(n) : null;
 }
 
-function GrantRow({ w }: { w: InstanceWorkspace }) {
+/**
+ * A workspace's own limit on reviews at once: a number, or left empty to go by the one for every
+ * workspace. Saved with its own button, like the allowance beside it.
+ */
+export function ReviewLimitForm({ w, limits }: { w: InstanceWorkspace; limits: ReviewLimits }) {
+    const queryClient = useQueryClient();
+    const id = useId();
+    const [value, setValue] = useState(w.reviewLimit === null ? "" : String(w.reviewLimit));
+    const [error, setError] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const url = `${instancePaths.workspaces}/${encodeURIComponent(w.id)}/review-limit`;
+
+    const submit = async (e: FormEvent) => {
+        e.preventDefault();
+        const n = value.trim() ? parseLimit(value) : null;
+        if (value.trim() && n === null) {
+            setError("Give a whole number from 1 to 100, or leave it empty for the default.");
+            return;
+        }
+        setBusy(true);
+        setError(null);
+        try {
+            if (n === null) await api.delete(url);
+            else await api.put(url, { limit: n });
+            setValue(n === null ? "" : String(n));
+            await queryClient.invalidateQueries({ queryKey: insightKeys.instanceWorkspaces });
+            // The workspace's Runs page says what its limit is.
+            void queryClient.invalidateQueries({ queryKey: keys.runs(w.slug) });
+            toast.success(
+                n === null
+                    ? `${w.name} goes by the default again: ${limits.perWorkspace} at once.`
+                    : `${w.name} runs up to ${n} review${n === 1 ? "" : "s"} at once.`,
+            );
+        } catch (err) {
+            setError(errorMessage(err));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <form className="flex items-start gap-2" onSubmit={submit} noValidate>
+            <div className="grid gap-1">
+                <Label htmlFor={id} className="sr-only">
+                    Reviews at once in {w.name}
+                </Label>
+                <Input
+                    id={id}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    placeholder={`Default (${limits.perWorkspace})`}
+                    inputMode="numeric"
+                    className="h-8 w-28 tabular-nums"
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={error ? `${id}-error` : undefined}
+                />
+                <FieldError id={`${id}-error`} message={error} className="max-w-56 text-xs" />
+            </div>
+            <Button type="submit" size="sm" variant="outline" disabled={busy}>
+                {w.reviewLimit === null ? "Set" : "Change"} <span className="sr-only">{w.name}'s reviews at once</span>
+            </Button>
+        </form>
+    );
+}
+
+function GrantRow({ w, limits }: { w: InstanceWorkspace; limits: ReviewLimits }) {
     const queryClient = useQueryClient();
     const id = useId();
     const [value, setValue] = useState(w.grant ? count(w.grant.monthlyTokens) : "");
@@ -105,6 +174,9 @@ function GrantRow({ w }: { w: InstanceWorkspace }) {
                     <span className="text-xs text-muted-foreground">—</span>
                 )}
             </TableCell>
+            <TableCell className="whitespace-normal">
+                <ReviewLimitForm w={w} limits={limits} />
+            </TableCell>
             <TableCell className="text-end">
                 {w.grant && (
                     <ConfirmAction
@@ -131,6 +203,7 @@ function GrantRow({ w }: { w: InstanceWorkspace }) {
 
 export function InstanceWorkspacesSettings() {
     const me = useMe();
+    const { ws } = useWorkspace();
     const allowed = me.user.isInstanceAdmin;
     const query = useQuery({ ...instanceWorkspacesQuery, enabled: allowed });
     const [q, setQ] = useState("");
@@ -138,7 +211,7 @@ export function InstanceWorkspacesSettings() {
     if (!allowed)
         return (
             <SettingsPage title="Workspaces">
-                <ReadOnlyNote>Only instance administrators can manage allowances.</ReadOnlyNote>
+                <ReadOnlyNote>Only instance administrators can manage allowances and limits.</ReadOnlyNote>
             </SettingsPage>
         );
 
@@ -150,9 +223,25 @@ export function InstanceWorkspacesSettings() {
         <SettingsPage
             title="Workspaces"
             description={
-                query.data
-                    ? `Every workspace on this instance. Those with an allowance can use the instance model key when they have no key of their own, up to their tokens each month; allowances reset on ${utcDay(query.data.resetsAt)} (UTC).`
-                    : "Every workspace on this instance, and its allowance of the instance model key."
+                query.data ? (
+                    <div className="grid gap-2">
+                        <p>
+                            Every workspace on this instance. Those with an allowance can use the instance model key when they have no key
+                            of their own, up to their tokens each month; allowances reset on {utcDay(query.data.resetsAt)} (UTC).
+                        </p>
+                        <p data-testid="review-limits-note">
+                            Reviews at once is how many of a workspace's reviews may run together. Leave it empty for the default (
+                            {query.data.reviewLimits.perWorkspace}). A workspace's own limit can be lower or higher, but the instance never
+                            runs more than {query.data.reviewLimits.instance} at once. Both numbers are set under{" "}
+                            <Link to="/w/$ws/settings/instance-reviews" params={{ ws }} className="link">
+                                Reviews
+                            </Link>
+                            .
+                        </p>
+                    </div>
+                ) : (
+                    "Every workspace on this instance, its allowance of the instance model key, and how many reviews it runs at once."
+                )
             }
             wide
         >
@@ -175,12 +264,13 @@ export function InstanceWorkspacesSettings() {
                     </Field>
                     <TableFrame>
                         <Table>
-                            <caption className="sr-only">Workspaces and their instance key allowances</caption>
+                            <caption className="sr-only">Workspaces, their instance key allowances and their reviews at once</caption>
                             <TableHeader>
                                 <TableRow>
                                     <TableHead scope="col">Workspace</TableHead>
                                     <TableHead scope="col">Tokens a month</TableHead>
                                     <TableHead scope="col">Used this month</TableHead>
+                                    <TableHead scope="col">Reviews at once</TableHead>
                                     <TableHead scope="col">
                                         <span className="sr-only">Actions</span>
                                     </TableHead>
@@ -188,7 +278,11 @@ export function InstanceWorkspacesSettings() {
                             </TableHeader>
                             <TableBody>
                                 {items.slice(0, SHOWN).map((w) => (
-                                    <GrantRow key={`${w.id}:${w.grant?.monthlyTokens ?? ""}`} w={w} />
+                                    <GrantRow
+                                        key={`${w.id}:${w.grant?.monthlyTokens ?? ""}:${w.reviewLimit ?? ""}`}
+                                        w={w}
+                                        limits={query.data.reviewLimits}
+                                    />
                                 ))}
                             </TableBody>
                         </Table>

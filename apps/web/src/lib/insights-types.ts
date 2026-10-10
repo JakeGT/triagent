@@ -212,4 +212,39 @@ export interface InstanceWorkspace {
     grant: { monthlyTokens: number; grantedBy: string; grantedAt: string } | null;
     used: number;
     remaining: number | null;
+    /** Its own limit on reviews running at once; null: the one for every workspace. */
+    reviewLimit: number | null;
+}
+
+/** The limits on reviews running at once that a workspace without its own goes by. */
+export interface ReviewLimits {
+    instance: number;
+    perWorkspace: number;
+}
+
+export interface InstanceWorkspaces {
+    resetsAt: string;
+    reviewLimits: ReviewLimits;
+    items: InstanceWorkspace[];
+}
+
+/** A connected runner: how many reviews it works on at once (`slots`), and how many it's working on now. */
+export interface InstanceRunner {
+    name: string;
+    version: string | null;
+    slots: number;
+    busy: number;
+    lastSeenAt: string;
+}
+
+/** Settings → Instance → Reviews. */
+export interface InstanceReviews {
+    limits: ReviewLimits;
+    /** The server's environment: what applies until limits are saved. */
+    defaults: ReviewLimits;
+    saved: { by: string; at: string } | null;
+    runners: InstanceRunner[];
+    /** Reviews running and queued on the whole instance. */
+    running: number;
+    queued: number;
 }

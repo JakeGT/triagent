@@ -64,6 +64,8 @@ describe("live run notices", () => {
         invalidateFor(client, "ws", { kind: "run", project: "app", fields: ["finished"] });
         expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toEqual([
             keys.runs("ws"),
+            // What the runners are doing changed too (Settings → Instance → Reviews), but not on every progress notice.
+            keys.instanceReviews,
             keys.pullRequests("ws", "app"),
             keys.project("ws", "app"),
             keys.projects("ws"),

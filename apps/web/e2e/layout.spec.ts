@@ -167,6 +167,7 @@ test("no page is wider than a phone", async ({ page, admin }) => {
         "/settings/model-prices",
         "/settings/users",
         "/settings/instance-workspaces",
+        "/settings/instance-reviews",
     ]) {
         await page.goto(`/w/${ws}${path}`);
         await expect(page.locator("main").getByRole("heading").first()).toBeVisible();

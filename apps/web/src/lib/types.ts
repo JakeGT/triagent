@@ -626,9 +626,10 @@ export interface Run {
 export interface RunList {
     ready: boolean;
     waiting: string | null;
+    /** How many reviews may run at once: on the instance, and in this workspace (never more than the instance's). */
     concurrency: { instance: number; workspace: number };
     /** Listed for instance administrators only; everyone sees `runnersConnected`. */
-    runners: { name: string; slots: number; version: string | null; lastSeenAt: string }[];
+    runners: { name: string; slots: number; busy?: number; version: string | null; lastSeenAt: string }[];
     runnersConnected: number;
     running: Run[];
     queued: Run[];

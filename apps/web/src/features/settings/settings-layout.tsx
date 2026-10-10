@@ -111,6 +111,7 @@ export function SettingsLayout() {
               wsLink("/users", "Users", "/w/$ws/settings/users"),
               wsLink("/instance-model", "Instance model key", "/w/$ws/settings/instance-model"),
               wsLink("/instance-workspaces", "Workspaces", "/w/$ws/settings/instance-workspaces"),
+              wsLink("/instance-reviews", "Reviews", "/w/$ws/settings/instance-reviews"),
               wsLink("/github-app", "GitHub App", "/w/$ws/settings/github-app"),
           ]
         : [];
