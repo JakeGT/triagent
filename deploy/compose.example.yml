@@ -58,6 +58,7 @@ services:
       TRIAGENT_RUNNER_SECRET_FILE: /run/secrets/triagent_runner_secret
       TRIAGENT_ADMIN_USER: admin
       TRIAGENT_ADMIN_PASSWORD_FILE: /run/secrets/triagent_admin_password
+      # The default until an instance admin saves limits in Settings → Instance → Reviews (those then apply).
       REVIEW_CONCURRENCY: "2"
     secrets: [triagent_database_url, triagent_secrets_key, triagent_runner_secret, triagent_admin_password]
     networks: [data, runners, proxy]

@@ -73,7 +73,7 @@ PUBLIC_ORIGIN=http://localhost:5173 TRIAGENT_ADMIN_USER=me TRIAGENT_ADMIN_PASSWO
 TRIAGENT_SERVER_URL=http://localhost:8080 pnpm dev:runner    # in another terminal, with the same secret
 ```
 
-Then connect a project to GitHub (Project settings → GitHub: the GitHub App, set up under Settings → GitHub App by an instance admin, or a fine-grained token), connect a model provider with its key and choose a model (Settings → Models), and start a review from Runs, Pull requests or Branches & reports. `apps/runner/.env.example` lists the runner's settings; `REVIEW_CONCURRENCY` (default 1) and `REVIEW_CONCURRENCY_PER_WORKSPACE` (default 1) cap reviews on the server. The tests use a fake GitHub and a fake `ocr` (`tests/fakes`), so they need `git` but nothing else.
+Then connect a project to GitHub (Project settings → GitHub: the GitHub App, set up under Settings → GitHub App by an instance admin, or a fine-grained token), connect a model provider with its key and choose a model (Settings → Models), and start a review from Runs, Pull requests or Branches & reports. `apps/runner/.env.example` lists the runner's settings; How many reviews run at once is set by an instance admin under Settings → Instance → Reviews (on the instance, and in one workspace) and, for one workspace, under Workspaces; `REVIEW_CONCURRENCY` (default 1) and `REVIEW_CONCURRENCY_PER_WORKSPACE` (default 1) are the server's defaults until limits are saved there. A runner works on `RUNNER_CONCURRENCY` reviews at once (default 1), and reviews past what the runners can do wait for a free slot. The tests use a fake GitHub and a fake `ocr` (`tests/fakes`), so they need `git` but nothing else.
 
 ### Model providers
 
