@@ -347,3 +347,54 @@
         @apply my-4;
     }
 }
+
+/* The landing page (features/landing): its backdrop, the lit edge of its windows, and sections that
+   rise into place as they're scrolled to. */
+@layer components {
+    /* Always dark, like a console, whatever the theme. */
+    .landing-night {
+        background-color: #0a0e12;
+        background-image:
+            radial-gradient(60rem 30rem at 50% -10rem, oklch(0.55 0.16 250 / 38%), transparent 70%),
+            radial-gradient(32rem 22rem at 12% 8rem, oklch(0.62 0.19 25 / 16%), transparent 70%),
+            radial-gradient(32rem 22rem at 88% 12rem, oklch(0.8 0.14 85 / 10%), transparent 70%);
+    }
+    /* A faint grid that fades out towards the edges. */
+    .landing-grid {
+        background-image:
+            linear-gradient(to right, oklch(1 0 0 / 6%) 1px, transparent 1px),
+            linear-gradient(to bottom, oklch(1 0 0 / 6%) 1px, transparent 1px);
+        background-size: 3rem 3rem;
+        mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black, transparent);
+    }
+    /* The logo's colours, critical to low, as lettering. */
+    .landing-spectrum {
+        background-image: linear-gradient(90deg, #ff7a75, #f8995f 35%, #e6bb47 65%, #9dbccd);
+        background-clip: text;
+        color: transparent;
+    }
+    /* A window on the page: a soft glow behind it, in the theme's colour. */
+    .landing-window {
+        box-shadow:
+            0 0 0 1px oklch(1 0 0 / 8%),
+            0 30px 80px -20px oklch(0.5 0.16 250 / 45%),
+            0 10px 30px -10px oklch(0 0 0 / 50%);
+    }
+    .landing-rise {
+        opacity: 0;
+        transform: translateY(1.25rem);
+        transition:
+            opacity 0.7s ease-out,
+            transform 0.7s ease-out;
+    }
+    .landing-rise[data-shown] {
+        opacity: 1;
+        transform: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .landing-rise {
+            opacity: 1;
+            transform: none;
+        }
+    }
+}

@@ -14,7 +14,7 @@ const SHOWN = FINDINGS.slice(0, 4);
 const LAST = 8;
 const STEP_MS = 1700;
 
-const STEPS = ["Pull request", "Three models review", "One list", "Triage"] as const;
+const STEPS = ["Opened", "Review", "One list", "Triage"] as const;
 /** Every model's findings before merging: one for each model that found each finding. */
 const RAW = SHOWN.reduce((n, f) => n + f.foundBy.length, 0);
 /** Which of the four steps a frame belongs to. */
@@ -24,7 +24,7 @@ const file = (f: SampleFinding) => `${f.path.slice(f.path.lastIndexOf("/") + 1)}
 
 function FoundBy({ finding }: { finding: SampleFinding }) {
     return (
-        <span className="flex items-center gap-1" title={finding.foundBy.join(", ")}>
+        <span className="flex shrink-0 items-center gap-1" title={finding.foundBy.join(", ")}>
             {MODELS.map((m) => (
                 <span
                     key={m}
@@ -41,12 +41,12 @@ function FoundBy({ finding }: { finding: SampleFinding }) {
 function Lane({ model, rows }: { model: SampleModel; rows: number }) {
     const mine = SHOWN.filter((f) => f.foundBy.includes(model));
     return (
-        <div className="grid content-start gap-1.5 rounded-lg border border-border bg-background/60 p-2.5">
-            <p className="truncate font-mono text-[0.7rem] text-muted-foreground">{model}</p>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-2 rounded-lg border border-border bg-background/60 p-3">
+            <p className="truncate font-mono text-xs text-muted-foreground">{model}</p>
             {mine.slice(0, rows).map((f) => (
-                <p key={f.id} className="flex animate-in items-center gap-2 text-xs duration-500 fade-in slide-in-from-bottom-1">
-                    <SeverityMark severity={f.severity} className="text-[0.7rem]" />
-                    <span className="truncate font-mono text-[0.7rem] text-muted-foreground">{file(f)}</span>
+                <p key={f.id} className="flex min-w-0 animate-in items-center gap-2 text-xs duration-500 fade-in slide-in-from-bottom-1">
+                    <SeverityMark severity={f.severity} className="shrink-0 text-xs" />
+                    <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{file(f)}</span>
                 </p>
             ))}
             {rows > 0 && rows < 3 && <p className="h-4 w-16 animate-pulse rounded bg-muted" aria-hidden="true" />}
@@ -61,7 +61,8 @@ function triageAt(frame: number, index: number): { status: SampleFinding["status
             status: "in_progress",
             note: (
                 <>
-                    <Bot className="size-3.5" aria-hidden="true" /> Claimed by an agent
+                    <Bot className="me-1 inline size-3.5 align-[-2px]" aria-hidden="true" />
+                    Claimed by an agent
                 </>
             ),
         };
@@ -70,7 +71,8 @@ function triageAt(frame: number, index: number): { status: SampleFinding["status
             status: "resolved",
             note: (
                 <>
-                    <Check className="size-3.5" aria-hidden="true" /> Fixed in <span className="font-mono">4f2c1ab</span>
+                    <Check className="me-1 inline size-3.5 align-[-2px]" aria-hidden="true" />
+                    Fixed in <span className="font-mono">4f2c1ab</span>
                 </>
             ),
         };
@@ -79,7 +81,8 @@ function triageAt(frame: number, index: number): { status: SampleFinding["status
             status: "wont_fix",
             note: (
                 <>
-                    <User className="size-3.5" aria-hidden="true" /> Priya: capped by the job queue already
+                    <User className="me-1 inline size-3.5 align-[-2px]" aria-hidden="true" />
+                    Priya: capped by the job queue already
                 </>
             ),
         };
@@ -108,16 +111,16 @@ export function ReviewStage() {
     return (
         <section
             aria-label="A review, from pull request to triage (a demonstration with made-up data)"
-            className="dark overflow-hidden rounded-xl border border-white/10 bg-[#11161a] text-foreground shadow-2xl shadow-black/30"
+            className="landing-window dark min-w-0 overflow-hidden rounded-2xl bg-[#11161a] text-start text-foreground"
             data-testid="review-stage"
         >
-            <div className="flex items-center gap-3 border-b border-border px-3 py-2">
+            <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
                 <span className="flex gap-1.5" aria-hidden="true">
                     <span className="size-2.5 rounded-full bg-sev-critical/80" />
                     <span className="size-2.5 rounded-full bg-sev-medium/80" />
                     <span className="size-2.5 rounded-full bg-st-resolved/80" />
                 </span>
-                <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                <p className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
                     <span className="font-mono">#{PULL_REQUEST.number}</span> {PULL_REQUEST.title}
                 </p>
                 <Button
@@ -135,13 +138,13 @@ export function ReviewStage() {
                 </Button>
             </div>
 
-            <ol className="grid grid-cols-4 gap-1 border-b border-border px-3 py-2 text-[0.7rem]">
+            <ol className="grid grid-cols-4 gap-1 border-b border-border px-3 py-2 text-xs sm:px-4">
                 {STEPS.map((label, i) => (
                     <li
                         key={label}
                         aria-current={i === step ? "step" : undefined}
                         className={cn(
-                            "flex items-center gap-1.5 rounded px-1.5 py-1 transition-colors duration-300",
+                            "flex min-w-0 items-center gap-1.5 rounded px-1.5 py-1 transition-colors duration-300",
                             i === step ? "bg-primary/15 text-foreground" : i < step ? "text-muted-foreground" : "text-muted-foreground/60",
                         )}
                     >
@@ -154,16 +157,16 @@ export function ReviewStage() {
                         >
                             {i < step ? <Check className="size-3" /> : i + 1}
                         </span>
-                        <span className="truncate">{label}</span>
+                        <span className="min-w-0 truncate">{label}</span>
                     </li>
                 ))}
             </ol>
 
-            <div className="grid min-h-[17.5rem] content-start gap-3 p-3 sm:min-h-[16rem]">
+            <div className="grid min-h-[21rem] grid-cols-[minmax(0,1fr)] content-start gap-3 p-3 sm:min-h-[19rem] sm:p-4">
                 {frame === 0 && (
-                    <div className="grid animate-in place-items-center gap-2 py-10 text-center duration-500 fade-in">
-                        <p className="text-sm">A pull request is ready for review.</p>
-                        <p className="font-mono text-xs text-muted-foreground">Reviewing with {MODELS.join(", ")}…</p>
+                    <div className="grid animate-in place-items-center gap-2 py-16 text-center duration-500 fade-in">
+                        <p className="text-base">A pull request is ready for review.</p>
+                        <p className="font-mono text-xs break-words text-muted-foreground">Reviewing with {MODELS.join(", ")}…</p>
                     </div>
                 )}
                 {lanes && (
@@ -174,35 +177,36 @@ export function ReviewStage() {
                     </div>
                 )}
                 {frame >= 4 && (
-                    <ul className="grid animate-in gap-1.5 duration-500 fade-in">
+                    <ul className="grid animate-in grid-cols-[minmax(0,1fr)] gap-2 duration-500 fade-in">
                         {SHOWN.map((f, i) => {
                             const t = triageAt(frame, i);
                             return (
+                                // Two lines, each: what shrinks on the left (cut short with an ellipsis), what's fixed on the right.
                                 <li
                                     key={f.id}
-                                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-background/60 px-2.5 py-2"
+                                    className="grid min-w-0 gap-1.5 rounded-lg border border-border bg-background/60 px-3 py-2.5"
                                 >
-                                    <p className="flex min-w-0 items-center gap-2 text-xs">
-                                        <SeverityMark severity={f.severity} className="text-[0.7rem]" />
+                                    <p className="flex min-w-0 items-center gap-2.5 text-sm">
+                                        <SeverityMark severity={f.severity} className="shrink-0 text-xs" />
                                         {/* Dealt with: struck through, not dimmed (dimming would cost the marks their contrast). */}
                                         <span
                                             className={cn(
-                                                "truncate",
+                                                "min-w-0 flex-1 truncate",
                                                 (t.status === "resolved" || t.status === "wont_fix") &&
                                                     "text-muted-foreground line-through decoration-foreground/40",
                                             )}
                                         >
                                             {f.title}
                                         </span>
+                                        <FoundBy finding={f} />
                                     </p>
-                                    <FoundBy finding={f} />
-                                    <p className="flex items-center gap-2 text-[0.7rem] text-muted-foreground">
-                                        <StatusMark status={t.status} className="text-[0.7rem]" />
-                                        {t.note && (
-                                            <span className="flex animate-in items-center gap-1 duration-300 fade-in">{t.note}</span>
-                                        )}
+                                    <p className="flex min-w-0 items-center gap-2.5 text-xs text-muted-foreground">
+                                        <StatusMark status={t.status} className="shrink-0 text-xs" />
+                                        <span className="flex min-w-0 flex-1 items-center gap-1">
+                                            {t.note && <span className="min-w-0 animate-in truncate duration-300 fade-in">{t.note}</span>}
+                                        </span>
+                                        <span className="shrink-0 font-mono">{file(f)}</span>
                                     </p>
-                                    <span className="font-mono text-[0.7rem] text-muted-foreground">{file(f)}</span>
                                 </li>
                             );
                         })}
@@ -210,7 +214,7 @@ export function ReviewStage() {
                 )}
             </div>
 
-            <p className="border-t border-border px-3 py-2 text-[0.7rem] text-muted-foreground">
+            <p className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
                 {frame < 4
                     ? "Each model reviews the same change, with its own key."
                     : frame === 4

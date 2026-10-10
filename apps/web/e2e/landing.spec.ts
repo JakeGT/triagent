@@ -103,3 +103,32 @@ test("the page fits a phone without scrolling sideways", async ({ page }) => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);
 });
+
+for (const width of [360, 820, 1440]) {
+    test(`nothing in the hero's review spills out of its window at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        // Reduced motion rests it on the last frame, the one with the longest lines.
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.goto("/");
+        const stage = page.getByTestId("review-stage");
+        await expect(stage).toContainText("Fixed in");
+        const spills = await stage.evaluate((el) => {
+            const box = el.getBoundingClientRect();
+            return [...el.querySelectorAll("*")]
+                .filter((child) => {
+                    const r = child.getBoundingClientRect();
+                    return r.width > 0 && (r.right > box.right + 0.5 || r.left < box.left - 0.5);
+                })
+                .map((child) => `${child.tagName} ${child.textContent?.slice(0, 40)}`);
+        });
+        expect(spills).toEqual([]);
+        // What belongs on the right (the file of each finding) ends at the same edge on every row.
+        const rights = await stage
+            .locator("li p:last-child span.font-mono")
+            .evaluateAll((els) =>
+                els.filter((e) => e.classList.contains("shrink-0")).map((e) => Math.round(e.getBoundingClientRect().right)),
+            );
+        expect(rights.length).toBe(4);
+        expect(new Set(rights).size).toBe(1);
+    });
+}
