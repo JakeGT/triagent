@@ -9,7 +9,7 @@ const choices = {
     ],
     defaultId: "a",
     instance: null,
-    max: 3,
+    max: 5,
     fallback: ["a"],
 } as unknown as ModelChoices;
 

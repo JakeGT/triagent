@@ -1,6 +1,6 @@
 // Choosing a review's models: the workspace's favourite models (and the instance's model, when the
-// workspace has an allowance) as a list to tick, up to a few. They review in the order they were ticked,
-// and the first one's wording leads, so the order is said underneath.
+// workspace has an allowance) as a list to tick, up to a few. They review at the same time, and the first
+// one ticked leads (its wording is the one kept), so which that is is said underneath.
 
 import { type ReactNode, useId } from "react";
 import { CheckField, FieldHint } from "@/components/field";
@@ -18,6 +18,9 @@ export interface ModelOption {
     /** Why it can't review yet, if it can't. */
     notReady: string | null;
 }
+
+/** "a, b and c". */
+const LIST = new Intl.ListFormat("en-GB", { style: "long", type: "conjunction" });
 
 /** Everything that can be chosen: the favourites in their order, then the instance's model. */
 export function modelOptions(choices: ModelChoices | undefined): ModelOption[] {
@@ -137,7 +140,7 @@ export function ModelChoice({
                     ? empty
                     : chosen.length === 1
                       ? `Reviews with ${chosen[0]?.label}.`
-                      : `Reviews with ${chosen.map((o) => o.label).join(", then ")}: each reviews it, and their findings are merged. ${chosen[0]?.label}'s wording leads.`}
+                      : `Reviews with ${LIST.format(chosen.map((o) => o.label))} at the same time: each reviews it, and their findings are merged. ${chosen[0]?.label}'s wording leads.`}
             </p>
             {hint && <FieldHint id={`${id}-hint`}>{hint}</FieldHint>}
         </fieldset>

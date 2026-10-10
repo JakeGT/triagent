@@ -478,8 +478,28 @@ export interface RunProgress {
     roundsFailed?: number;
     toolCalls?: number;
     toolFailures?: number;
-    /** With several models: which one is reviewing now, e.g. "gpt-5 (2 of 3)". */
+    /** The most model tokens the review has said it used so far. */
+    tokens?: number;
+    /** With several models: how many, and how many have finished, e.g. "3 models (1 finished)". */
     model?: string;
+    /** With several models: each one's own progress, in the run's order. The fields above are all of them together. */
+    models?: RunModelProgress[];
+}
+
+/** Why a model's review was stopped before it finished: it went quiet, or passed the time limit or its token budget. */
+export type StopReason = "stalled" | "timeLimit" | "overBudget";
+
+/** One model's progress in a review with several: waiting for its turn, reviewing, or how it ended. */
+export interface RunModelProgress {
+    label?: string;
+    /** "waiting", then the review's own phases, then "done", "failed" or "cancelled". */
+    phase?: string;
+    files?: number;
+    round?: string;
+    tokens?: number;
+    /** How long it has been going, or took. */
+    seconds?: number;
+    reason?: StopReason | string;
 }
 
 export interface Run {
@@ -519,6 +539,8 @@ export interface Run {
             tokens: number | null;
             seconds: number | null;
             error: string | null;
+            /** Why it was stopped, if it was. Absent on older runs. */
+            reason?: StopReason | null;
         }[];
         /** A made-up run in the tutorial's example project: nothing ran. */
         example?: boolean;

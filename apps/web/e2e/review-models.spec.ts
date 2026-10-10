@@ -73,7 +73,9 @@ test("a project's review models: a set for every review, and one for pull reques
     // The first ticked leads; five at most.
     await every.getByRole("checkbox", { name: /vendor\/second-model/ }).check();
     await every.getByRole("checkbox", { name: "Fast" }).check();
-    await expect(every.getByTestId("models-chosen")).toContainText(/^Reviews with vendor\/second-model\S*, then Fast: each reviews it/);
+    await expect(every.getByTestId("models-chosen")).toContainText(
+        /^Reviews with vendor\/second-model\S* and Fast at the same time: each reviews it/,
+    );
     for (const name of ["fake/model", "vendor/third-model", "vendor/fourth-model"]) {
         await expect(every.getByRole("checkbox", { name: "claude-test" })).toBeEnabled();
         await every.getByRole("checkbox", { name }).check();

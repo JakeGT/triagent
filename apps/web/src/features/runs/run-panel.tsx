@@ -4,7 +4,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { ModelChips, modelLabels } from "@/components/model-choice";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,17 @@ import { keys, modelsQuery } from "@/lib/queries";
 import { safeHref } from "@/lib/safe-href";
 import { useCan, useProject } from "@/lib/session";
 import type { LogLine, RunDetail } from "@/lib/types";
-import { CancelRun, duration, findingsText, kindText, progressText, RunStatusBadge, runModelLabels } from "./run-bits";
+import {
+    CancelRun,
+    duration,
+    findingsText,
+    kindText,
+    linesOf,
+    modelProgressText,
+    progressText,
+    RunStatusBadge,
+    runModelLabels,
+} from "./run-bits";
 
 const KEEP_LINES = 5000;
 
@@ -33,6 +43,8 @@ function RunDetailView({ runId }: { runId: string }) {
     const heading = useRef<HTMLHeadingElement>(null);
     const logBox = useRef<HTMLElement>(null);
     const stick = useRef(true);
+    /** The model whose log lines are shown, in a review with several; null for every line. */
+    const [logModel, setLogModel] = useState<string | null>(null);
     const run = useQuery({
         queryKey: keys.run(ws, runId),
         queryFn: async ({ signal }) => {
@@ -88,6 +100,23 @@ function RunDetailView({ runId }: { runId: string }) {
     const r = run.data;
     const prUrl = safeHref(r.pr?.url ?? null);
     const active = r.status === "queued" || r.status === "running";
+    const shown = linesOf(r.all, logModel);
+    const logChoice = (label: string | null) => (
+        <Button
+            key={label ?? ""}
+            type="button"
+            size="sm"
+            variant={logModel === label ? "secondary" : "outline"}
+            className={label === null ? "h-7" : "h-auto min-h-7 max-w-full font-mono text-xs break-all whitespace-normal"}
+            aria-pressed={logModel === label}
+            onClick={() => {
+                stick.current = true;
+                setLogModel(label);
+            }}
+        >
+            {label ?? "All lines"}
+        </Button>
+    );
     return (
         <section aria-labelledby="run-heading" className="grid gap-3 rounded-lg border p-4" data-testid="run-panel">
             <div className="flex flex-wrap items-start gap-2">
@@ -172,10 +201,25 @@ function RunDetailView({ runId }: { runId: string }) {
                                     </ul>
                                     {r.requestedModels && <p data-testid="run-models-chosen">Chosen for this review.</p>}
                                 </>
+                            ) : r.progress.models?.length ? (
+                                // While it runs: a row for each model, with its own progress.
+                                <>
+                                    <ul className="grid gap-0.5" data-testid="run-models">
+                                        {r.progress.models.map((m, i) => (
+                                            <li key={r.model?.models?.[i]?.label ?? i} data-testid="run-model-row">
+                                                <Badge variant="outline" className="font-mono font-normal">
+                                                    {r.model?.models?.[i]?.label ?? m.label}
+                                                </Badge>{" "}
+                                                {modelProgressText(m)}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    {r.requestedModels && <p data-testid="run-models-chosen">Chosen for this review.</p>}
+                                </>
                             ) : (
                                 <span data-testid="run-models">
-                                    <ModelChips labels={runModelLabels(r)} /> in turn
-                                    {r.requestedModels ? ", chosen for this review" : ""}
+                                    <ModelChips labels={runModelLabels(r)} />
+                                    {r.requestedModels ? " chosen for this review" : ""}
                                 </span>
                             )}
                         </dd>
@@ -227,9 +271,21 @@ function RunDetailView({ runId }: { runId: string }) {
                 <h3 className="text-sm font-medium" id="run-log-heading">
                     Log{r.log.dropped ? ` (the first ${plural(r.log.dropped, "line")} were dropped to save space)` : ""}
                 </h3>
+                {r.model?.models && r.all.length > 0 && (
+                    // Each model's lines start with its label: show them all, or one model's.
+                    <fieldset className="flex min-w-0 flex-wrap gap-1" data-testid="run-log-filter">
+                        <legend className="sr-only">Log lines to show</legend>
+                        {logChoice(null)}
+                        {r.model.models.map((m) => logChoice(m.label))}
+                    </fieldset>
+                )}
                 {r.all.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                         {r.status === "queued" ? "Nothing yet: it hasn't started." : "No log lines."}
+                    </p>
+                ) : shown.length === 0 ? (
+                    <p className="text-sm text-muted-foreground" data-testid="run-log-empty">
+                        No lines from {logModel} yet.
                     </p>
                 ) : (
                     // A scrollable section the keyboard can reach; not a live region, which would read every line out.
@@ -245,7 +301,7 @@ function RunDetailView({ runId }: { runId: string }) {
                         }}
                         data-testid="run-log"
                     >
-                        {r.all.map((l) => (
+                        {shown.map((l) => (
                             <div key={l.seq} className="break-all whitespace-pre-wrap">
                                 {l.line}
                             </div>

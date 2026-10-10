@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { api, paths } from "@/lib/api";
 import { plural } from "@/lib/format";
 import { keys, modelsQuery } from "@/lib/queries";
-import type { Run, RunStatus } from "@/lib/types";
+import type { Run, RunModelProgress, RunStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const STATUS_TEXT: Record<RunStatus, string> = {
@@ -101,6 +101,39 @@ export function progressText(run: Pick<Run, "progress" | "cancelRequested">): st
     if (p.toolCalls) parts.push(`${plural(p.toolCalls, "tool call")}${p.toolFailures ? `, ${p.toolFailures} failed` : ""}`);
     if (run.cancelRequested) parts.push(`stopping (cancelled by ${run.cancelRequested.by})`);
     return parts.join(" · ");
+}
+
+const STOPPED: Record<string, string> = {
+    stalled: "Stopped: it went quiet",
+    timeLimit: "Stopped at the time limit",
+    overBudget: "Stopped: it passed its token budget",
+};
+
+/** What one model of a review with several is doing, or how it ended, in words. */
+export function modelProgressText(m: RunModelProgress): string {
+    const ended = m.phase === "done" || m.phase === "failed" || m.phase === "cancelled";
+    const parts = [
+        m.phase === "waiting"
+            ? "Waiting for its turn"
+            : m.phase === "done"
+              ? "Finished"
+              : m.phase === "cancelled"
+                ? "Cancelled"
+                : m.phase === "failed"
+                  ? (STOPPED[m.reason ?? ""] ?? "Failed")
+                  : (PHASES[m.phase ?? "starting"] ?? m.phase ?? "Starting"),
+    ];
+    if (m.files) parts.push(plural(m.files, "file"));
+    if (m.round && !ended) parts.push(`round ${m.round}`);
+    if (m.tokens) parts.push(`${m.tokens.toLocaleString("en-GB")} tokens`);
+    if (m.seconds !== undefined && m.phase !== "waiting")
+        parts.push(ended ? `took ${duration(m.seconds)}` : `${duration(m.seconds)} so far`);
+    return parts.join(" · ");
+}
+
+/** The log lines of one model in a review with several: its lines start with its label. */
+export function linesOf<T extends { line: string }>(lines: readonly T[], label: string | null): readonly T[] {
+    return label === null ? lines : lines.filter((l) => l.line.startsWith(`[${label}] `));
 }
 
 /** "PR #12", "Changes on x since main", "Full scan of main". */
