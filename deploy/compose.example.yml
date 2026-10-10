@@ -77,6 +77,9 @@ services:
       TRIAGENT_SERVER_URL: http://server:8080
       TRIAGENT_RUNNER_SECRET_FILE: /run/secrets/triagent_runner_secret
       RUNNER_CONCURRENCY: "2"
+      # A review's models run at once, up to this many (an OCR process each): with RUNNER_CONCURRENCY that's
+      # up to 2 × 5 processes within mem_limit and pids_limit below.
+      RUNNER_MODEL_PARALLELISM: "5"
     secrets: [triagent_runner_secret]
     # Not on "data": the runner can't reach the database at all.
     networks: [runners, egress]
