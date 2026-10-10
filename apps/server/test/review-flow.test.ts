@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import type { GithubState } from "../src/services/github/automation.ts";
+import type { GitHubClient } from "../src/services/github/client.ts";
 import { COMMENT_MARKER } from "../src/services/github/service.ts";
 import type { Project } from "../src/store/types.ts";
 import { eventually, finished, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
@@ -303,6 +304,56 @@ describe("a pull request, from opened to reviewed and beyond", () => {
         // And a real change after that is a later push again.
         await env.fake.commit(REPO, "feat", { "src/feat.ts": "six\n" }, "six");
         assert.match((await t.check(1)).status, /^reviewed at [0-9a-f]{7}, 1 commit since$/);
+    });
+
+    /** Every connection's client with one method replaced, until the returned function is called. */
+    const stubClient = (replace: (client: GitHubClient) => void) => {
+        const github = env.t.services.github;
+        const githubFor = github.githubFor.bind(github);
+        github.githubFor = async (...args) => {
+            const gh = await githubFor(...args);
+            const client = Object.create(gh.client) as typeof gh.client;
+            replace(client);
+            return { ...gh, client };
+        };
+        return () => {
+            github.githubFor = githubFor;
+        };
+    };
+
+    test("GitHub failing to count the commits since isn't kept as the answer: it's asked again", async () => {
+        await env.fake.commit(REPO, "feat", { "src/feat.ts": "seven\n" }, "seven");
+        const restore = stubClient((client) => {
+            client.compare = async () => {
+                throw new Error("GitHub said 502: Bad gateway.");
+            };
+        });
+        try {
+            assert.match((await t.check(1)).status, /^reviewed at [0-9a-f]{7}, new commits since$/);
+        } finally {
+            restore();
+        }
+        assert.match((await t.check(1)).status, /^reviewed at [0-9a-f]{7}, 2 commits since$/);
+        assert.match(t.ours(1), /\*\*2 commits since this review\*\*/);
+    });
+
+    test("a full page of old comments that were edited doesn't move where comments are read from backwards", async () => {
+        const from = (await t.state()).commentsSince as string;
+        const restore = stubClient((client) => {
+            client.commentsSince = async () =>
+                Array.from({ length: 100 }, (_, i) => ({
+                    id: 900_000 + i,
+                    body: "edited",
+                    created_at: "2020-01-01T00:00:00.000Z",
+                    issue_url: `https://api.github.test/repos/${REPO}/issues/1`,
+                }));
+        });
+        try {
+            await t.check(1);
+        } finally {
+            restore();
+        }
+        assert.equal((await t.state()).commentsSince, from);
     });
 });
 

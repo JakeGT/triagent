@@ -462,7 +462,11 @@ export class Automation {
                     );
                 else {
                     // Behind as well as ahead: the branch was rebased, and "ahead" would count commits already reviewed.
-                    const cmp = await gh.client.compare(gh.repo, info.reviewedSha as string, sha).catch(() => null);
+                    // GitHub no longer having the reviewed commit is its answer; any other failure is asked about again.
+                    const cmp = await gh.client.compare(gh.repo, info.reviewedSha as string, sha).catch((err: unknown) => {
+                        if (!refused(err)) unsure = true;
+                        return null;
+                    });
                     input.commitsSince = cmp && cmp.behind_by === 0 ? cmp.ahead_by : null;
                 }
                 verdict = decide(input);
@@ -682,9 +686,10 @@ export class Automation {
                 association: c.author_association ?? null,
             });
         }
-        // A full page: there may be more, so carry on from its last one next time.
+        // A full page: there may be more, so carry on from its last one next time (never from further back:
+        // a page of old comments that were edited ends before where this one started).
         const last = comments.at(-1)?.created_at;
-        const since = comments.length >= 100 && last ? last : upTo > from ? upTo : from;
+        const since = comments.length >= 100 && last ? (last > from ? last : from) : upTo > from ? upTo : from;
         return { asks, since, seen };
     }
 
