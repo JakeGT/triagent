@@ -15,10 +15,19 @@
 // two waiters breaking the same lock, or one that's slow to act on what it saw, never touch the lock of
 // whoever took it next.
 //
+// Nothing can remove a file only if it's unchanged (the file system has no such operation), so a holder
+// that was silent for the whole of `staleMs` and writes in the instant between a waiter's last look and
+// its removal loses the lock all the same. The look is the last thing before the removal, and the
+// outcome is the one a removal an instant earlier would have had: a holder that refreshes on time
+// (several times in every `staleMs`) is never in that position.
+//
 // A holder that was only slow (its process stopped for longer than `staleMs`) loses the lock to a waiter
 // and carries on unaware until its next refresh. Then two git commands work on one mirror for a while,
 // which git survives (it locks each ref it writes): one of them may fail and say so. That's the cost of
 // a lock that can't stick for ever.
+//
+// The directory made ready is `<path>.lock.<holder>`, there for an instant. A process killed in that
+// instant leaves it; the next to take the lock removes any that are a day old.
 
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -47,6 +56,9 @@ export class LockAborted extends Error {}
 /** Thrown when the lock can't be taken for a reason waiting won't fix (the cache directory can't be written to). */
 export class LockUnusable extends Error {}
 
+/** How old a directory made ready for a lock (which is renamed or removed at once) must be to be a dead process's. */
+const READY_ABANDONED_MS = 24 * 60 * 60_000;
+
 const FULL = new Set(["ENOTEMPTY", "EEXIST"]);
 const code = (err: unknown) => (err as NodeJS.ErrnoException)?.code ?? "";
 
@@ -56,6 +68,8 @@ export class PathLocks {
     private readonly pollMs: number;
     /** The end of this process's queue for each path. */
     private readonly tails = new Map<string, Promise<void>>();
+    /** How many in this process hold or wait for each path. */
+    private readonly inLine = new Map<string, number>();
 
     constructor(options: LockOptions = {}) {
         this.staleMs = options.staleMs ?? 30_000;
@@ -77,6 +91,9 @@ export class PathLocks {
             waited = true;
         };
         const before = this.tails.get(target);
+        // A queue whose last has finished is still there for a moment: only someone still in line is waited for.
+        const ahead = this.inLine.get(target) ?? 0;
+        this.inLine.set(target, ahead + 1);
         let done = () => {};
         const mine = new Promise<void>((resolve) => {
             done = resolve;
@@ -89,7 +106,7 @@ export class PathLocks {
         });
         try {
             if (before) {
-                wait();
+                if (ahead) wait();
                 await aborted(before, signal);
             }
             const release = await this.take(target, signal, wait);
@@ -99,6 +116,9 @@ export class PathLocks {
                 release();
             }
         } finally {
+            const left = (this.inLine.get(target) ?? 1) - 1;
+            if (left) this.inLine.set(target, left);
+            else this.inLine.delete(target);
             done();
         }
     }
@@ -111,6 +131,7 @@ export class PathLocks {
         const file = path.join(dir, holder);
         /** What each file in the lock looked like, and when (by our own clock) it last looked different. */
         const seen = new Map<string, { state: string; since: number }>();
+        removeAbandonedReady(dir);
         for (;;) {
             if (signal?.aborted) throw new LockAborted("Stopped while waiting for another review's fetch of this repository.");
             try {
@@ -173,11 +194,28 @@ export class PathLocks {
             const was = seen.get(name);
             if (!was || was.state !== state) seen.set(name, { state, since: t });
             else if (t - was.since >= this.staleMs) {
+                // Read just above, with nothing in between: see the top of this file for what that leaves.
                 rmSync(at, { recursive: true, force: true });
                 seen.delete(name);
             }
         }
         for (const name of seen.keys()) if (!names.includes(name)) seen.delete(name);
+    }
+}
+
+/** Remove what processes that died while taking the lock at `dir` left beside it. */
+function removeAbandonedReady(dir: string): void {
+    const parent = path.dirname(dir);
+    const prefix = `${path.basename(dir)}.`;
+    try {
+        for (const name of readdirSync(parent)) {
+            if (!name.startsWith(prefix)) continue;
+            const at = path.join(parent, name);
+            // By the clock, unlike the lock itself: a day against an instant leaves room for any two clocks.
+            if (Date.now() - statSync(at).mtimeMs >= READY_ABANDONED_MS) rmSync(at, { recursive: true, force: true });
+        }
+    } catch {
+        // No cache directory yet, or one that can't be read: taking the lock says so if it matters.
     }
 }
 

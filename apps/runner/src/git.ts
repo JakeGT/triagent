@@ -11,7 +11,11 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import path from "node:path";
 import { run, start } from "./process.ts";
 
-/** Reviews read .gitattributes from the base commit (GIT_ATTR_SOURCE), which needs git 2.42 or later. */
+/**
+ * Reviews read .gitattributes from the base commit (GIT_ATTR_SOURCE), which needs git 2.42 or later.
+ * Everything else used here is older: `worktree add --lock --reason` is 2.33, and `worktree remove
+ * --force --force` (a locked one) 2.20.
+ */
 export const MIN_GIT = { major: 2, minor: 42 };
 
 /** Why this git can't run reviews, from `git --version`, or null if it can. */
@@ -110,9 +114,16 @@ export function fetchEnv(ctx: GitContext, cloneUrl: string, username: string, to
 
 /** Why a review's worktree is locked in the mirror: how a runner's own are told from anyone else's. */
 const WORKTREE_LOCK = "triagent review";
+/** What git itself locks a worktree with while adding it: one killed then leaves it so. */
+const WORKTREE_ADDING = "initializing";
 /** How often a running review shows its worktree is in use, and how long without that before it counts as abandoned. */
 export const WORKTREE_KEEP_MS = 10 * 60_000;
 export const WORKTREE_ABANDONED_MS = 24 * 60 * 60_000;
+/**
+ * How long a record nothing keeps (one not locked by a runner: an earlier version's, or one half made)
+ * must have gone untouched to count as abandoned: longer than any review may run (a week at most).
+ */
+export const WORKTREE_UNKEPT_ABANDONED_MS = 8 * 24 * 60 * 60_000;
 
 const SHA = /^[0-9a-f]{40}$/;
 /** What git says when the other end doesn't have (or won't give) a commit asked for by itself. */
@@ -304,37 +315,52 @@ export class Git {
 
     /**
      * Show that the worktree at `dir` is still in use (a running review does, every so often), so
-     * `sweepWorktrees` leaves its record alone.
+     * `sweepWorktrees` leaves its record alone. Returns whether it could: false if the record has gone, or
+     * can't be marked.
      */
-    keepWorktree(mirror: string, dir: string): void {
+    keepWorktree(mirror: string, dir: string): boolean {
         const t = new Date();
         const names = sameDirectory(dir);
+        let kept = false;
         for (const record of worktreeRecords(mirror)) {
             if (!record.dir || !names.has(record.dir)) continue;
             try {
                 utimesSync(path.join(record.at, "locked"), t, t);
+                kept = true;
             } catch {
                 // gone: nothing to keep
             }
         }
+        return kept;
     }
 
     /**
      * Remove the records of worktrees a runner left behind when it died: locked by a runner, and not kept
      * (`keepWorktree`) for `olderThanMs`. Their directories went with the runner's work directory, or will.
+     * So that nothing stays in a mirror for ever, records nothing keeps go too, once nothing in them has
+     * changed for `unkeptOlderThanMs`: ones not locked at all (an earlier version of the runner didn't lock
+     * its own), ones git was still adding when it was killed, and ones too broken to say what they're for.
+     * A worktree someone locked for a reason of their own is never touched.
      * Call it while holding the mirror, so two runners don't tidy at once. Returns how many went.
+     *
+     * A review's keeping isn't done under that lock, so one could land between the look at a record's age
+     * and its removal. Only a record that had already gone unkept for all of `olderThanMs` (144 keeps
+     * missed) can be caught that way, and the outcome is the one a sweep an instant earlier would have had.
+     * A runner that stopped for that long has had its jobs failed by the server (a minute's silence does it).
      */
-    sweepWorktrees(mirror: string, olderThanMs = WORKTREE_ABANDONED_MS): number {
+    sweepWorktrees(mirror: string, olderThanMs = WORKTREE_ABANDONED_MS, unkeptOlderThanMs = WORKTREE_UNKEPT_ABANDONED_MS): number {
         let n = 0;
         for (const record of worktreeRecords(mirror)) {
             try {
-                const locked = path.join(record.at, "locked");
-                if (!readFileSync(locked, "utf8").startsWith(WORKTREE_LOCK)) continue;
-                if (Date.now() - statSync(locked).mtimeMs < olderThanMs) continue;
+                const reason = lockReason(record.at);
+                const ours = reason?.startsWith(WORKTREE_LOCK) ?? false;
+                if (!ours && reason !== null && reason !== WORKTREE_ADDING) continue;
+                const age = Date.now() - (ours ? statSync(path.join(record.at, "locked")).mtimeMs : lastChanged(record.at));
+                if (age < (ours ? olderThanMs : unkeptOlderThanMs)) continue;
                 rmSync(record.at, { recursive: true, force: true });
                 n++;
             } catch {
-                // not locked, or gone meanwhile
+                // gone meanwhile
             }
         }
         return n;
@@ -488,6 +514,24 @@ function worktreeRecords(mirror: string): { at: string; dir: string | null }[] {
             return { at, dir: null };
         }
     });
+}
+
+/** Why the worktree recorded at `at` is locked (what its `locked` file says), or null if it isn't. */
+function lockReason(at: string): string | null {
+    try {
+        return readFileSync(path.join(at, "locked"), "utf8").trim();
+    } catch (err) {
+        if (["ENOENT", "ENOTDIR"].includes((err as NodeJS.ErrnoException).code ?? "")) return null;
+        throw err;
+    }
+}
+
+/** When a worktree's record, or anything directly in it, last changed. */
+function lastChanged(at: string): number {
+    const st = statSync(at);
+    let latest = st.mtimeMs;
+    if (st.isDirectory()) for (const name of readdirSync(at)) latest = Math.max(latest, lstatOrNull(path.join(at, name))?.mtimeMs ?? 0);
+    return latest;
 }
 
 function lstatOrNull(p: string) {

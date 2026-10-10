@@ -563,11 +563,13 @@ export class Runner {
             );
             // One fetch at a time into a repository's mirror: two at once would trip over each other's refs. Jobs
             // for other repositories don't wait, and nor does anything after the fetch (each job has its own worktree).
+            // A job waiting here still has its slot: it's claimed, and is about to use it for the whole review.
             fetched = await this.locks.hold(
                 mirror,
                 async () => {
                     run.check();
-                    this.git.sweepWorktrees(mirror);
+                    const swept = this.git.sweepWorktrees(mirror);
+                    if (swept) console.log(`Removed ${swept} abandoned worktree record${swept === 1 ? "" : "s"} from ${mirror}.`);
                     let got = await this.git.fetch(
                         mirror,
                         {
@@ -608,7 +610,12 @@ export class Runner {
                 );
             await this.git.addWorktree(mirror, tree, fetched.head, fetched.base, run.signal);
             // A long review keeps showing that its worktree is in use, so its record isn't taken for one left by a dead runner.
-            keep = setInterval(() => this.git.keepWorktree(mirror, tree), WORKTREE_KEEP_MS);
+            let unkept = false;
+            keep = setInterval(() => {
+                if (this.git.keepWorktree(mirror, tree) || unkept) return;
+                unkept = true;
+                console.error(`Couldn't mark ${job.id}'s worktree as in use in ${mirror}: its record has gone or can't be written to.`);
+            }, WORKTREE_KEEP_MS);
             keep.unref();
             run.check();
             if (fetched.base) {

@@ -151,6 +151,44 @@ describe("the lock on a path in the cache", () => {
         await eventually(() => !existsSync(PathLocks.dir(target)), "the lock to be released");
     });
 
+    test("a lock that's free is taken without a word about waiting, straight after another's turn too", async () => {
+        const target = path.join(dir, "free.git");
+        const locks = new PathLocks(patient);
+        let waited = 0;
+        for (let i = 0; i < 3; i++) await locks.hold(target, async () => {}, { onWait: () => waited++ });
+        assert.equal(waited, 0);
+        // One that does wait still says so, once.
+        let free = () => {};
+        const held = locks.hold(target, () => new Promise<void>((r) => (free = r)));
+        const next = locks.hold(target, async () => {}, { onWait: () => waited++ });
+        await sleep(60);
+        free();
+        await Promise.all([held, next]);
+        assert.equal(waited, 1);
+    });
+
+    test("what a process killed while taking the lock left beside it goes with the next to take it, once it's a day old", async () => {
+        const target = path.join(dir, "killed.git");
+        const [old, recent] = [`${PathLocks.dir(target)}.4242-dead`, `${PathLocks.dir(target)}.4243-live`];
+        for (const at of [old, recent]) {
+            mkdirSync(at);
+            writeFileSync(path.join(at, path.basename(at).split(".").pop() as string), "0");
+        }
+        const then = new Date(Date.now() - 25 * 60 * 60_000);
+        utimesSync(old, then, then);
+        // Another path's is not this lock's to remove.
+        const other = `${PathLocks.dir(path.join(dir, "killed.git2"))}.4244-dead`;
+        mkdirSync(other);
+        utimesSync(other, then, then);
+        await new PathLocks(quick).hold(target, async () => {});
+        assert.deepEqual(
+            readdirSync(dir)
+                .filter((n) => n.startsWith("killed.git"))
+                .sort(),
+            [path.basename(recent), path.basename(other)].sort(),
+        );
+    });
+
     test("already aborted: never takes the lock", async () => {
         const stop = new AbortController();
         stop.abort();
@@ -569,5 +607,60 @@ describe("worktrees in a shared mirror", () => {
         assert.equal(git.sweepWorktrees(mirror), 0);
         assert.equal(records().length, 2);
         await git.removeWorktree(mirror, alive);
+        execFileSync("git", ["--git-dir", mirror, "worktree", "remove", "--force", "--force", manual]);
+        assert.deepEqual(records(), []);
+    });
+
+    test("records nothing keeps go too, after more than a week: unlocked, half added, or broken; a newer one stays", async () => {
+        const worktrees = path.join(mirror, "worktrees");
+        const add = (name: string, ...lock: string[]) => {
+            const had = records();
+            execFileSync("git", [
+                "--git-dir",
+                mirror,
+                "worktree",
+                "add",
+                ...lock,
+                "--detach",
+                "--quiet",
+                path.join(dir, "unkept", name, "tree"),
+                head,
+            ]);
+            return records().find((r) => !had.includes(r)) as string;
+        };
+        /** Make everything in a record look `days` old. */
+        const age = (name: string, days: number) => {
+            const then = new Date(Date.now() - days * 24 * 60 * 60_000);
+            const at = path.join(worktrees, name);
+            for (const entry of readdirSync(at)) utimesSync(path.join(at, entry), then, then);
+            utimesSync(at, then, then);
+        };
+        // An earlier version's (never locked), one git was killed while adding, and one with no `gitdir`.
+        const unlocked = add("unlocked");
+        const adding = add("adding", "--lock", "--reason", "initializing");
+        const broken = add("broken");
+        rmSync(path.join(worktrees, broken, "gitdir"));
+        const recent = add("recent");
+        const manual = add("manual", "--lock", "--reason", "mine");
+        for (const name of [unlocked, adding, broken, manual]) age(name, 9);
+        age(recent, 2);
+        // Something in a record changed since: it isn't abandoned yet.
+        const touched = add("touched");
+        age(touched, 9);
+        utimesSync(path.join(worktrees, touched, "HEAD"), new Date(), new Date());
+        assert.equal(git.sweepWorktrees(mirror), 3);
+        assert.deepEqual(records().sort(), [recent, manual, touched].sort());
+        age(recent, 9);
+        age(touched, 9);
+        assert.equal(git.sweepWorktrees(mirror), 2);
+        assert.deepEqual(records(), [manual]);
+    });
+
+    test("keeping a worktree says whether its record was there to keep", async () => {
+        const tree = path.join(dir, "job-6", "tree");
+        await git.addWorktree(mirror, tree, head);
+        assert.equal(git.keepWorktree(mirror, tree), true);
+        await git.removeWorktree(mirror, tree);
+        assert.equal(git.keepWorktree(mirror, tree), false);
     });
 });
