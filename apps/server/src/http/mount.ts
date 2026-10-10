@@ -74,7 +74,7 @@ function checkCsrf(c: Context, services: Services, principal: Principal): void {
     if (!sameOrigin || !safeEqual(c.req.header("x-csrf-token") ?? "", principal.session.csrf)) {
         throw new ApiError(
             403,
-            "Request blocked: missing or invalid CSRF token, or another site's origin. Reload the page and try again.",
+            "This page's security token is missing or out of date, or the request came from another site, so nothing was changed. Reload the page and try again.",
             { code: "csrf" },
         );
     }

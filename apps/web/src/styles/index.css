@@ -110,6 +110,11 @@
     --spacing-section: 1.5rem;
     /* Inside a section's border. */
     --spacing-inset: 1rem;
+    /* Text that is read rather than scanned: a finding, a note, a reviewer's summary (DESIGN.md, Type). */
+    --text-read: 0.9375rem;
+    --text-read--line-height: 1.5;
+    /* The longest line of prose, help text and descriptions. */
+    --container-measure: 80ch;
     /* Settings pages and forms; pages of tables. */
     --container-narrow: 48rem;
     --container-wide: 64rem;
@@ -222,6 +227,26 @@
 }
 
 @layer components {
+    /* A link in running text, or standing alone: the action colour and an underline, in both themes. */
+    .link {
+        @apply text-primary underline underline-offset-2;
+    }
+    .link:hover {
+        text-decoration-thickness: 2px;
+    }
+    /* Paragraphs in the signed-in app keep to the measure, however wide the page (a utility can still say
+       otherwise). A boxed note is as wide as the sections around it. */
+    [data-app-main] p:not(.border) {
+        max-width: var(--container-measure);
+    }
+    /* The phone's bottom bar gives way while something is being typed on a touch screen, where the
+       on-screen keyboard would otherwise push it up over the page. */
+    @media (pointer: coarse) {
+        body:has(:is(textarea, input:not([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="file"])):focus)
+            [data-mobile-nav] {
+            display: none;
+        }
+    }
     /* The title of a section or card, on every page. */
     .section-title {
         @apply text-base leading-tight font-semibold;
@@ -296,7 +321,11 @@
 
     /* Rendered Markdown (findings, the reviewer's summary, tasks). */
     .prose-md {
-        @apply text-sm leading-relaxed break-words;
+        @apply text-read break-words;
+    }
+    /* Prose keeps to the measure; code blocks may use the room there is. */
+    .prose-md > :not(pre) {
+        @apply max-w-measure;
     }
     .prose-md p,
     .prose-md ul,
@@ -332,7 +361,7 @@
         @apply text-primary underline underline-offset-2;
     }
     .prose-md code {
-        @apply rounded bg-muted px-1 py-0.5 text-[0.85em];
+        @apply rounded bg-muted px-1 py-0.5 text-[length:max(0.75rem,0.85em)];
     }
     .prose-md pre {
         @apply overflow-x-auto rounded-md border bg-muted p-3 text-xs;

@@ -90,9 +90,10 @@ export function AnalyticsPage() {
                 </FieldRow>
             </form>
 
-            <nav aria-label="Sections" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            <nav aria-label="Sections" className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+                <span className="text-muted-foreground">On this page:</span>
                 {SECTIONS.map(([id, label]) => (
-                    <a key={id} href={`#${id}`} className="underline-offset-2 hover:underline">
+                    <a key={id} href={`#${id}`} className="link">
                         {label}
                     </a>
                 ))}

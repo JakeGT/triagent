@@ -36,7 +36,10 @@ export const accountRoutes: Route[] = [
             if ("retryAfter" in result) {
                 if (result.retryAfter) {
                     c.header("Retry-After", String(result.retryAfter));
-                    throw new ApiError(429, `Too many failed attempts. Try again in ${Math.ceil(result.retryAfter / 60)} minute(s).`);
+                    throw new ApiError(
+                        429,
+                        `Too many failed attempts. Try again in ${Math.ceil(result.retryAfter / 60)} ${Math.ceil(result.retryAfter / 60) === 1 ? "minute" : "minutes"}.`,
+                    );
                 }
                 console.warn(`Failed sign-in for "${body.username.slice(0, 64)}" from ${ip}`);
                 throw new ApiError(401, "Wrong username or password.");

@@ -116,7 +116,7 @@ function Axis({ max, format }: { max: number; format(v: number): string }) {
         <>
             {[1, 0.5, 0].map((f) => (
                 <div key={f} className="absolute inset-x-0 flex items-center gap-2" style={{ bottom: `${f * 100}%` }}>
-                    <span className="w-10 shrink-0 translate-y-1/2 text-end text-[0.6875rem] text-muted-foreground tabular-nums">
+                    <span className="w-10 shrink-0 translate-y-1/2 text-end text-xs text-muted-foreground tabular-nums">
                         {format(max * f)}
                     </span>
                     <span className="h-px flex-1 translate-y-1/2 bg-chart-grid" />
@@ -131,7 +131,7 @@ function XLabels({ points }: { points: Point[] }) {
     const last = points.length - 1;
     const shown = last >= 2 ? [0, Math.floor(last / 2), last] : points.map((_, i) => i);
     return (
-        <div className="relative ms-12 h-4 text-[0.6875rem] text-muted-foreground" aria-hidden="true">
+        <div className="relative ms-12 h-4 text-xs text-muted-foreground" aria-hidden="true">
             {shown.map((i) => (
                 <span
                     key={i}
@@ -364,13 +364,22 @@ export function UsageBar({ used, total, label }: { used: number; total: number; 
     );
 }
 
-/** A headline figure. */
-export function Stat({ label, value, note }: { label: string; value: string; note?: ReactNode }) {
+/** A row of headline figures, on the page itself: no box around the row or around each figure. */
+export function Stats({ children, className, ...props }: React.ComponentProps<"dl">) {
     return (
-        <div className="rounded-lg border bg-card p-3">
+        <dl className={cn("grid grid-cols-2 gap-x-8 gap-y-4 sm:flex sm:flex-wrap sm:gap-x-12", className)} {...props}>
+            {children}
+        </dl>
+    );
+}
+
+/** A headline figure: a small label, the value, and a line under it saying what it's made of. */
+export function Stat({ label, value, note, className }: { label: ReactNode; value: ReactNode; note?: ReactNode; className?: string }) {
+    return (
+        <div className={cn("grid min-w-0 content-start gap-0.5", className)}>
             <dt className="text-xs text-muted-foreground">{label}</dt>
-            <dd className="text-xl font-semibold">{value}</dd>
-            {note && <dd className="text-xs text-muted-foreground">{note}</dd>}
+            <dd className="text-2xl leading-tight font-semibold tabular-nums">{value}</dd>
+            {note && <dd className="max-w-56 text-xs text-muted-foreground">{note}</dd>}
         </div>
     );
 }

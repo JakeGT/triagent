@@ -50,7 +50,7 @@ function AgentTabs({
         <Tabs value={agent} onValueChange={onChange}>
             <TabsList className="h-auto max-w-full flex-wrap justify-start">
                 {AGENTS.map((a) => (
-                    <TabsTrigger key={a.id} value={a.id} className="flex-none">
+                    <TabsTrigger key={a.id} value={a.id} className="h-7 flex-none">
                         {a.name}
                     </TabsTrigger>
                 ))}
@@ -66,7 +66,8 @@ function AgentTabs({
 
 function Section({ title, tour, children }: { title: string; tour?: string; children: ReactNode }) {
     return (
-        <FormSection title={title} level={2} data-tour={tour}>
+        // Prose and snippets under a heading, on the page itself: nothing here is saved as one, so no box.
+        <FormSection title={title} level={2} plain className="border-t pt-5" data-tour={tour}>
             {children}
         </FormSection>
     );
@@ -86,7 +87,7 @@ export function AgentsPage() {
     const base = `${origin}/api/v1/w/${ws}/p/${project}`;
 
     const tokenLink = can("tokens") ? (
-        <Link to="/w/$ws/settings/tokens" params={{ ws }} className="underline">
+        <Link to="/w/$ws/settings/tokens" params={{ ws }} className="link">
             Settings → API tokens
         </Link>
     ) : (
@@ -102,26 +103,22 @@ export function AgentsPage() {
             />
 
             <Section title="1. Get a token">
-                <p className="text-sm">Create one in {tokenLink}. Give it the least access that does the job:</p>
-                <ul className="grid gap-1 text-sm">
-                    <li>
-                        <strong>full</strong>: {SCOPE_INFO.full}
-                    </li>
-                    <li>
-                        <strong>upload</strong>: {SCOPE_INFO.upload}
-                    </li>
-                    <li>
-                        <strong>read</strong>: {SCOPE_INFO.read}
-                    </li>
+                <p className="text-read">Create one in {tokenLink}. Give it the least access that does the job:</p>
+                <ul className="grid gap-1 text-read">
+                    {(["full", "upload", "read"] as const).map((s) => (
+                        <li key={s}>
+                            {SCOPE_INFO[s]} (<code className="font-mono">{s}</code>)
+                        </li>
+                    ))}
                 </ul>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-read text-muted-foreground">
                     No token can manage members or tokens, or set secrets: those stay with people signed in here. In the snippets below,
                     replace <code className="font-mono">{TOKEN}</code> with your token.
                 </p>
             </Section>
 
             <Section title="2. Connect your agent (MCP)" tour="agents-mcp">
-                <p className="text-sm">
+                <p className="text-read">
                     Triagent is an MCP server at <code className="font-mono">{mcp}</code> (stateless Streamable HTTP). Agents see the tools
                     their token allows: claim the next issue, read it, mark it resolved with a note, and more.
                 </p>
@@ -138,7 +135,7 @@ export function AgentsPage() {
             </Section>
 
             <Section title="3. Teach it the workflow (skill)">
-                <p className="text-sm">
+                <p className="text-read">
                     The Triagent skill tells an agent how to find the right project from the Git remote, claim issues one at a time, record
                     what it fixed, and upload new reports without pasting them into the conversation.
                 </p>
@@ -159,9 +156,9 @@ export function AgentsPage() {
                         </>
                     )}
                 </AgentTabs>
-                <p className="text-sm">
+                <p className="text-read">
                     Or{" "}
-                    <a href="/api/v1/skill.md" className="underline" download="SKILL.md">
+                    <a href="/api/v1/skill.md" className="link" download="SKILL.md">
                         download SKILL.md
                     </a>{" "}
                     and put it where your agent reads skills.
@@ -182,7 +179,7 @@ export function AgentsPage() {
                         )}
                     </Field>
                 )}
-                <p className="text-sm">
+                <p className="text-read">
                     Make a token with <strong>upload</strong> access, save it as the repository secret{" "}
                     <code className="font-mono">TRIAGENT_TOKEN</code>, and add one of these steps after the one that runs Open Code Review.
                     An upload replaces the branch's report; findings that are still in it keep their triage.
@@ -208,7 +205,7 @@ export function AgentsPage() {
                         />
                     </TabsContent>
                     <TabsContent value="link" className="grid gap-2">
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-read text-muted-foreground">
                             An upload link works once, for 15 minutes, and needs no other credential: handy when the file is large or when
                             the step that sends it shouldn't hold the token.
                         </p>
@@ -224,15 +221,15 @@ curl -fsS -X POST "$URL" --data-binary @code_review.json`}
             </Section>
 
             <Section title="The API">
-                <ul className="grid gap-1.5 text-sm">
+                <ul className="grid max-w-measure gap-1.5 text-read">
                     <li>
-                        <a href="/api/v1/openapi.json" className="inline-flex items-center gap-1 underline">
+                        <a href="/api/v1/openapi.json" className="link inline-flex items-center gap-1">
                             OpenAPI description <ExternalLink className="size-3" aria-hidden="true" />
                         </a>
                         : every endpoint and the access it needs. Send <code className="font-mono">Authorization: Bearer {TOKEN}</code>.
                     </li>
                     <li>
-                        <a href="/llms.txt" className="inline-flex items-center gap-1 underline">
+                        <a href="/llms.txt" className="link inline-flex items-center gap-1">
                             llms.txt <ExternalLink className="size-3" aria-hidden="true" />
                         </a>
                         : a plain-text map of the site for agents.

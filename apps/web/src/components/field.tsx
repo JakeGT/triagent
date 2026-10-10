@@ -84,7 +84,7 @@ export function Field({
 /** The description under a control. */
 export function FieldHint({ id, children, className }: { id?: string; children: ReactNode; className?: string }) {
     return (
-        <p id={id} className={cn("text-xs leading-normal text-muted-foreground", className)}>
+        <p id={id} className={cn("max-w-measure text-xs leading-normal text-muted-foreground", className)}>
             {children}
         </p>
     );

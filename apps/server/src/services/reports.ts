@@ -229,7 +229,7 @@ export class Reports {
             if (unresolved && input.confirm !== true) {
                 throw new ApiError(
                     409,
-                    `Branch "${branch}" has ${unresolved} unresolved issue(s). Send "confirm": true to delete it anyway.`,
+                    `Branch "${branch}" has ${unresolved} unresolved ${unresolved === 1 ? "issue" : "issues"}. Send "confirm": true to delete it anyway.`,
                     {
                         details: { requiresConfirmation: true, unresolved },
                     },
@@ -350,7 +350,7 @@ export class Reports {
             if (comparison.requiresConfirmation && input.confirm !== true) {
                 throw new ApiError(
                     409,
-                    `Branch "${branch}" has ${comparison.current.unresolved} unresolved issue(s). Send "confirm": true to replace its report anyway.`,
+                    `Branch "${branch}" has ${comparison.current.unresolved} unresolved ${comparison.current.unresolved === 1 ? "issue" : "issues"}. Send "confirm": true to replace its report anyway.`,
                     {
                         details: comparison,
                     },

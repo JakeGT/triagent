@@ -18,6 +18,7 @@ import { isExample } from "@/lib/tutorial";
 import type { Overview } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { describeActivity } from "../activity/describe";
+import { FirstReviewActions } from "../runs/first-review";
 
 const SEV_BG: Record<Severity, string> = {
     critical: "bg-sev-critical",
@@ -26,9 +27,10 @@ const SEV_BG: Record<Severity, string> = {
     low: "bg-sev-low",
 };
 
-function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
+/** A table gets a frame; a short list sits on the page under its heading, with a hairline above. */
+function Section({ title, children, action, plain }: { title: string; children: ReactNode; action?: ReactNode; plain?: boolean }) {
     return (
-        <FormSection title={title} aside={action} level={2}>
+        <FormSection title={title} aside={action} level={2} plain={plain} className={plain ? "border-t pt-4" : undefined}>
             {children}
         </FormSection>
     );
@@ -82,13 +84,10 @@ export function OverviewPage() {
             <Page>
                 {meta}
                 {header}
-                <EmptyState title="No report on this branch yet">
-                    Upload the JSON report Open Code Review wrote on{" "}
-                    <Link to="/w/$ws/p/$project/branches" params={params} className="underline">
-                        Branches &amp; reports
-                    </Link>
-                    , or send one from CI (see{" "}
-                    <Link to="/w/$ws/agents" params={{ ws }} search={{ project: slug }} className="underline">
+                <EmptyState title="No report on this branch yet" action={<FirstReviewActions />}>
+                    Overview shows how far triage has got on a branch: what's still to do, where the problems are and what changed lately.
+                    Start a review, upload the JSON report Open Code Review wrote, or send one from CI (see{" "}
+                    <Link to="/w/$ws/agents" params={{ ws }} search={{ project: slug }} className="link">
                         Agents &amp; API
                     </Link>
                     ).
@@ -160,12 +159,12 @@ export function OverviewPage() {
                 </details>
             )}
 
-            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" data-tour="overview-tiles">
+            {/* Plain figures, each a link to what it counts: the label is underlined, the whole figure is the target. */}
+            <ul className="grid grid-cols-2 gap-x-8 gap-y-4 sm:flex sm:flex-wrap sm:gap-x-12" data-tour="overview-tiles">
                 {tiles.map((t) => (
-                    <li key={t.label} className="relative rounded-lg border bg-card p-3 hover:bg-accent/50">
-                        <p className="text-xs text-muted-foreground">{t.label}</p>
-                        <p className="text-2xl font-semibold tabular-nums">{t.value.toLocaleString("en-GB")}</p>
-                        {/* The whole tile is the link; its name is the label and number. */}
+                    <li key={t.label} className="group relative grid content-start gap-0.5">
+                        <p className="text-xs text-primary underline underline-offset-2 group-hover:decoration-2">{t.label}</p>
+                        <p className="text-2xl leading-tight font-semibold tabular-nums">{t.value.toLocaleString("en-GB")}</p>
                         <TileLink link={t.link} label={`${t.label}: ${t.value}`} />
                     </li>
                 ))}
@@ -188,9 +187,23 @@ export function OverviewPage() {
                 >
                     <div className="h-full bg-st-resolved" style={{ width: `${pct}%` }} />
                 </div>
+                {(o.flags.needsDiscussion > 0 || o.flags.duplicates > 0) && (
+                    <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground" data-testid="overview-flags">
+                        {o.flags.needsDiscussion > 0 && (
+                            <Link to="/w/$ws/p/$project/issues" params={params} search={issues({ needsDiscussion: true })} className="link">
+                                {plural(o.flags.needsDiscussion, "issue needs", "issues need")} discussion
+                            </Link>
+                        )}
+                        {o.flags.duplicates > 0 && (
+                            <Link to="/w/$ws/p/$project/issues" params={params} search={issues({ duplicates: true })} className="link">
+                                {plural(o.flags.duplicates, "issue is marked as a duplicate", "issues are marked as duplicates")}
+                            </Link>
+                        )}
+                    </p>
+                )}
             </div>
 
-            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-6 lg:grid-cols-2">
                 <Section title="By severity">
                     <Table>
                         <TableHeader>
@@ -302,9 +315,10 @@ export function OverviewPage() {
                 </Section>
 
                 <Section
+                    plain
                     title="Hotspots"
                     action={
-                        <Link to="/w/$ws/p/$project/files" params={params} search={{ branch: branchParam }} className="text-sm underline">
+                        <Link to="/w/$ws/p/$project/files" params={params} search={{ branch: branchParam }} className="link text-sm">
                             All files
                         </Link>
                     }
@@ -325,7 +339,7 @@ export function OverviewPage() {
                                         {f.path}
                                     </Link>
                                     <span className="text-xs text-muted-foreground tabular-nums">
-                                        {f.open} open of {f.total}
+                                        {f.open} of {f.total} still to do
                                     </span>
                                     <SeverityBar counts={f.severity} className="w-20" />
                                 </li>
@@ -334,7 +348,7 @@ export function OverviewPage() {
                     )}
                 </Section>
 
-                <Section title={o.themesTitle ?? "Themes"}>
+                <Section plain title={o.themesTitle ?? "Themes"}>
                     {o.themes.length === 0 ? (
                         <p className="text-sm text-muted-foreground">The reviewer's summary has no list of themes.</p>
                     ) : (
@@ -359,35 +373,11 @@ export function OverviewPage() {
                     )}
                 </Section>
 
-                <Section title="Flags">
-                    <ul className="grid gap-1 text-sm">
-                        <li>
-                            <Link
-                                to="/w/$ws/p/$project/issues"
-                                params={params}
-                                search={issues({ needsDiscussion: true })}
-                                className="inline-block py-0.5 hover:underline"
-                            >
-                                {plural(o.flags.needsDiscussion, "issue")} need discussion
-                            </Link>
-                        </li>
-                        <li>
-                            <Link
-                                to="/w/$ws/p/$project/issues"
-                                params={params}
-                                search={issues({ duplicates: true })}
-                                className="inline-block py-0.5 hover:underline"
-                            >
-                                {plural(o.flags.duplicates, "issue")} marked as duplicates
-                            </Link>
-                        </li>
-                    </ul>
-                </Section>
-
                 <Section
+                    plain
                     title="Recent activity"
                     action={
-                        <Link to="/w/$ws/p/$project/activity" params={params} className="text-sm underline">
+                        <Link to="/w/$ws/p/$project/activity" params={params} className="link text-sm">
                             All activity
                         </Link>
                     }
@@ -415,7 +405,7 @@ export function OverviewPage() {
 /** Stretch a router Link over its tile. */
 function TileLink({ link, label }: { link: ReactElement<{ className?: string; "aria-label"?: string }>; label: string }) {
     return cloneElement(link, {
-        className: "absolute inset-0 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        className: "absolute -inset-1 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
         "aria-label": label,
     });
 }

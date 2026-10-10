@@ -207,7 +207,7 @@ export class Accounts {
             throw new ApiError(
                 checked.retryAfter ? 429 : 400,
                 checked.retryAfter
-                    ? `Too many failed attempts. Try again in ${Math.ceil(checked.retryAfter / 60)} minute(s).`
+                    ? `Too many failed attempts. Try again in ${Math.ceil(checked.retryAfter / 60)} ${Math.ceil(checked.retryAfter / 60) === 1 ? "minute" : "minutes"}.`
                     : "That password is wrong.",
             );
         await this.core.store.transaction(async (tx) => {

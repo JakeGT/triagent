@@ -44,7 +44,7 @@ export function InlineCode({ text, className }: { text: string; className?: stri
             {parts.map((p, i) =>
                 p.startsWith("`") && p.endsWith("`") && p.length > 2 ? (
                     // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed string
-                    <code key={i} className="rounded bg-muted px-1 py-px font-mono text-[0.85em]">
+                    <code key={i} className="rounded bg-muted px-1 py-px font-mono text-[length:max(0.75rem,0.9em)]">
                         {p.slice(1, -1)}
                     </code>
                 ) : (

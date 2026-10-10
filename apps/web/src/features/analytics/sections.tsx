@@ -3,10 +3,10 @@
 
 import { SEVERITIES, type Severity } from "@triagent/shared";
 import type { ReactNode } from "react";
-import { BarList, ChartFrame, ColumnChart, LineChart, type Point, type Series, Stat } from "@/components/charts";
+import { BarList, ChartFrame, ColumnChart, LineChart, type Point, type Series, Stat, Stats } from "@/components/charts";
 import { SeverityMark } from "@/components/marks";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CATEGORY_LABEL, formatDateTime, SEVERITY_LABEL, timeAgo } from "@/lib/format";
+import { CATEGORY_LABEL, formatDateTime, plural, SEVERITY_LABEL, timeAgo } from "@/lib/format";
 import {
     bucketLabel,
     bucketLong,
@@ -27,7 +27,7 @@ const SEV_BG: Record<Severity, string> = { critical: "bg-sev-critical", high: "b
 
 export function Section({ id, title, description, children }: { id: string; title: string; description: string; children: ReactNode }) {
     return (
-        <section aria-labelledby={`${id}-title`} id={id} className="grid scroll-mt-4 gap-4">
+        <section aria-labelledby={`${id}-title`} id={id} className="grid scroll-mt-16 gap-4">
             <div className="space-y-0.5">
                 <h2 id={`${id}-title`} className="text-lg font-semibold">
                     {title}
@@ -37,10 +37,6 @@ export function Section({ id, title, description, children }: { id: string; titl
             {children}
         </section>
     );
-}
-
-function Stats({ children }: { children: ReactNode }) {
-    return <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">{children}</dl>;
 }
 
 function Card({ title, children }: { title: string; children: ReactNode }) {
@@ -345,7 +341,11 @@ export function FindingsSection({ a }: { a: Analytics }) {
                 />
                 <Stat label="New" value={count(f.added)} note={`${count(f.removed)} no longer reported`} />
                 <Stat label="Closed" value={count(f.closed)} note={`${count(f.resolved)} resolved, ${count(f.wontFix)} won't fix`} />
-                <Stat label="Won't-fix rate" value={percent(f.wontFixRate)} note={`${count(f.duplicates)} marked as duplicates`} />
+                <Stat
+                    label="Won't-fix rate"
+                    value={percent(f.wontFixRate)}
+                    note={`${count(f.duplicates)} marked as ${f.duplicates === 1 ? "a duplicate" : "duplicates"}`}
+                />
                 <Stat
                     label="Reopened"
                     value={count(f.reopenedByReview + f.reopenedByPeople)}
@@ -453,7 +453,7 @@ export function TriageSection({ a }: { a: Analytics }) {
                     value={count(t.closed)}
                     note={`${t.closedPerWeek.toLocaleString("en-GB", { maximumFractionDigits: 1 })} a week`}
                 />
-                <Stat label="Closed by agents" value={percent(t.agentShare)} note={`${count(t.byAgents)} findings`} />
+                <Stat label="Closed by agents" value={percent(t.agentShare)} note={plural(t.byAgents, "finding")} />
                 <Stat
                     label="Time to resolve (median)"
                     value={hours(t.timeToResolve.medianHours)}
@@ -464,7 +464,7 @@ export function TriageSection({ a }: { a: Analytics }) {
             <div className="grid gap-4 lg:grid-cols-2">
                 <ChartFrame
                     title={`Findings closed a ${per(a)}`}
-                    summary={`${count(t.closed)} findings closed over the range, ${count(t.byAgents)} of them by agents.`}
+                    summary={`${plural(t.closed, "finding")} closed over the range, ${count(t.byAgents)} of them by agents.`}
                     series={CLOSERS}
                     table={<SeriesTable caption="Findings closed, by people and agents" points={closed} series={CLOSERS} format={count} />}
                 >
@@ -492,7 +492,7 @@ export function TriageSection({ a }: { a: Analytics }) {
                     <p className="text-xs text-muted-foreground">
                         Measured from when a review recorded here first reported the finding.
                         {t.timeToResolve.notRecorded > 0 &&
-                            ` ${count(t.timeToResolve.notRecorded)} resolved findings were first reported before that, so aren't timed.`}
+                            ` ${plural(t.timeToResolve.notRecorded, "resolved finding was", "resolved findings were")} first reported before that, so ${t.timeToResolve.notRecorded === 1 ? "isn't" : "aren't"} timed.`}
                     </p>
                 </Card>
             </div>

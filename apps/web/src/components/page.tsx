@@ -29,7 +29,7 @@ export function PageHeader({
         <div className={cn("flex flex-wrap items-start justify-between gap-3", className)}>
             <div className="min-w-0 space-y-0.5">
                 <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-                {description && <div className="text-sm text-muted-foreground">{description}</div>}
+                {description && <div className="max-w-measure text-sm text-muted-foreground">{description}</div>}
             </div>
             {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </div>
@@ -38,11 +38,12 @@ export function PageHeader({
 
 export function Page({ children, className, wide }: { children: ReactNode; className?: string; wide?: boolean }) {
     // One column that may shrink below its content's width, so a wide table scrolls inside its frame
-    // instead of widening the page on a phone.
+    // instead of widening the page on a phone. It starts at the left edge of the content area, like every
+    // page (DESIGN.md): nothing is centred but a dialog and the sign-in form.
     return (
         <div
             className={cn(
-                "mx-auto grid w-full grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6",
+                "grid w-full grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6",
                 wide ? "max-w-none" : "max-w-6xl",
                 className,
             )}
