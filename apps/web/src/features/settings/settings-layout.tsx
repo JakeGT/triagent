@@ -21,7 +21,7 @@ function NavGroup({ title, note, items, pathname }: { title: string; note?: stri
     if (!items.length) return null;
     return (
         <div className="grid gap-1">
-            <h2 className="px-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h2>
+            <h2 className="px-2 text-xs font-medium text-muted-foreground">{title}</h2>
             {note && <p className="truncate px-2 text-xs text-muted-foreground">{note}</p>}
             <ul className="grid gap-0.5">
                 {items.map((item) => (
@@ -124,7 +124,7 @@ export function SettingsLayout() {
 
     const here = [...projectItems, ...workspaceItems, ...instanceItems, ...accountItems].find((i) => i.href === pathname)?.label;
     return (
-        <div className="mx-auto grid w-full max-w-6xl grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6">
+        <div className="grid w-full max-w-6xl grid-cols-[minmax(0,1fr)] content-start gap-section p-4 md:p-6">
             <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
             <div className="grid grid-cols-[minmax(0,1fr)] gap-section md:grid-cols-[12rem_minmax(0,1fr)]">
                 <SettingsNav current={here} pathname={pathname}>
@@ -161,7 +161,7 @@ function SettingsNav({ current, pathname, children }: { current?: string; pathna
                     <span className="text-muted-foreground">Settings: </span>
                     {current ?? "All settings"}
                 </span>
-                <ChevronDown className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} aria-hidden="true" />
+                <ChevronDown className={cn("size-4 shrink-0", open && "rotate-180")} aria-hidden="true" />
             </button>
             <div id={listId} className={cn("content-start gap-4 md:grid", open ? "grid" : "hidden")}>
                 {children}

@@ -4,7 +4,7 @@
 
 import { type QueryKey, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Role } from "@triagent/shared";
-import { Info } from "lucide-react";
+import { Ban, Info } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -144,12 +144,12 @@ export function Invites({ queryKey, url, roles, roleInfo, description }: Invites
                                         {i.status !== "accepted" && (
                                             <ConfirmAction
                                                 trigger={
-                                                    <Button size="sm" variant="ghost">
-                                                        Revoke<span className="sr-only"> the invite for {i.email}</span>
+                                                    <Button size="sm" variant="danger">
+                                                        <Ban /> Revoke<span className="sr-only"> the invite for {i.email}</span>
                                                     </Button>
                                                 }
                                                 title={`Revoke the invite for ${i.email}?`}
-                                                description="Signing in with that address no longer creates an account or joins anything."
+                                                description="Signing in with that address no longer creates an account or joins anything. You can invite them again later."
                                                 confirmLabel="Revoke invite"
                                                 onConfirm={async () => {
                                                     await api.delete(`${url}/${encodeURIComponent(i.id)}`);

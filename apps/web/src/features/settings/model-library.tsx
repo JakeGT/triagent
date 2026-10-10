@@ -3,7 +3,7 @@
 // Shown in Settings → Models and in the workspace's guided setup.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Check, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CircleMinus, TriangleAlert } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -318,25 +318,23 @@ function Favourites({ data, canConfigure, refresh }: { data: ReviewModel; canCon
                                                         <>
                                                             <Button
                                                                 type="button"
-                                                                size="icon"
-                                                                variant="ghost"
-                                                                className="size-8"
-                                                                aria-label={`Move ${label} up`}
+                                                                size="sm"
+                                                                variant="outline"
+                                                                aria-label={`Move up: ${label}`}
                                                                 disabled={i === 0 || change.isPending}
                                                                 onClick={() => move(i, -1)}
                                                             >
-                                                                <ArrowUp />
+                                                                <ArrowUp /> Move up
                                                             </Button>
                                                             <Button
                                                                 type="button"
-                                                                size="icon"
-                                                                variant="ghost"
-                                                                className="size-8"
-                                                                aria-label={`Move ${label} down`}
+                                                                size="sm"
+                                                                variant="outline"
+                                                                aria-label={`Move down: ${label}`}
                                                                 disabled={i === list.length - 1 || change.isPending}
                                                                 onClick={() => move(i, 1)}
                                                             >
-                                                                <ArrowDown />
+                                                                <ArrowDown /> Move down
                                                             </Button>
                                                         </>
                                                     )}
@@ -344,7 +342,7 @@ function Favourites({ data, canConfigure, refresh }: { data: ReviewModel; canCon
                                                         <Button
                                                             type="button"
                                                             size="sm"
-                                                            variant="ghost"
+                                                            variant="outline"
                                                             aria-label={`Make default: ${label}`}
                                                             disabled={change.isPending}
                                                             onClick={() =>
@@ -357,13 +355,19 @@ function Favourites({ data, canConfigure, refresh }: { data: ReviewModel; canCon
                                                             Make default
                                                         </Button>
                                                     )}
-                                                    <Button type="button" size="sm" variant="ghost" onClick={() => setRenaming(f)}>
+                                                    <Button type="button" size="sm" variant="outline" onClick={() => setRenaming(f)}>
                                                         Rename<span className="sr-only"> {label}</span>
                                                     </Button>
                                                     {list.length > 1 &&
                                                         (f.isDefault ? (
-                                                            <Button type="button" size="sm" variant="ghost" onClick={() => setRemoving(f)}>
-                                                                Remove<span className="sr-only"> {label}</span>
+                                                            <Button
+                                                                type="button"
+                                                                size="sm"
+                                                                variant="danger"
+                                                                className="ms-3"
+                                                                onClick={() => setRemoving(f)}
+                                                            >
+                                                                <CircleMinus /> Remove<span className="sr-only"> {label}</span>
                                                             </Button>
                                                         ) : (
                                                             <RemoveFavourite favourite={f} base={base} refresh={refresh} />
@@ -449,7 +453,7 @@ function RenameDialog({
                     </Field>
                     <FieldError message={save.error ? errorMessage(save.error) : null} />
                     <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={close}>
+                        <Button type="button" variant="outline" onClick={close}>
                             Cancel
                         </Button>
                         <Button type="submit" disabled={save.isPending}>
@@ -473,12 +477,12 @@ function RemoveFavourite({ favourite, base, refresh }: { favourite: Favourite; b
     return (
         <ConfirmAction
             trigger={
-                <Button type="button" size="sm" variant="ghost">
-                    Remove<span className="sr-only"> {label}</span>
+                <Button type="button" size="sm" variant="danger" className="ms-3">
+                    <CircleMinus /> Remove<span className="sr-only"> {label}</span>
                 </Button>
             }
             title={`Remove ${label}?`}
-            description={uses ? <InUse uses={uses} /> : "It leaves the favourites. Its provider and key stay."}
+            description={uses ? <InUse uses={uses} /> : "It leaves the favourites. Its provider and key stay, and you can add it again."}
             confirmLabel={uses ? "Remove it from them too" : "Remove favourite"}
             onOpenChange={(open) => {
                 if (!open) setUses(null);
@@ -586,7 +590,7 @@ function RemoveDefaultDialog({
                     )}
                     <FieldError message={remove.error && !usesFrom(remove.error) ? errorMessage(remove.error) : null} />
                     <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={close}>
+                        <Button type="button" variant="outline" onClick={close}>
                             Cancel
                         </Button>
                         <Button type="submit" variant="destructive" disabled={remove.isPending || !next}>

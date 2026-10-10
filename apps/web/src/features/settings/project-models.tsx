@@ -84,7 +84,7 @@ export function ProjectModels({
     const max = choices.data.max;
     const usual = modelLabels(choices.data, choices.data.fallback).join(", ");
     const settings = (
-        <Link to="/w/$ws/settings/models" params={{ ws }} className="underline">
+        <Link to="/w/$ws/settings/models" params={{ ws }} className="link">
             Settings → Models
         </Link>
     );

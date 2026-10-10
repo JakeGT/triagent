@@ -25,6 +25,8 @@ export interface ConfirmActionProps {
     description: ReactNode;
     /** The confirm button's text, e.g. "Delete project". */
     confirmLabel: string;
+    /** The safe choice's text, when "Cancel" would be ambiguous (cancelling a review: "Keep the review"). */
+    cancelLabel?: string;
     /** If set, the person must type exactly this to confirm. */
     typeToConfirm?: string;
     /** Choices that go with the action (a checkbox, say), shown under the description. */
@@ -41,6 +43,7 @@ export function ConfirmAction({
     title,
     description,
     confirmLabel,
+    cancelLabel = "Cancel",
     typeToConfirm,
     children,
     onOpenChange,
@@ -116,7 +119,7 @@ export function ConfirmAction({
                     <FieldError message={error} />
                     <AlertDialogFooter>
                         <AlertDialogCancel type="button" disabled={busy}>
-                            Cancel
+                            {cancelLabel}
                         </AlertDialogCancel>
                         <Button type="submit" variant={destructive ? "destructive" : "default"} disabled={!matches || busy}>
                             {busy ? "Working…" : confirmLabel}

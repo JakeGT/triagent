@@ -25,7 +25,7 @@ export const STATUS_TEXT: Record<RunStatus, string> = {
 
 const STATUS_CLASS: Record<RunStatus, string> = {
     queued: "border-border text-muted-foreground",
-    running: "border-transparent bg-primary text-primary-foreground",
+    running: "border-st-in_progress/50 text-st-in_progress",
     done: "border-st-resolved/40 text-st-resolved",
     partial: "border-sev-medium/40 text-sev-medium",
     failed: "border-sev-critical/40 text-sev-critical",
@@ -236,7 +236,7 @@ export function RerunModel({ ws, run, index, label }: { ws: string; run: Pick<Ru
     );
 }
 
-export function CancelRun({ ws, run, compact }: { ws: string; run: Run; compact?: boolean }) {
+export function CancelRun({ ws, run }: { ws: string; run: Run }) {
     const queryClient = useQueryClient();
     const cancel = useMutation({
         mutationFn: () => api.post<Run>(`${paths.workspace(ws)}/runs/${encodeURIComponent(run.id)}/cancel`),
@@ -249,7 +249,7 @@ export function CancelRun({ ws, run, compact }: { ws: string; run: Run; compact?
     return (
         <ConfirmAction
             trigger={
-                <Button variant={compact ? "ghost" : "outline"} size="sm">
+                <Button variant="outline" size="sm">
                     <Square /> Cancel<span className="sr-only"> {run.title}</span>
                 </Button>
             }
@@ -260,6 +260,7 @@ export function CancelRun({ ws, run, compact }: { ws: string; run: Run; compact?
                     : `${run.title} is taken out of the queue.`
             }
             confirmLabel="Cancel review"
+            cancelLabel="Keep the review"
             onConfirm={() => cancel.mutateAsync()}
         />
     );

@@ -240,6 +240,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
             variant="ghost"
             size="icon"
             className={cn("size-7", className)}
+            title="Show or hide the sidebar"
             onClick={(event) => {
                 onClick?.(event);
                 toggleSidebar();

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { ROLES, type Role } from "@triagent/shared";
+import { LogOut, UserMinus } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -48,12 +49,12 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
     const canChange = manage && !isMe && (member.role !== "owner" || myRole === "owner");
     return (
         <TableRow>
-            <TableCell>
+            <TableCell className="whitespace-normal">
                 <div className="font-medium">
                     {member.user.displayName}
                     {isMe && <span className="text-muted-foreground"> (you)</span>}
                 </div>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs break-all text-muted-foreground">
                     {member.user.username}
                     {member.user.email ? ` · ${member.user.email}` : ""}
                 </div>
@@ -88,12 +89,13 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
                     <span className="capitalize">{member.role}</span>
                 )}
             </TableCell>
-            <TableCell className="text-xs text-muted-foreground">{formatDate(member.since)}</TableCell>
+            <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">{formatDate(member.since)}</TableCell>
             <TableCell className="text-end">
                 {manage && (isMe || canChange) && (
                     <ConfirmAction
                         trigger={
-                            <Button size="sm" variant="ghost">
+                            <Button size="sm" variant="danger">
+                                {isMe ? <LogOut /> : <UserMinus />}
                                 {isMe ? "Leave" : "Remove"}
                                 <span className="sr-only"> {member.user.displayName}</span>
                             </Button>
@@ -102,9 +104,9 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
                         description={
                             isMe
                                 ? "You lose access to everything in this workspace until someone adds you again."
-                                : "They lose access to this workspace, and API tokens that act for them here are revoked."
+                                : "They lose access to this workspace, and API tokens that act for them here are revoked. You can add them again; their tokens stay revoked."
                         }
-                        confirmLabel={isMe ? "Leave" : "Remove"}
+                        confirmLabel={isMe ? "Leave workspace" : "Remove member"}
                         onConfirm={async () => {
                             await api.delete(url);
                             await refresh();
@@ -224,7 +226,7 @@ export function MembersSettings() {
                             <TableRow>
                                 <TableHead>Person</TableHead>
                                 <TableHead>Role</TableHead>
-                                <TableHead>Member since</TableHead>
+                                <TableHead className="hidden sm:table-cell">Member since</TableHead>
                                 <TableHead>
                                     <span className="sr-only">Actions</span>
                                 </TableHead>

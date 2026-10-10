@@ -63,7 +63,7 @@ export const OneTimeReveal = memo(function OneTimeReveal({ value, label, hint, o
                 <CopyButton value={value} />
             </ControlGroup>
             <div>
-                <Button type="button" variant="ghost" size="sm" onClick={onDismiss}>
+                <Button type="button" variant="outline" size="sm" onClick={onDismiss}>
                     I've saved it
                 </Button>
             </div>

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
@@ -138,9 +139,13 @@ export function ProjectGeneral() {
                 >
                     <FormActions>
                         <ConfirmAction
-                            trigger={<Button variant="destructive">Delete project</Button>}
+                            trigger={
+                                <Button variant="danger">
+                                    <Trash2 /> Delete project
+                                </Button>
+                            }
                             title={`Delete ${project.name}?`}
-                            description="All its reports, issues, tasks, notes and settings are deleted for everyone."
+                            description="All its reports, issues, tasks, notes and settings are deleted for everyone. This can't be undone."
                             confirmLabel="Delete project"
                             typeToConfirm={slug}
                             onConfirm={remove}

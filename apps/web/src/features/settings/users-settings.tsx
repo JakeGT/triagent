@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { UserMinus } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -12,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, paths } from "@/lib/api";
-import { formatDate, timeAgo } from "@/lib/format";
+import { formatDate, plural, timeAgo } from "@/lib/format";
 import { instanceUsersQuery, keys } from "@/lib/queries";
 import { useMe } from "@/lib/session";
 import type { InstanceUser, PublicUser } from "@/lib/types";
@@ -112,11 +113,11 @@ function UserActions({ user, onPassword }: { user: InstanceUser; onPassword(r: R
     };
     return (
         <div className="grid justify-items-end gap-1">
-            <div className="flex flex-wrap justify-end gap-1">
+            <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                 {user.signsInWith === "password" && (
                     <ConfirmAction
                         trigger={
-                            <Button size="sm" variant="ghost">
+                            <Button size="sm" variant="outline">
                                 Reset password<span className="sr-only"> of {name}</span>
                             </Button>
                         }
@@ -135,26 +136,26 @@ function UserActions({ user, onPassword }: { user: InstanceUser; onPassword(r: R
                 )}
                 <ConfirmAction
                     trigger={
-                        <Button size="sm" variant="ghost">
+                        <Button size="sm" variant="outline">
                             Sign out<span className="sr-only"> {name}</span>
                         </Button>
                     }
                     title={`Sign ${name} out everywhere?`}
                     description="Every browser session of this account ends. Their API tokens keep working."
-                    confirmLabel="Sign out"
+                    confirmLabel="Sign out everywhere"
                     destructive={false}
                     onConfirm={() =>
                         run(async () => {
                             const r = await api.post<{ signedOutSessions: number }>(`${url}/sign-out`, {});
                             await refresh();
-                            toast.success(`${name} signed out of ${r.signedOutSessions} session(s).`);
+                            toast.success(`${name} signed out of ${plural(r.signedOutSessions, "session")}.`);
                         })
                     }
                 />
                 <ConfirmAction
                     trigger={
-                        <Button size="sm" variant="ghost">
-                            Remove<span className="sr-only"> {name}</span>
+                        <Button size="sm" variant="danger" className="mt-2 sm:ms-3 sm:mt-0">
+                            <UserMinus /> Remove<span className="sr-only"> {name}</span>
                         </Button>
                     }
                     title={`Remove ${name}?`}
@@ -218,8 +219,8 @@ export function UsersSettings() {
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Account</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead>Last sign-in</TableHead>
+                                <TableHead className="hidden sm:table-cell">Status</TableHead>
+                                <TableHead className="hidden sm:table-cell">Last sign-in</TableHead>
                                 <TableHead>
                                     <span className="sr-only">Actions</span>
                                 </TableHead>
@@ -228,24 +229,24 @@ export function UsersSettings() {
                         <TableBody>
                             {query.data.map((u) => (
                                 <TableRow key={u.id} className="align-top">
-                                    <TableCell>
-                                        <div className="font-medium">
+                                    <TableCell className="whitespace-normal">
+                                        <div className="font-medium break-all">
                                             {u.username ?? u.displayName}
                                             {u.id === me.user.id && <span className="text-muted-foreground"> (you)</span>}
                                         </div>
                                         {u.email && <div className="text-xs break-all text-muted-foreground">{u.email}</div>}
                                         <div className="text-xs text-muted-foreground">Created {formatDate(u.createdAt)}</div>
                                     </TableCell>
-                                    <TableCell className="text-xs">
+                                    <TableCell className="hidden text-xs sm:table-cell">
                                         <ul className="grid gap-0.5">
                                             {u.isInstanceAdmin && <li>Instance administrator</li>}
                                             {u.mustChangePassword && <li>Must choose a new password</li>}
-                                            <li>
-                                                {u.sessions} active {u.sessions === 1 ? "session" : "sessions"}
-                                            </li>
+                                            <li>{plural(u.sessions, "active session")}</li>
                                         </ul>
                                     </TableCell>
-                                    <TableCell className="text-xs">{u.lastLoginAt ? timeAgo(u.lastLoginAt) : "Never"}</TableCell>
+                                    <TableCell className="hidden text-xs sm:table-cell">
+                                        {u.lastLoginAt ? timeAgo(u.lastLoginAt) : "Never"}
+                                    </TableCell>
                                     <TableCell className="text-end">
                                         {u.id !== me.user.id && <UserActions user={u} onPassword={setRevealed} />}
                                     </TableCell>

@@ -133,7 +133,7 @@ function Card({ props, mode, titleId, bodyId }: { props: TourCardProps; mode: "a
                 {children}
             </Body>
             <div className="flex flex-wrap items-center gap-2 pt-1">
-                <Button type="button" variant="ghost" size="sm" onClick={onSkip}>
+                <Button type="button" variant="outline" size="sm" onClick={onSkip}>
                     Skip tour
                 </Button>
                 <div className="ms-auto flex flex-wrap justify-end gap-2">

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SCOPE_INFO, scopesFor, TOKEN_SCOPES, type TokenScope } from "@triagent/shared";
+import { Ban } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -88,7 +89,7 @@ function CreateToken({ onCreated }: { onCreated(token: string): void }) {
                         value: s,
                         label: (
                             <>
-                                <span className="font-mono">{s}</span>: {SCOPE_INFO[s]}
+                                {SCOPE_INFO[s]} (<code className="font-mono">{s}</code>)
                             </>
                         ),
                         ...(allowed.includes(s)
@@ -153,10 +154,10 @@ export function TokensSettings() {
                             <TableRow>
                                 <TableHead>Token</TableHead>
                                 <TableHead>Access</TableHead>
-                                <TableHead>Acts for</TableHead>
-                                <TableHead>Created</TableHead>
-                                <TableHead>Expires</TableHead>
-                                <TableHead>Last used</TableHead>
+                                <TableHead className="hidden sm:table-cell">Acts for</TableHead>
+                                <TableHead className="hidden sm:table-cell">Created</TableHead>
+                                <TableHead className="hidden sm:table-cell">Expires</TableHead>
+                                <TableHead className="hidden sm:table-cell">Last used</TableHead>
                                 <TableHead>
                                     <span className="sr-only">Actions</span>
                                 </TableHead>
@@ -165,32 +166,36 @@ export function TokensSettings() {
                         <TableBody>
                             {query.data.map((t) => (
                                 <TableRow key={t.id}>
-                                    <TableCell>
-                                        <div className="font-medium">{t.name}</div>
+                                    <TableCell className="whitespace-normal">
+                                        <div className="font-medium break-words">{t.name}</div>
                                         <div className="font-mono text-xs text-muted-foreground">{t.prefix}…</div>
                                     </TableCell>
-                                    <TableCell className="text-xs">
-                                        <span className="font-mono">{t.scope}</span>
-                                        <div className="text-muted-foreground">{SCOPE_INFO[t.scope]}</div>
+                                    <TableCell className="text-xs whitespace-normal">
+                                        {SCOPE_INFO[t.scope]}
+                                        <div className="font-mono text-muted-foreground">{t.scope}</div>
                                     </TableCell>
-                                    <TableCell className="text-xs">
+                                    <TableCell className="hidden text-xs sm:table-cell">
                                         {t.owner?.displayName ?? (
                                             <span className="text-destructive">
                                                 Nobody: it no longer works. Revoke it, and make one that acts for a member.
                                             </span>
                                         )}
                                     </TableCell>
-                                    <TableCell className="text-xs">
+                                    <TableCell className="hidden text-xs sm:table-cell">
                                         {formatDate(t.createdAt)}
                                         <div className="text-muted-foreground">by {t.createdBy}</div>
                                     </TableCell>
-                                    <TableCell className="text-xs">{t.expiresAt ? formatDate(t.expiresAt) : "Never"}</TableCell>
-                                    <TableCell className="text-xs">{t.lastUsedAt ? timeAgo(t.lastUsedAt) : "Never"}</TableCell>
+                                    <TableCell className="hidden text-xs sm:table-cell">
+                                        {t.expiresAt ? formatDate(t.expiresAt) : "Never"}
+                                    </TableCell>
+                                    <TableCell className="hidden text-xs sm:table-cell">
+                                        {t.lastUsedAt ? timeAgo(t.lastUsedAt) : "Never"}
+                                    </TableCell>
                                     <TableCell className="text-end">
                                         <ConfirmAction
                                             trigger={
-                                                <Button size="sm" variant="ghost">
-                                                    Revoke<span className="sr-only"> {t.name}</span>
+                                                <Button size="sm" variant="danger">
+                                                    <Ban /> Revoke<span className="sr-only"> {t.name}</span>
                                                 </Button>
                                             }
                                             title={`Revoke ${t.name}?`}

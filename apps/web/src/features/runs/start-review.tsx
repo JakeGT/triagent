@@ -217,7 +217,7 @@ export function StartReviewForm({
                             {choosing ? "Hide the models" : "Change the models"}
                         </Button>
                         {chosen !== null && (
-                            <Button type="button" variant="ghost" size="sm" onClick={() => setChosen(null)}>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setChosen(null)}>
                                 Use the project's
                             </Button>
                         )}
@@ -229,7 +229,7 @@ export function StartReviewForm({
                         {can("configure") && (
                             <>
                                 {" "}
-                                <Link to="/w/$ws/p/$project/settings/automation" params={{ ws, project: slug }} className="underline">
+                                <Link to="/w/$ws/p/$project/settings/automation" params={{ ws, project: slug }} className="link">
                                     Change the project's models
                                 </Link>
                             </>
@@ -304,7 +304,7 @@ export function StartReview({
                     defaults={defaults}
                     onStarted={() => setOpen(false)}
                     actions={
-                        <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+                        <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                             Cancel
                         </Button>
                     }

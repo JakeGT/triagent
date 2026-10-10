@@ -188,7 +188,7 @@ export function ModelProviderForm({
                     {keysUrl && (
                         <>
                             {" "}
-                            <a href={keysUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                            <a href={keysUrl} target="_blank" rel="noopener noreferrer" className="link">
                                 Get a {p.name} key<span className="sr-only"> (opens in a new tab)</span>
                             </a>
                         </>

@@ -55,8 +55,8 @@ export const SCOPE_PERMISSIONS: Readonly<Record<TokenScope, readonly Permission[
 export const SCOPE_INFO: Readonly<Record<TokenScope, string>> = {
     read: "Read only",
     write: "Read and triage",
-    upload: "Read and upload reports (CI)",
-    full: "Read, triage and upload (agent sessions)",
+    upload: "Read and upload reports, for CI",
+    full: "Read, triage and upload, for agent sessions",
     manage: "Also run reviews and configure projects",
 };
 

@@ -2,6 +2,7 @@
 // and when, and its last four characters; that's shown as text. A new value can replace it or it can be
 // cleared, but the stored value is never shown or put back in the input.
 
+import { Eraser } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
 import { ControlGroup, FieldError, FieldHint, useFieldRowItem } from "@/components/field";
@@ -36,6 +37,12 @@ export interface SecretFieldProps {
     canEdit: boolean;
     onSave(value: string): Promise<unknown>;
     onClear(): Promise<unknown>;
+}
+
+/** A label inside a sentence: "Access token" becomes "access token", "GitHub token" and "API key" stay. */
+function midSentence(label: string): string {
+    const first = label.split(" ")[0] ?? "";
+    return /^[A-Z][a-z]+$/.test(first) ? label.charAt(0).toLowerCase() + label.slice(1) : label;
 }
 
 export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: SecretFieldProps) {
@@ -103,7 +110,7 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
                         {editing && (
                             <Button
                                 type="button"
-                                variant="ghost"
+                                variant="outline"
                                 onClick={() => {
                                     setEditing(false);
                                     setValue("");
@@ -123,13 +130,13 @@ export function SecretField({ label, secret, hint, canEdit, onSave, onClear }: S
                         </Button>
                         <ConfirmAction
                             trigger={
-                                <Button type="button" variant="outline">
-                                    Clear
+                                <Button type="button" variant="danger" className="ms-3">
+                                    <Eraser /> Clear
                                 </Button>
                             }
-                            title={`Clear the ${label.toLowerCase()}?`}
-                            description="The stored value is deleted. Anything that uses it stops working until a new one is set."
-                            confirmLabel="Clear"
+                            title={`Clear the ${midSentence(label)}?`}
+                            description="The stored value is deleted and can't be shown or restored. Anything that uses it stops working until a new one is set."
+                            confirmLabel={`Clear the ${midSentence(label)}`}
                             onConfirm={onClear}
                         />
                     </FormActions>

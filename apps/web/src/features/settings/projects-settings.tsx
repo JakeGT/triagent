@@ -162,7 +162,7 @@ export function ProjectsSettings() {
                                         </TableCell>
                                         <TableCell className="max-w-56 truncate text-xs">
                                             {repo ? (
-                                                <a href={repo} target="_blank" rel="noopener noreferrer" className="underline">
+                                                <a href={repo} target="_blank" rel="noopener noreferrer" className="link">
                                                     {p.repoUrl}
                                                 </a>
                                             ) : (
@@ -176,7 +176,7 @@ export function ProjectsSettings() {
                                             <Link
                                                 to="/w/$ws/p/$project/settings/general"
                                                 params={{ ws, project: p.slug }}
-                                                className="text-sm underline"
+                                                className="link text-sm"
                                             >
                                                 Settings<span className="sr-only"> for {p.name}</span>
                                             </Link>

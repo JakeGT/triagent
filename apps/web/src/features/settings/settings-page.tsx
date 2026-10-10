@@ -25,7 +25,7 @@ export function SettingsPage({
             <PageMeta title={`${title} · Settings`} />
             <div className="grid gap-1">
                 <h2 className="text-lg leading-tight font-semibold">{title}</h2>
-                {description && <div className="text-sm text-muted-foreground">{description}</div>}
+                {description && <div className="max-w-measure text-sm text-muted-foreground">{description}</div>}
             </div>
             {children}
         </div>

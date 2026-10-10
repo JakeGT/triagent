@@ -86,7 +86,7 @@ function RunDetailView({ runId }: { runId: string }) {
 
     const close = (
         <Button variant="ghost" size="icon" asChild>
-            <Link to="/w/$ws/p/$project/runs" params={{ ws, project: slug }} aria-label="Close the run">
+            <Link to="/w/$ws/p/$project/runs" params={{ ws, project: slug }} aria-label="Close the run" title="Close the run">
                 <X />
             </Link>
         </Button>
@@ -136,7 +136,7 @@ function RunDetailView({ runId }: { runId: string }) {
                         <RunStatusBadge status={r.status} />
                         {kindText(r)}
                         {prUrl && (
-                            <a href={prUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                            <a href={prUrl} target="_blank" rel="noopener noreferrer" className="link">
                                 on GitHub<span className="sr-only"> (opens in a new tab)</span>
                             </a>
                         )}
@@ -149,12 +149,7 @@ function RunDetailView({ runId }: { runId: string }) {
                 <dt className="text-muted-foreground">Branch</dt>
                 <dd className="font-mono text-xs">
                     {(r.status === "done" || r.status === "partial") && !r.options?.bakeOff ? (
-                        <Link
-                            to="/w/$ws/p/$project/issues"
-                            params={{ ws, project: slug }}
-                            search={{ branch: r.branch }}
-                            className="underline"
-                        >
+                        <Link to="/w/$ws/p/$project/issues" params={{ ws, project: slug }} search={{ branch: r.branch }} className="link">
                             {r.branch}
                         </Link>
                     ) : (
@@ -174,11 +169,7 @@ function RunDetailView({ runId }: { runId: string }) {
                                 {r.rerunOf.label}
                             </Badge>{" "}
                             in{" "}
-                            <Link
-                                to="/w/$ws/p/$project/runs/$runId"
-                                params={{ ws, project: slug, runId: r.rerunOf.id }}
-                                className="underline"
-                            >
+                            <Link to="/w/$ws/p/$project/runs/$runId" params={{ ws, project: slug, runId: r.rerunOf.id }} className="link">
                                 the review it failed in
                             </Link>
                             {r.rerunOf.auto ? ", run again automatically" : ""}. {r.result?.rerun ? addedText(r.result.rerun) : ""}
@@ -237,7 +228,7 @@ function RunDetailView({ runId }: { runId: string }) {
                                                                     <Link
                                                                         to="/w/$ws/p/$project/runs/$runId"
                                                                         params={{ ws, project: slug, runId: x.id }}
-                                                                        className="underline"
+                                                                        className="link"
                                                                     >
                                                                         {retryText(x)}
                                                                     </Link>
@@ -320,11 +311,7 @@ function RunDetailView({ runId }: { runId: string }) {
                         <dd data-testid="run-comparison">
                             {plural(r.result.bakeOff.total, "finding")} between them, {r.result.bakeOff.agreed} found by more than one
                             model.{" "}
-                            <Link
-                                to="/w/$ws/p/$project/comparisons/$runId"
-                                params={{ ws, project: slug, runId: r.id }}
-                                className="underline"
-                            >
+                            <Link to="/w/$ws/p/$project/comparisons/$runId" params={{ ws, project: slug, runId: r.id }} className="link">
                                 See the comparison
                             </Link>
                         </dd>

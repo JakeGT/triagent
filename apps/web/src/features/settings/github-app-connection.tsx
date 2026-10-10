@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
+import { Unplug } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -86,7 +87,7 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
                 <p className="text-sm text-muted-foreground">
                     This instance has no GitHub App yet, so this project uses an access token (below).{" "}
                     {me.user.isInstanceAdmin ? (
-                        <Link to="/w/$ws/settings/github-app" params={{ ws }} className="underline">
+                        <Link to="/w/$ws/settings/github-app" params={{ ws }} className="link">
                             Set up the GitHub App
                         </Link>
                     ) : (
@@ -193,9 +194,13 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
             {data.repository && can("configure") && (
                 <FormActions>
                     <ConfirmAction
-                        trigger={<Button variant="ghost">Stop using the app</Button>}
+                        trigger={
+                            <Button variant="danger">
+                                <Unplug /> Stop using the app
+                            </Button>
+                        }
                         title="Stop using the GitHub App for this project?"
-                        description="The project goes back to its access token, if it has one; otherwise reviews can't reach the repository."
+                        description="The project goes back to its access token, if it has one; otherwise reviews can't reach the repository. You can choose the repository again afterwards."
                         confirmLabel="Stop using the app"
                         onConfirm={async () => {
                             await api.delete(`${base}/repository`);

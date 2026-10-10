@@ -163,9 +163,9 @@ test("several providers, and favourites from each: add, make default, rename, re
     await expect(favourites.getByRole("row", { name: /Quick/ })).toContainText("local-coder-small");
 
     // Reorder.
-    await page.getByRole("button", { name: "Move Quick up" }).click();
+    await page.getByRole("button", { name: "Move up: Quick" }).click();
     await expect(favourites.getByRole("row").nth(1)).toContainText("Quick");
-    await expect(page.getByRole("button", { name: "Move Quick up" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Move up: Quick" })).toBeDisabled();
     const order = await admin.get(`${settings}/models/favourites`);
     expect(order.favourites.map((f: { model: string }) => f.model)).toEqual(["local-coder-small", "fake/model", "fake/second"]);
 

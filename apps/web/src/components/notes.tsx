@@ -56,16 +56,16 @@ export function NoteList({
                                 {timeAgo(n.at)}
                             </time>
                             {n.editedAt && <span title={formatDateTime(n.editedAt)}>(edited)</span>}
-                            <span className="ms-auto flex gap-1">
+                            <span className="ms-auto flex items-center gap-1">
                                 {mine && canEditOwn && editing !== n.id && (
-                                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEdit(n.id)}>
+                                    <Button type="button" variant="outline" size="sm" className="h-7 px-2" onClick={() => setEdit(n.id)}>
                                         <Pencil /> Edit<span className="sr-only"> your note from {timeAgo(n.at)}</span>
                                     </Button>
                                 )}
                                 {((mine && canEditOwn) || canModerate) && editing !== n.id && (
                                     <ConfirmAction
                                         trigger={
-                                            <Button type="button" variant="ghost" size="sm" className="h-7 px-2">
+                                            <Button type="button" variant="danger" size="sm" className="ms-3 h-7 px-2">
                                                 <Trash2 /> Delete
                                                 <span className="sr-only">
                                                     {" "}
@@ -75,7 +75,9 @@ export function NoteList({
                                         }
                                         title="Delete this note?"
                                         description={
-                                            mine ? "Your note is removed for everyone." : `${n.by}'s note is removed for everyone.`
+                                            mine
+                                                ? "Your note is removed for everyone. This can't be undone."
+                                                : `${n.by}'s note is removed for everyone. This can't be undone.`
                                         }
                                         confirmLabel="Delete note"
                                         onConfirm={() => onDelete(n.id)}
@@ -95,7 +97,7 @@ export function NoteList({
                                 }}
                             />
                         ) : (
-                            <p className="whitespace-pre-wrap break-words">{n.text}</p>
+                            <p className="max-w-measure text-read whitespace-pre-wrap break-words">{n.text}</p>
                         )}
                     </li>
                 );
@@ -168,7 +170,7 @@ export function NoteEditor({
                     {busy ? "Saving…" : submitLabel}
                 </Button>
                 {onCancel && (
-                    <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+                    <Button type="button" size="sm" variant="outline" onClick={onCancel}>
                         Cancel
                     </Button>
                 )}

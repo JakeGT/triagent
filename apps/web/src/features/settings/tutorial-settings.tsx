@@ -3,6 +3,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
 import { FormActions } from "@/components/form";
@@ -44,7 +45,7 @@ export function TutorialSettings() {
                             <Link
                                 to="/w/$ws/p/$project/overview"
                                 params={{ ws: example.workspace, project: example.project }}
-                                className="underline"
+                                className="link"
                             >
                                 Example: Acme Shop
                             </Link>{" "}
@@ -52,7 +53,11 @@ export function TutorialSettings() {
                         </p>
                         <FormActions>
                             <ConfirmAction
-                                trigger={<Button variant="outline">Remove the example project</Button>}
+                                trigger={
+                                    <Button variant="danger">
+                                        <Trash2 /> Remove the example project
+                                    </Button>
+                                }
                                 title="Remove the example project?"
                                 description="Its reports, triage, runs and notes are deleted. Showing the tutorial again makes a new one."
                                 confirmLabel="Remove the example"

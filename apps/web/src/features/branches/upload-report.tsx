@@ -103,7 +103,7 @@ export function UploadReport() {
             level={2}
             title="Upload a report"
             aside={
-                <Link to="/w/$ws/agents" params={{ ws }} search={{ project: slug }} className="text-sm underline">
+                <Link to="/w/$ws/agents" params={{ ws }} search={{ project: slug }} className="link text-sm">
                     Upload from CI instead
                 </Link>
             }
@@ -218,7 +218,7 @@ export function UploadReport() {
                         >
                             {upload.isPending ? "Uploading…" : "Confirm upload"}
                         </Button>
-                        <Button variant="ghost" onClick={reset} disabled={upload.isPending}>
+                        <Button variant="outline" onClick={reset} disabled={upload.isPending}>
                             Cancel
                         </Button>
                     </FormActions>

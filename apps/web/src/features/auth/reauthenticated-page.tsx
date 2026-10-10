@@ -22,7 +22,7 @@ export function ReauthenticatedPage() {
             <div className="grid gap-2">
                 <h1 className="text-lg font-semibold">You're signed in again</h1>
                 <p className="text-sm text-muted-foreground">You can close this window and carry on where you were.</p>
-                <Link to="/dashboard" className="text-sm underline">
+                <Link to="/dashboard" className="link text-sm">
                     Go to Triagent
                 </Link>
             </div>

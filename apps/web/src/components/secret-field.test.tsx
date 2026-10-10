@@ -52,8 +52,8 @@ describe("SecretField", () => {
         await user.click(screen.getByRole("button", { name: "Clear" }));
         expect(onClear).not.toHaveBeenCalled();
         const dialog = await screen.findByRole("alertdialog");
-        expect(dialog.textContent).toContain("Clear the github token?");
-        await user.click(screen.getByRole("button", { name: "Clear" }));
+        expect(dialog.textContent).toContain("Clear the GitHub token?");
+        await user.click(screen.getByRole("button", { name: "Clear the GitHub token" }));
         await waitFor(() => expect(onClear).toHaveBeenCalledTimes(1));
     });
 

@@ -43,7 +43,7 @@ function PickerButton({
         >
             <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background [&>svg]:size-4">{icon}</span>
             <span className="grid min-w-0 flex-1 text-start leading-tight">
-                <span className="flex items-center gap-1.5 text-[0.7rem] text-muted-foreground">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     {label}
                     {badge}
                 </span>
@@ -159,7 +159,7 @@ function CreateOrganisation({ open, onOpenChange }: { open: boolean; onOpenChang
                         openSetup({ kind: "workspace", ws: w.slug });
                     }}
                     actions={
-                        <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                             Cancel
                         </Button>
                     }
@@ -186,7 +186,7 @@ export function ProjectPicker({ current }: { current: string | undefined }) {
                             icon={<FolderGit2 />}
                             label="Project"
                             value={currentName}
-                            badge={isExample(me, ws, current) ? <ExampleBadge className="h-4 px-1 text-[0.65rem]" /> : undefined}
+                            badge={isExample(me, ws, current) ? <ExampleBadge className="h-4 px-1" /> : undefined}
                         />
                     </DropdownMenuTrigger>
                     <DropdownMenuContent className="min-w-60" align="start" side={isMobile ? "bottom" : "right"}>

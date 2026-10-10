@@ -443,7 +443,7 @@ export function useProjectFlow(): SetupFlow {
                         <Link
                             to="/w/$ws/p/$project/settings/automation"
                             params={{ ws, project: slug }}
-                            className="underline"
+                            className="link"
                             onClick={() => closeSetup()}
                         >
                             Automation settings

@@ -9,7 +9,7 @@ test("a new API token is shown once, works, and is gone after navigating away", 
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
     await page.goto(`/w/${ws}/settings/tokens`);
     await page.getByLabel("Name").fill("CI uploads");
-    await page.getByRole("radio", { name: /^upload/ }).check();
+    await page.getByRole("radio", { name: /\(upload\)$/ }).check();
     await page.getByRole("button", { name: "Create token" }).click();
 
     const reveal = page.getByTestId("one-time-reveal");
@@ -117,11 +117,11 @@ test("a token can only have the access of the member it acts for", async ({ page
     await page.goto(`/w/${ws}/settings/tokens`);
 
     // Acting for you (an owner), every scope; for a viewer, read only.
-    await expect(page.getByRole("radio", { name: /^manage/ })).toBeEnabled();
+    await expect(page.getByRole("radio", { name: /\(manage\)$/ })).toBeEnabled();
     await page.getByLabel("Acts for").selectOption({ label: `${username} · viewer` });
-    await expect(page.getByRole("radio", { name: /^read/ })).toBeChecked();
+    await expect(page.getByRole("radio", { name: /\(read\)$/ })).toBeChecked();
     for (const scope of ["write", "upload", "full", "manage"])
-        await expect(page.getByRole("radio", { name: new RegExp(`^${scope}`) })).toBeDisabled();
+        await expect(page.getByRole("radio", { name: new RegExp(`\\(${scope}\\)$`) })).toBeDisabled();
     await expect(page.getByText(`More than ${username} has as viewer.`).first()).toBeVisible();
     await expect(page.getByRole("option", { name: "Nobody" })).toHaveCount(0);
     await page.getByLabel("Name").fill("viewer bot");

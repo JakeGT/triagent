@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { PowerOff } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -40,7 +41,7 @@ export function ProjectGithub() {
             description={
                 <>
                     How Triagent reaches {project.name}'s repository. The repository URL and default branch are set on{" "}
-                    <Link to="/w/$ws/p/$project/settings/general" params={{ ws, project: slug }} className="underline">
+                    <Link to="/w/$ws/p/$project/settings/general" params={{ ws, project: slug }} className="link">
                         General
                     </Link>
                     .
@@ -87,7 +88,7 @@ export function ChecksNote({ data }: { data: GithubSettings }) {
                             The GitHub App needs the repository permission <span className="font-medium">Checks: Read-only</span>, and the
                             events <span className="font-medium">Check suite</span>, <span className="font-medium">Check run</span>, and{" "}
                             <span className="font-medium">Status</span>. Whoever owns the app can add them on GitHub: open{" "}
-                            <a href={data.app.htmlUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                            <a href={data.app.htmlUrl} target="_blank" rel="noopener noreferrer" className="link">
                                 the app's page<span className="sr-only"> (opens in a new tab)</span>
                             </a>{" "}
                             and choose App settings, or go to Settings → Developer settings → GitHub Apps → {data.app.name}, then
@@ -222,10 +223,14 @@ export function WebhookSection({ data }: { data: GithubSettings }) {
                     )}
                     {data.webhook.secretSet && (
                         <ConfirmAction
-                            trigger={<Button variant="ghost">Turn the webhook off</Button>}
+                            trigger={
+                                <Button variant="danger" className="ms-3">
+                                    <PowerOff /> Turn the webhook off
+                                </Button>
+                            }
                             title="Turn the webhook off?"
-                            description="The secret is deleted and deliveries from GitHub are refused. Triagent goes back to checking for pull requests on a timer."
-                            confirmLabel="Turn off"
+                            description="The secret is deleted and deliveries from GitHub are refused. Triagent goes back to checking for pull requests on a timer. To turn it on again, generate a new secret."
+                            confirmLabel="Turn the webhook off"
                             onConfirm={async () => {
                                 await api.delete(`${base}/webhook-secret`);
                                 setSecret(null);

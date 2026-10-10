@@ -2,6 +2,7 @@
 // tokens; cache reads are optional (charged at the input price when left empty). Used for the instance's
 // prices and a workspace's own.
 
+import { CircleMinus } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
 import { Field, FieldError, FieldRow } from "@/components/field";
@@ -145,7 +146,7 @@ export function PriceEditor({
                                             <Button
                                                 type="button"
                                                 size="sm"
-                                                variant="ghost"
+                                                variant="outline"
                                                 onClick={() =>
                                                     setForm({
                                                         model: p.model,
@@ -159,12 +160,12 @@ export function PriceEditor({
                                             </Button>
                                             <ConfirmAction
                                                 trigger={
-                                                    <Button type="button" size="sm" variant="ghost">
-                                                        Remove <span className="sr-only">the price of {p.model}</span>
+                                                    <Button type="button" size="sm" variant="danger" className="ms-3">
+                                                        <CircleMinus /> Remove <span className="sr-only">the price of {p.model}</span>
                                                     </Button>
                                                 }
                                                 title={`Remove the price of ${p.model}?`}
-                                                description="Costs for this model will use the next price that applies: the instance's, then OpenRouter's, or none."
+                                                description="Costs for this model will use the next price that applies: the instance's, then OpenRouter's, or none. You can set a price again."
                                                 confirmLabel="Remove price"
                                                 onConfirm={() => onRemove(p.model)}
                                             />

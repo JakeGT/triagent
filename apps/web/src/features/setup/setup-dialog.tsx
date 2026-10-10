@@ -146,7 +146,7 @@ export function SetupDialog({ flow, startAt, onClose }: { flow: SetupFlow; start
 
                 <div className="flex flex-wrap items-center gap-2 border-t p-3 sm:px-5">
                     {at > 0 && (
-                        <Button type="button" variant="ghost" onClick={() => go(at - 1)}>
+                        <Button type="button" variant="outline" onClick={() => go(at - 1)}>
                             Back
                         </Button>
                     )}

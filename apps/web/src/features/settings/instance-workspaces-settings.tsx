@@ -2,6 +2,7 @@
 // a month) and this month's use of it. Instance admins give, change or remove allowances here.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleMinus } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { toast } from "sonner";
 import { UsageBar } from "@/components/charts";
@@ -108,12 +109,12 @@ function GrantRow({ w }: { w: InstanceWorkspace }) {
                 {w.grant && (
                     <ConfirmAction
                         trigger={
-                            <Button type="button" size="sm" variant="ghost">
-                                Remove <span className="sr-only">{w.name}'s allowance</span>
+                            <Button type="button" size="sm" variant="danger">
+                                <CircleMinus /> Remove <span className="sr-only">{w.name}'s allowance</span>
                             </Button>
                         }
                         title={`Stop ${w.name} using the instance key?`}
-                        description="Its reviews will need a key of its own. Reviews already running finish."
+                        description="Its reviews will need a key of its own. Reviews already running finish. You can give it an allowance again later."
                         confirmLabel="Remove allowance"
                         onConfirm={async () => {
                             await api.delete(url);

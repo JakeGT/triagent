@@ -3,6 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
+import { Unplug } from "lucide-react";
 import { useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
 import { CopyButton } from "@/components/copy-button";
@@ -73,7 +74,7 @@ export function GithubAppSettings() {
                             <dt className="text-muted-foreground">Name</dt>
                             <dd>
                                 {appUrl ? (
-                                    <a href={appUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                                    <a href={appUrl} target="_blank" rel="noopener noreferrer" className="link">
                                         {data.app.name}
                                         <span className="sr-only"> (opens in a new tab)</span>
                                     </a>
@@ -100,7 +101,11 @@ export function GithubAppSettings() {
                         </Field>
                         <FormActions>
                             <ConfirmAction
-                                trigger={<Button variant="outline">Remove the app</Button>}
+                                trigger={
+                                    <Button variant="danger">
+                                        <Unplug /> Remove the app
+                                    </Button>
+                                }
                                 title="Remove the GitHub App?"
                                 description="Triagent forgets its keys, and every workspace's installations are unlinked: their projects stop reaching GitHub until it's set up again. Delete the app on GitHub too."
                                 confirmLabel="Remove the app"
