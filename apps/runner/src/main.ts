@@ -38,7 +38,7 @@ if (version.code !== 0)
 const runner = new Runner(config);
 runner.start();
 console.log(
-    `Triagent runner ${config.name} (${runner.id}) working for ${config.serverUrl}, ${config.concurrency} at a time, with ${gitVersion}${version.code === 0 ? ` and ${version.stdout.trim().split("\n")[0]}` : ""}.`,
+    `Triagent runner ${config.name} (${runner.id}) working for ${config.serverUrl}, ${config.concurrency} at a time (up to ${config.modelParallelism} of a review's models at once), with ${gitVersion}${version.code === 0 ? ` and ${version.stdout.trim().split("\n")[0]}` : ""}.`,
 );
 
 if (config.healthPort) {

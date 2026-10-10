@@ -6,6 +6,10 @@
 // any MCP servers and setup commands, and its global rules from ~/.opencodereview, so there are none
 // but what the runner writes there for Amazon Bedrock: a provider, region and model), the model's
 // settings, and git settings that keep hooks off. Never telemetry settings, nor anything of Anthropic's.
+//
+// A job with several models runs one OCR per model at once, each with a HOME, environment and limits of
+// its own, all reading the same checkout (OCR 1.12.12 writes nothing into it: its sessions go under HOME).
+// One model failing, stalling or being stopped for passing its token budget leaves the others alone.
 
 import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -13,11 +17,20 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { modelSecrets, type RunnerModel } from "../../../packages/shared/src/model.ts";
 import { redactDeep, redactor } from "../../../packages/shared/src/redact.ts";
-import { type ClaimedJob, type FinishPart, isLost, type RunnerIdentity, ServerClient, ServerError } from "./client.ts";
+import {
+    type ClaimedJob,
+    type FinishPart,
+    isLost,
+    type ModelStop,
+    type Orders,
+    type RunnerIdentity,
+    ServerClient,
+    ServerError,
+} from "./client.ts";
 import type { RunnerConfig } from "./config.ts";
 import { Git, gitEnv, mirrorPath } from "./git.ts";
 import { start } from "./process.ts";
-import { type Progress, readProgress } from "./progress.ts";
+import { combined, type ModelProgress, type Progress, readProgress } from "./progress.ts";
 
 const FLUSH_MS = 1000;
 const HEARTBEAT_MS = 10_000;
@@ -69,6 +82,7 @@ export function ocrEnv(
     home: string,
     job: Pick<ClaimedJob, "model">,
     attrSource: string | null = null,
+    shared = false,
 ): Record<string, string> {
     const git = gitEnv({ gitBin: "git", path: config.path, home }, [["protocol.allow", "never"]]);
     return {
@@ -87,6 +101,8 @@ export function ocrEnv(
         // For changes under review, every git command OCR runs reads .gitattributes from the base commit:
         // the change's own could mark its files binary (`-diff`), and OCR skips binary files.
         ...(attrSource ? { GIT_ATTR_SOURCE: attrSource } : {}),
+        // Several OCRs reading one checkout: none of their git commands may take its index lock to tidy it.
+        ...(shared ? { GIT_OPTIONAL_LOCKS: "0" } : {}),
     };
 }
 
@@ -147,7 +163,16 @@ export function overall(
     return { status: "failed", parts: [...parts], error: `No model finished. ${why}`.slice(0, 9000) };
 }
 
-/** One job in progress: its log buffer, heartbeat and the OCR process. */
+/** One of a job's several models: its own progress and OCR process. */
+interface Slot {
+    progress: ModelProgress;
+    groups: Set<string>;
+    stop: (() => void) | null;
+    /** Set when the server says it has passed its token budget (null when it gave no figure): it's being stopped for that. */
+    overBudget: { budget: number | null } | null;
+}
+
+/** One job in progress: its log buffer, heartbeat and the OCR process (or one per model). */
 export class JobRun {
     private readonly job: Pick<ClaimedJob, "id" | "git" | "model" | "models">;
     private readonly server: Pick<ServerClient, "events" | "heartbeat">;
@@ -156,9 +181,9 @@ export class JobRun {
     private progress: Progress = {};
     private progressDirty = false;
     private readonly groups = new Set<string>();
-    /** Tokens earlier models used, in a job with several. */
-    private tokenBase = 0;
     private stopOcr: (() => void) | null = null;
+    /** The job's models, when it reviews with several at once. */
+    private slots: Slot[] = [];
     cancelled = false;
     lost = false;
     private readonly stopping = new AbortController();
@@ -206,19 +231,91 @@ export class JobRun {
 
     ocrLine(line: string): void {
         this.log(line);
-        this.setProgress(readProgress(this.progress, line, this.groups, this.tokenBase));
+        this.setProgress(readProgress(this.progress, line, this.groups));
     }
 
-    /** The next model starts (a job with several): its progress starts afresh, its tokens add to the others'. */
-    nextModel(model: string): void {
-        this.tokenBase = this.progress.tokens ?? this.tokenBase;
-        this.groups.clear();
-        this.setProgress({ phase: "starting", model, tokens: this.tokenBase });
-    }
-
-    /** Tokens OCR has said the current model used. */
+    /** Tokens OCR has said the model used (a job with one model). */
     get modelTokens(): number {
-        return Math.max(0, (this.progress.tokens ?? 0) - this.tokenBase);
+        return this.progress.tokens ?? 0;
+    }
+
+    // ---- several models at once ------------------------------------------------------------------
+
+    /** The job reviews with several models: each gets progress of its own, waiting until it starts. */
+    several(labels: readonly string[]): void {
+        this.slots = labels.map((label) => ({ progress: { label, phase: "waiting" }, groups: new Set(), stop: null, overBudget: null }));
+        this.progress = { phase: "starting" };
+        this.together();
+    }
+
+    /** The job's progress, from its models'. */
+    private together(): void {
+        this.setProgress(
+            combined(
+                this.progress,
+                this.slots.map((s) => s.progress),
+            ),
+        );
+    }
+
+    private slot(i: number): Slot {
+        return this.slots[i] as Slot;
+    }
+
+    /** A line about one model, from the runner: it starts with the model's label, like OCR's own lines for it. */
+    sayFor(i: number, line: string): void {
+        this.log(`[${this.slot(i).progress.label}] [triagent] ${line}`);
+    }
+
+    /** A line of one model's OCR: logged under its label, and read for that model's progress. */
+    modelLine(i: number, line: string): void {
+        const slot = this.slot(i);
+        this.log(`[${slot.progress.label}] ${line}`);
+        slot.progress = { ...readProgress(slot.progress, line, slot.groups), label: slot.progress.label };
+        this.together();
+    }
+
+    setModel(i: number, change: Partial<ModelProgress>): void {
+        const slot = this.slot(i);
+        slot.progress = { ...slot.progress, ...change };
+        this.together();
+    }
+
+    /** Tokens OCR has said this model used. */
+    tokensOf(i: number): number {
+        return this.slot(i).progress.tokens ?? 0;
+    }
+
+    /** One model's OCR process has started; it's stopped at once if the job, or the model, already is. */
+    attachModel(i: number, stop: () => void): void {
+        const slot = this.slot(i);
+        slot.stop = stop;
+        if (this.cancelled || this.lost || slot.overBudget) stop();
+    }
+
+    /** One model's OCR process has ended. */
+    detachModel(i: number): void {
+        this.slot(i).stop = null;
+    }
+
+    /** The budget the server stopped this model for passing (null when it gave no figure), or undefined if it didn't. */
+    stoppedOverBudget(i: number): number | null | undefined {
+        const over = this.slot(i).overBudget;
+        return over ? over.budget : undefined;
+    }
+
+    /** What the server said back: stop everything, or only the models it names (the others carry on). */
+    private obey(orders: Orders): void {
+        if (orders.cancel) this.cancel();
+        for (const order of Array.isArray(orders.stop) ? orders.stop : []) this.stopModel(order);
+    }
+
+    private stopModel(order: ModelStop): void {
+        const slot = this.slots[order.index];
+        // Only a model that is running: one that has ended, or hasn't had its turn, has nothing to stop.
+        if (!slot?.stop || slot.overBudget || order.reason !== "overBudget") return;
+        slot.overBudget = { budget: typeof order.budget === "number" ? order.budget : null };
+        slot.stop();
     }
 
     /** Send buffered lines and progress; a cancellation or a lost job stops OCR. */
@@ -226,13 +323,14 @@ export class JobRun {
         this.flushing = this.flushing.then(async () => {
             if (this.lost || (!this.buffer.length && !this.progressDirty)) return;
             const lines = this.buffer.splice(0, MAX_BATCH);
+            const clean = (p: object) =>
+                Object.fromEntries(Object.entries(p).map(([k, v]) => [k, typeof v === "string" ? this.redact(v) : v]));
             const progress = this.progressDirty
-                ? Object.fromEntries(Object.entries(this.progress).map(([k, v]) => [k, typeof v === "string" ? this.redact(v) : v]))
+                ? { ...clean(this.progress), ...(this.progress.models ? { models: this.progress.models.map(clean) } : {}) }
                 : null;
             this.progressDirty = false;
             try {
-                const r = await this.server.events(this.job.id, lines, progress);
-                if (r.cancel) this.cancel();
+                this.obey(await this.server.events(this.job.id, lines, progress));
             } catch (err) {
                 if (isLost(err)) this.lose();
                 else if (err instanceof ServerError && err.status >= 400 && err.status < 500)
@@ -252,8 +350,7 @@ export class JobRun {
     private async heartbeat(): Promise<void> {
         if (this.lost) return;
         try {
-            const r = await this.server.heartbeat(this.job.id);
-            if (r.cancel) this.cancel();
+            this.obey(await this.server.heartbeat(this.job.id));
         } catch (err) {
             if (isLost(err)) this.lose();
         }
@@ -268,13 +365,19 @@ export class JobRun {
         if (this.cancelled) return;
         this.cancelled = true;
         this.stopping.abort();
-        this.stopOcr?.();
+        this.stopAll();
     }
 
     private lose(): void {
         this.lost = true;
         this.stopping.abort();
+        this.stopAll();
+    }
+
+    /** Stop every OCR process of the job. */
+    private stopAll(): void {
         this.stopOcr?.();
+        for (const slot of this.slots) slot.stop?.();
     }
 
     check(): void {
@@ -448,82 +551,49 @@ export class Runner {
             }
             run.check();
             const models = modelsOf(job);
-            const parts: FinishPart[] = [];
-            const limit = job.timeoutMinutes ?? null;
-            const stall = job.stallMinutes ?? null;
-            /** A model's review was stopped at the time limit, or as stalled. */
-            let stopped = false;
-            for (const [i, model] of models.entries()) {
-                run.check();
-                const one = { ...job, model };
-                // A model with a token budget of its own (the instance's, out of an allowance) uses that, not the job's.
-                const args = ocrArgs(
-                    model.maxTokensBudget === undefined ? job : { ...job, maxTokensBudget: model.maxTokensBudget },
-                    fetched.base,
-                    fetched.head,
-                );
-                const several = models.length > 1;
-                const own = path.join(work, `home-${i}`);
-                mkdirSync(path.join(own, "tmp"), { recursive: true, mode: 0o700 });
-                if (several) {
-                    run.say(`Model ${i + 1} of ${models.length}: ${model.label}.`);
-                    run.nextModel(`${model.label} (${i + 1} of ${models.length})`);
-                } else run.setProgress({ phase: "starting" });
-                run.say(
-                    `Running ocr ${args.join(" ")} with ${model.model} via ${model.provider}. ${limit ? `Time limit: ${minutes(limit)}.` : "No time limit."}${stall ? ` Stopped as stalled if it prints nothing for ${minutes(stall)}.` : ""}`,
-                );
-                writeOcrConfig(own, one);
+            const limits = { limit: job.timeoutMinutes ?? null, stall: job.stallMinutes ?? null };
+            const where = { work, tree, base: fetched.base, head: fetched.head };
+            const started = () => {
                 ocrStarted = true;
-                const began = Date.now();
-                const ocr = start(this.config.ocrBin, args, {
-                    cwd: tree,
-                    env: ocrEnv(this.config, own, one, fetched.base),
-                    ...(limit ? { timeoutMs: limit * 60_000 } : {}),
-                    ...(stall ? { stallMs: stall * 60_000 } : {}),
-                    onLine: (line) => run.ocrLine(line),
-                });
-                run.attach(ocr.stop);
-                const exit = await ocr.done;
-                let report: unknown = null;
-                try {
-                    report = exit.stdout.trim() ? run.redactReport(JSON.parse(exit.stdout)) : null;
-                } catch {
-                    report = null;
-                }
-                if (run.lost) throw new Stop("This job is no longer ours.");
-                const timing = { tokens: run.modelTokens || null, seconds: Math.round((Date.now() - began) / 1000) };
-                let part: FinishPart;
-                if (run.cancelled) part = { status: "cancelled", ...(report ? { report } : {}) };
-                else if (exit.timedOut) {
-                    stopped = true;
-                    part = {
-                        status: "failed",
-                        error: `Stopped after ${minutes(limit as number)}, the project's time limit for this kind of review. An admin can raise it in the project's Automation settings.`,
-                    };
-                } else if (exit.stalled) {
-                    stopped = true;
-                    part = {
-                        status: "failed",
-                        error: `Stalled: Open Code Review printed nothing for ${minutes(stall as number)}, so it was stopped (the model may have stopped answering). An admin can change how long it waits in the project's Automation settings.`,
-                    };
-                } else if (exit.code !== 0)
-                    part = {
-                        status: "failed",
-                        error: run.redactLine(failureReason(exit.stderr, exit.code ?? exit.signal)),
-                        ...(report ? { report } : {}),
-                    };
-                else if (!report || typeof report !== "object")
-                    part = { status: "failed", error: "Open Code Review didn't return a JSON report." };
-                else part = { status: "done", report };
-                if (several && part.status === "failed") run.say(`${model.label} failed: ${part.error}`);
-                parts.push({ ...part, ...timing });
-                if (run.cancelled) break;
-            }
+            };
             if (models.length > 1) {
+                // Each model in a process of its own, as many at once as the runner allows; the rest wait their turn.
+                const atOnce = Math.min(models.length, Math.max(1, this.config.modelParallelism));
+                run.several(models.map((m) => m.label));
+                run.say(
+                    `Reviewing with ${models.length} models${atOnce < models.length ? `, ${atOnce} at a time` : " at once"}: ${models.map((m) => m.label).join(", ")}.`,
+                );
+                const parts: FinishPart[] = [];
+                let next = 0;
+                const turn = async () => {
+                    while (next < models.length && !run.cancelled && !run.lost) {
+                        const i = next++;
+                        const began = Date.now();
+                        let part: FinishPart;
+                        try {
+                            part = await this.review(job, run, where, limits, i, started);
+                        } catch (err) {
+                            // The job is no longer ours: nothing more to say about this model.
+                            if (err instanceof Stop) return;
+                            // It couldn't even start: that's this model's failure, not the others'.
+                            part = { status: "failed", error: run.redactLine((err as Error).message), tokens: null, seconds: 0 };
+                        }
+                        parts[i] = part;
+                        const seconds = Math.round((Date.now() - began) / 1000);
+                        run.setModel(i, { phase: part.status, seconds, ...(part.reason ? { reason: part.reason } : {}) });
+                        run.sayFor(
+                            i,
+                            part.status === "done" ? "Finished." : part.status === "cancelled" ? "Cancelled." : `Failed: ${part.error}`,
+                        );
+                    }
+                };
+                await Promise.all(Array.from({ length: atOnce }, turn));
+                if (run.lost) throw new Stop("This job is no longer ours.");
                 if (!run.cancelled) {
                     run.setProgress({ ...run.currentProgress, phase: "uploading" });
                     run.say("Reviews finished; sending each model's findings to Triagent to merge…");
                 }
+                // Models start in order, so those that had a turn come first; one that never did has no part.
                 outcome = overall(
                     parts,
                     models.map((m) => m.label),
@@ -531,13 +601,14 @@ export class Runner {
                 );
             } else {
                 // One model: as it always was.
-                const [part] = parts as [FinishPart];
-                if (stopped && part.status === "failed") throw new Error(part.error as string);
+                run.setProgress({ phase: "starting" });
+                const part = await this.review(job, run, where, limits, null, started);
+                if (part.reason && part.status === "failed") throw new Error(part.error as string);
                 if (part.status === "done") {
                     run.setProgress({ ...run.currentProgress, phase: "uploading" });
                     run.say("Review finished; sending the findings to Triagent…");
                 }
-                const { tokens: _t, seconds: _s, ...rest } = part;
+                const { tokens: _t, seconds: _s, reason: _r, ...rest } = part;
                 outcome = rest;
             }
         } catch (err) {
@@ -561,6 +632,94 @@ export class Runner {
             await run.end();
         }
         if (!run.lost) await this.report(job.id, { ...outcome, headSha: fetched?.head ?? null, baseSha: fetched?.base ?? null });
+    }
+
+    /**
+     * One model's review: OCR in the job's checkout with a HOME, environment and limits of its own. `i` is the
+     * model's place in a job with several (its lines and progress are its own), or null for a job with one.
+     */
+    private async review(
+        job: ClaimedJob,
+        run: JobRun,
+        where: { work: string; tree: string; base: string | null; head: string },
+        limits: { limit: number | null; stall: number | null },
+        i: number | null,
+        started: () => void,
+    ): Promise<FinishPart> {
+        const model = modelsOf(job)[i ?? 0] as NonNullable<ClaimedJob["models"]>[number];
+        const { limit, stall } = limits;
+        const one = { ...job, model };
+        // A model with a token budget of its own (the instance's, out of an allowance) uses that, not the job's.
+        const args = ocrArgs(
+            model.maxTokensBudget === undefined ? job : { ...job, maxTokensBudget: model.maxTokensBudget },
+            where.base,
+            where.head,
+        );
+        const own = path.join(where.work, `home-${i ?? 0}`);
+        mkdirSync(path.join(own, "tmp"), { recursive: true, mode: 0o700 });
+        const running = `Running ocr ${args.join(" ")} with ${model.model} via ${model.provider}. ${limit ? `Time limit: ${minutes(limit)}.` : "No time limit."}${stall ? ` Stopped as stalled if it prints nothing for ${minutes(stall)}.` : ""}`;
+        if (i === null) run.say(running);
+        else {
+            run.setModel(i, { phase: "starting", startedAt: new Date().toISOString() });
+            run.sayFor(i, running);
+        }
+        writeOcrConfig(own, one);
+        started();
+        const began = Date.now();
+        const ocr = start(this.config.ocrBin, args, {
+            cwd: where.tree,
+            env: ocrEnv(this.config, own, one, where.base, i !== null),
+            ...(limit ? { timeoutMs: limit * 60_000 } : {}),
+            ...(stall ? { stallMs: stall * 60_000 } : {}),
+            onLine: (line) => (i === null ? run.ocrLine(line) : run.modelLine(i, line)),
+        });
+        if (i === null) run.attach(ocr.stop);
+        else run.attachModel(i, ocr.stop);
+        const exit = await ocr.done;
+        if (i !== null) run.detachModel(i);
+        let report: unknown = null;
+        try {
+            report = exit.stdout.trim() ? run.redactReport(JSON.parse(exit.stdout)) : null;
+        } catch {
+            report = null;
+        }
+        if (run.lost) throw new Stop("This job is no longer ours.");
+        const timing = {
+            tokens: (i === null ? run.modelTokens : run.tokensOf(i)) || null,
+            seconds: Math.round((Date.now() - began) / 1000),
+        };
+        const overBudget = i === null ? undefined : run.stoppedOverBudget(i);
+        let part: FinishPart;
+        if (run.cancelled) part = { status: "cancelled", ...(report ? { report } : {}) };
+        else if (exit.timedOut)
+            part = {
+                status: "failed",
+                reason: "timeLimit",
+                error: `Stopped after ${minutes(limit as number)}, the project's time limit for this kind of review. An admin can raise it in the project's Automation settings.`,
+            };
+        else if (exit.stalled)
+            part = {
+                status: "failed",
+                reason: "stalled",
+                error: `Stalled: Open Code Review printed nothing for ${minutes(stall as number)}, so it was stopped (the model may have stopped answering). An admin can change how long it waits in the project's Automation settings.`,
+            };
+        else if (overBudget !== undefined && exit.killed)
+            // What it wrote before it was stopped (if anything) still says what it used.
+            part = {
+                status: "failed",
+                reason: "overBudget",
+                error: `Stopped: it passed its token budget${overBudget === null ? "" : ` of ${overBudget.toLocaleString("en-GB")} tokens`}.`,
+                ...(report ? { report } : {}),
+            };
+        else if (exit.code !== 0)
+            part = {
+                status: "failed",
+                error: run.redactLine(failureReason(exit.stderr, exit.code ?? exit.signal)),
+                ...(report ? { report } : {}),
+            };
+        else if (!report || typeof report !== "object") part = { status: "failed", error: "Open Code Review didn't return a JSON report." };
+        else part = { status: "done", report };
+        return { ...part, ...timing };
     }
 
     /** Tell the server how the job ended, trying again for a while if it can't be reached. */

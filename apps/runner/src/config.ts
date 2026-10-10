@@ -10,6 +10,8 @@ export interface RunnerConfig {
     secret: string;
     name: string;
     concurrency: number;
+    /** How many of one job's models review at once; the rest wait their turn inside the job. */
+    modelParallelism: number;
     cacheDir: string;
     workDir: string;
     pollMs: number;
@@ -83,6 +85,7 @@ export function loadConfig(env: Env = process.env): RunnerConfig {
         secret,
         name: (env.RUNNER_NAME || hostname()).slice(0, 100),
         concurrency: whole(env, "RUNNER_CONCURRENCY", 1, 1, 32),
+        modelParallelism: whole(env, "RUNNER_MODEL_PARALLELISM", 5, 1, 32),
         cacheDir: path.resolve(env.RUNNER_CACHE_DIR || path.join(tmpdir(), "triagent-runner-cache")),
         workDir: path.resolve(env.RUNNER_WORK_DIR || path.join(tmpdir(), "triagent-runner")),
         pollMs: whole(env, "RUNNER_POLL_SECONDS", 3, 1, 300) * 1000,

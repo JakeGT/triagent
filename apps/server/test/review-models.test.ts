@@ -121,7 +121,7 @@ describe("which models a review uses", () => {
         ok(await setModels(at, {}));
         const plain = (await env.t.request(`/api/v1/w/${at.ws}/models?project=app`, { session: env.admin })).body;
         assert.deepEqual(plain.rules.full, { ids: [at.usual], from: "default" });
-        assert.deepEqual([plain.defaultId, plain.fallback, plain.instance, plain.max], [at.usual, [at.usual], null, 3]);
+        assert.deepEqual([plain.defaultId, plain.fallback, plain.instance, plain.max], [at.usual, [at.usual], null, 5]);
         assert.deepEqual(
             plain.favourites.map((f: { model: string; isDefault: boolean; ready: boolean }) => [f.model, f.isDefault, f.ready]),
             [
@@ -134,7 +134,7 @@ describe("which models a review uses", () => {
         assert.equal(JSON.stringify(plain).includes("sk-or-"), false, "never a key");
     });
 
-    test("a set takes the workspace's favourites, each once, three at most", async () => {
+    test("a set takes the workspace's favourites, each once, five at most", async () => {
         const at = await place();
         const other = await place();
         const theirs = await favourite(other, "fake/theirs");
@@ -146,7 +146,9 @@ describe("which models a review uses", () => {
         };
         await refused({ all: [theirs] }, /isn't one of this workspace's favourite models/);
         await refused({ pr: [a, a] }, /only be chosen once/);
-        await refused({ full: [a, at.usual, await favourite(at, "fake/b"), await favourite(at, "fake/c")] }, /models\.full/);
+        const five = [a, at.usual, await favourite(at, "fake/b"), await favourite(at, "fake/c"), await favourite(at, "fake/d")];
+        await refused({ full: [...five, await favourite(at, "fake/e")] }, /models\.full/);
+        ok(await setModels(at, { full: five }));
         await refused({ all: ["instance"] }, /no allowance on the instance's key/);
         await refused({ nightly: [a] }, /models/);
         await refused([{ provider: "openrouter", model: "fake/a" }], /models/);
@@ -617,7 +619,7 @@ describe("choosing models over the API and MCP", () => {
         for (const [models, why] of [
             [["nope"], /isn't one of this workspace's favourite models/],
             [[a, a], /only be chosen once/],
-            [[a, wordy, at.usual, a], /models/],
+            [[a, wordy, at.usual, a, wordy, at.usual], /models/],
             ["fake/model-a", /models/],
         ] as const) {
             const r = await start(models);

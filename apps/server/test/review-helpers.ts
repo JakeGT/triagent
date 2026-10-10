@@ -57,6 +57,7 @@ export async function reviewEnv(options: { store?: Store; env?: Record<string, s
                 secret,
                 name: `test-runner-${env.runners.length + 1}`,
                 concurrency: extra.concurrency ?? 1,
+                modelParallelism: 5,
                 cacheDir: path.join(dir, "cache"),
                 workDir: path.join(dir, "work"),
                 pollMs: 100,

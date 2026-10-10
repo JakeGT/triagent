@@ -635,7 +635,7 @@ export const TOOLS: Tool[] = [
             branch: z.string().max(200).optional(),
             base: z.string().max(200).optional(),
             models: ModelIds.optional().describe(
-                "The models for this review only, as ids from list_models (up to three; each reviews it and their findings are merged). Default: the project's models for this kind of review.",
+                "The models for this review only, as ids from list_models (up to five; they review it at the same time and their findings are merged). Default: the project's models for this kind of review.",
             ),
         }),
         async run(ctx, args) {
@@ -710,7 +710,8 @@ export const TOOLS: Tool[] = [
     tool({
         name: "get_run",
         title: "Get run",
-        description: "One review: status, progress, result, and its log (lines after `after`, a line number).",
+        description:
+            "One review: status, progress, result, and its log (lines after `after`, a line number). With several models, `progress.models` is each one's own progress while it runs and `result.models` how each ended, with `reason` (stalled, timeLimit or overBudget) for one that was stopped.",
         permission: "read",
         readOnly: true,
         input: z.object({ id: z.string().max(40), after: z.number().int().min(0).optional() }),

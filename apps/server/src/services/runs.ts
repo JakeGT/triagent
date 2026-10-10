@@ -11,7 +11,7 @@ import type { Severity } from "@triagent/shared";
 import { modelSecrets, type RunnerModel } from "@triagent/shared/model";
 import { redactDeep, redactor } from "@triagent/shared/redact";
 import { parseFilters } from "../domain/filters.ts";
-import { type ModelReport, mergeReports } from "../domain/merge.ts";
+import { MAX_MODELS, type ModelReport, mergeReports } from "../domain/merge.ts";
 import { isValidBranch } from "../domain/names.ts";
 import type { RawReport } from "../domain/report.ts";
 import { reportMetrics } from "../domain/review-metrics.ts";
@@ -85,6 +85,30 @@ export interface FinishPart {
     /** The most tokens OCR said it used while running. */
     tokens?: number | null;
     seconds?: number | null;
+    /** Why it was stopped, when it was (a runner older than this doesn't say: its message is read instead). */
+    reason?: StopReason | null;
+}
+
+/** Why a model's review was stopped before it finished: it went quiet, or passed the time limit or its token budget. */
+export type StopReason = "stalled" | "timeLimit" | "overBudget";
+
+/** A model of a running job that its runner should stop, while the job's other models carry on. */
+export interface ModelStop {
+    /** Its place in the job's models. */
+    index: number;
+    label: string;
+    reason: "overBudget";
+    /** The token budget it passed. */
+    budget: number;
+}
+
+/**
+ * What a runner is told when it reports in: stop the whole job (`cancel`), or only some of its models
+ * (`stop`). A runner older than models reviewing at once reads `cancel` and nothing else.
+ */
+export interface Orders {
+    cancel: boolean;
+    stop: ModelStop[];
 }
 
 export interface FinishInput {
@@ -190,16 +214,73 @@ const PROGRESS_KEYS = new Set([
     "model",
 ]);
 
+/** One model's progress, in a run with several: the same, with its label, when it started, how long it took and why it was stopped. */
+const MODEL_PROGRESS_KEYS = new Set([...PROGRESS_KEYS, "label", "startedAt", "seconds", "reason"]);
+MODEL_PROGRESS_KEYS.delete("model");
+
 /** Only what the progress view shows, bounded, its text redacted like the log. */
 function cleanProgress(input: unknown, clean: (text: string) => string): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    if (!input || typeof input !== "object") return out;
-    for (const [k, v] of Object.entries(input)) {
-        if (!PROGRESS_KEYS.has(k)) continue;
-        if (typeof v === "number" && Number.isFinite(v)) out[k] = Math.max(0, Math.min(v, 1e9));
-        else if (typeof v === "string") out[k] = clean(v.slice(0, 1000)).slice(0, 200);
-    }
+    const fields = (given: unknown, keys: Set<string>) => {
+        const out: Record<string, unknown> = {};
+        if (!given || typeof given !== "object") return out;
+        for (const [k, v] of Object.entries(given)) {
+            if (!keys.has(k)) continue;
+            if (typeof v === "number" && Number.isFinite(v)) out[k] = Math.max(0, Math.min(v, 1e9));
+            else if (typeof v === "string") out[k] = clean(v.slice(0, 1000)).slice(0, 200);
+        }
+        return out;
+    };
+    const out = fields(input, PROGRESS_KEYS);
+    // Several models: each one's own progress, in the job's order.
+    const models = (input as { models?: unknown } | null)?.models;
+    if (Array.isArray(models)) out.models = models.slice(0, MAX_MODELS).map((m) => fields(m, MODEL_PROGRESS_KEYS));
     return out;
+}
+
+/** How a model's review in a run with several ended, as its progress says once it has. */
+const ENDED = new Set(["done", "failed", "cancelled"]);
+
+/**
+ * The models of a running job to stop because they've passed their token budget: OCR has said one used
+ * more than the budget it runs under (the project's, or what's left of the instance's allowance if that's
+ * less). Only for a job with several models, by each one's own progress; one that has ended, or has no
+ * budget, is never named.
+ */
+export function overBudget(job: Pick<Job, "model" | "progress">): ModelStop[] {
+    const models = job.model?.models;
+    const progress = job.progress.models;
+    if (!models || models.length < 2 || !Array.isArray(progress)) return [];
+    const stop: ModelStop[] = [];
+    for (const [index, m] of models.entries()) {
+        const p = progress[index] as { tokens?: unknown; phase?: unknown } | undefined;
+        if (!m.budget || !p || typeof p.tokens !== "number" || ENDED.has(String(p.phase))) continue;
+        if (p.tokens > m.budget) stop.push({ index, label: m.label, reason: "overBudget", budget: m.budget });
+    }
+    return stop;
+}
+
+/**
+ * A run's progress as it's shown: each model still going says how long it has been (its runner says when it
+ * started, by the runner's clock; one that has ended says how long it took itself).
+ */
+function timed(progress: Job["progress"]): Job["progress"] {
+    if (!Array.isArray(progress.models)) return progress;
+    const at = now();
+    return {
+        ...progress,
+        models: (progress.models as Record<string, unknown>[]).map((m) => {
+            if (typeof m.startedAt !== "string" || typeof m.seconds === "number") return m;
+            const going = seconds(m.startedAt, at);
+            return { ...m, seconds: Number.isFinite(going) ? going : 0 };
+        }),
+    };
+}
+
+/** Why a model was stopped: what its runner said, or (a runner older than that) what its message says. */
+function stopReason(given: unknown, error: string | null): StopReason | null {
+    if (given === "stalled" || given === "timeLimit" || given === "overBudget") return given;
+    if (!error) return null;
+    return /^Stalled: /.test(error) ? "stalled" : /^Stopped after .*time limit/.test(error) ? "timeLimit" : null;
 }
 
 /** With no secrets of its own to take out: credentials of known shapes, and characters Postgres can't hold. */
@@ -238,6 +319,8 @@ interface Part {
     /** Its tokens are its whole budget, since it never said what it used (see `record`). */
     estimated?: boolean;
     status: "done" | "partial" | "failed" | "cancelled";
+    /** Why it was stopped, if it was. */
+    reason: StopReason | null;
     report: RawReport | null;
     metrics: ReturnType<typeof reportMetrics> | null;
     tokens: Tokens | null;
@@ -339,7 +422,7 @@ export class Runs {
             finishedAt: job.finishedAt,
             elapsedSeconds: seconds(job.startedAt, job.finishedAt ?? (job.startedAt ? now() : null)) ?? null,
             cancelRequested: job.cancelRequested,
-            progress: job.progress,
+            progress: job.status === "running" ? timed(job.progress) : job.progress,
             result: job.result,
             error: job.error,
             model: job.model,
@@ -859,14 +942,14 @@ export class Runs {
         return { ...job, leaseExpiresAt: new Date(Date.now() + LEASE_SECONDS * 1000).toISOString() };
     }
 
-    async heartbeat(runner: RunnerHello, jobId: string): Promise<{ cancel: boolean; leaseExpiresAt: string }> {
+    async heartbeat(runner: RunnerHello, jobId: string): Promise<Orders & { leaseExpiresAt: string }> {
         await this.noteRunner(runner);
         const job = await this.store.transaction(async (tx) => {
             const next = this.renewed(await this.held(tx, runner.id, jobId));
             await tx.jobs.put(next);
             return next;
         });
-        return { cancel: Boolean(job.cancelRequested), leaseExpiresAt: job.leaseExpiresAt as string };
+        return { cancel: Boolean(job.cancelRequested), stop: overBudget(job), leaseExpiresAt: job.leaseExpiresAt as string };
     }
 
     /** The credentials handed out for a job, from its sealed copy (older jobs kept a bare list of secrets). */
@@ -897,7 +980,11 @@ export class Runs {
     }
 
     /** Log lines and progress from a runner. Every secret handed out for the job is removed before they're kept. */
-    async events(runner: RunnerHello, jobId: string, input: { lines?: { at?: string; line: string }[]; progress?: unknown }) {
+    async events(
+        runner: RunnerHello,
+        jobId: string,
+        input: { lines?: { at?: string; line: string }[]; progress?: unknown },
+    ): Promise<Orders> {
         await this.noteRunner(runner);
         const lines = (input.lines ?? []).slice(0, MAX_LINES_PER_BATCH);
         const first = await this.store.jobs.get(jobId);
@@ -918,7 +1005,8 @@ export class Runs {
             return next;
         });
         this.progressed(job);
-        return { cancel: Boolean(job.cancelRequested) };
+        // A model that has passed its token budget is stopped; the others carry on.
+        return { cancel: Boolean(job.cancelRequested), stop: overBudget(job) };
     }
 
     /** Announce progress at most once a second per run (the last change always goes out). */
@@ -1023,6 +1111,7 @@ export class Runs {
                     return {
                         ...m,
                         status,
+                        reason: own ? null : stopReason(given?.reason, error),
                         report: own,
                         metrics: partMetrics,
                         tokens: estimated ? { input: whole, output: 0, cacheRead: 0, total: whole } : said,
@@ -1139,6 +1228,7 @@ export class Runs {
                                   tokens: p.tokens?.total ?? null,
                                   seconds: p.seconds,
                                   error: p.error,
+                                  reason: p.reason,
                               })),
                           }
                         : {}),

@@ -15,6 +15,8 @@ const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"]
 async function axe(page: Page, what: string, dialog = false) {
     if (!dialog) await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    // Toasts fade in and badges change colour: check them once they've arrived, not half-transparent.
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
     const results = await new AxeBuilder({ page }).withTags(TAGS).analyze();
     const problems = results.violations.map(
         (v) => `${v.id} (${v.impact}): ${v.help}\n  ${v.nodes.map((n) => `${n.target.join(" ")} — ${n.failureSummary}`).join("\n  ")}`,
@@ -55,24 +57,29 @@ test("a project's review models: a set for every review, and one for pull reques
     const fast = await favourite(admin, ws, "vendor/first-model", { name: "Fast" });
     const second = await favourite(admin, ws, "vendor/second-model-with-quite-a-long-name-for-a-phone");
     await favourite(admin, ws, "claude-test", { provider: "anthropic" });
+    await favourite(admin, ws, "vendor/third-model");
+    await favourite(admin, ws, "vendor/fourth-model");
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
     await page.goto(`/w/${ws}/p/${project}/settings/automation`);
 
     const every = page.getByRole("group", { name: "For every review" });
     await expect(every.getByTestId("models-chosen")).toHaveText("None ticked: reviews use the workspace default, fake/model.");
-    await expect(every.getByRole("checkbox")).toHaveCount(4);
+    await expect(every.getByRole("checkbox")).toHaveCount(6);
     // Each says what it is, and one without its provider's key says so.
     await expect(every).toContainText("vendor/first-model · OpenRouter");
     await expect(every).toContainText("Not ready: add an Anthropic API key in Settings → Models.");
     await expect(every.getByRole("link", { name: "Settings → Models" })).toHaveAttribute("href", `/w/${ws}/settings/models`);
 
-    // They review in the order they're ticked; three at most.
+    // The first ticked leads; five at most.
     await every.getByRole("checkbox", { name: /vendor\/second-model/ }).check();
     await every.getByRole("checkbox", { name: "Fast" }).check();
     await expect(every.getByTestId("models-chosen")).toContainText(/^Reviews with vendor\/second-model\S*, then Fast: each reviews it/);
-    await every.getByRole("checkbox", { name: "fake/model" }).check();
+    for (const name of ["fake/model", "vendor/third-model", "vendor/fourth-model"]) {
+        await expect(every.getByRole("checkbox", { name: "claude-test" })).toBeEnabled();
+        await every.getByRole("checkbox", { name }).check();
+    }
     await expect(every.getByRole("checkbox", { name: "claude-test" })).toBeDisabled();
-    await every.getByRole("checkbox", { name: "fake/model" }).uncheck();
+    for (const name of ["fake/model", "vendor/third-model", "vendor/fourth-model"]) await every.getByRole("checkbox", { name }).uncheck();
     await expect(every.getByRole("checkbox", { name: "claude-test" })).toBeEnabled();
 
     // A kind of review can have its own: switched on, it needs at least one.

@@ -64,7 +64,7 @@ export const runnerRoutes: Route[] = [
         {
             method: "POST",
             path: "/internal/runner/jobs/{jobId}/heartbeat",
-            summary: "Renew the job's lease; says whether it has been cancelled",
+            summary: "Renew the job's lease; says whether it has been cancelled, and which of its models to stop",
             body: Job,
         },
         async (services, body, params) =>
@@ -74,7 +74,7 @@ export const runnerRoutes: Route[] = [
         {
             method: "POST",
             path: "/internal/runner/jobs/{jobId}/events",
-            summary: "Log lines and progress (renews the lease too)",
+            summary: "Log lines and progress (renews the lease too); says whether it has been cancelled, and which of its models to stop",
             body: Job.extend({
                 lines: z
                     .array(z.object({ at: z.string().max(40).optional(), line: z.string().max(20_000) }))
@@ -107,6 +107,7 @@ export const runnerRoutes: Route[] = [
                             error: z.string().max(10_000).nullable().optional(),
                             tokens: z.number().min(0).nullable().optional(),
                             seconds: z.number().min(0).nullable().optional(),
+                            reason: z.enum(["stalled", "timeLimit", "overBudget"]).nullable().optional(),
                         }),
                     )
                     .max(MAX_MODELS)

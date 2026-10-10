@@ -3,7 +3,7 @@
 // each file the change touches, or every file for a scan) and progress on stderr, like the real one.
 //
 // It gets only the environment the runner allows, so tests choose its behaviour through the model name
-// (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5" (five seconds of work, saying so all the while), "fake/silent-5" (five seconds without a word), "fake/orphan" (leaves a process behind
+// (OCR_LLM_MODEL): "fake/fail", "fake/partial", "fake/empty", "fake/sleep-5" (five seconds of work, saying so all the while), "fake/silent-5" (five seconds without a word), "fake/spend-25000" (says it has used that many tokens, before any sleep), "fake/orphan" (leaves a process behind
 // in its group), and for reviews with several models "wordy" (the same findings, put another way, two lines
 // lower) and "extra" (one more finding, at line 40 of the first file). It also prints what tests check: its arguments, which environment variables it got,
 // the model key (the server must redact it), its user config (~/.opencodereview/config.json, which the
@@ -86,6 +86,9 @@ if (model.includes("orphan")) {
     child.unref();
     say(`[fake-ocr] orphan: ${child.pid}`);
 }
+// What OCR prints when a group starts over its budget: the runner reads the tokens used from it.
+const spend = /spend-(\d+)/.exec(model);
+if (spend) say(`[ocr] token budget reached (used ${spend[1]} + group est 1K = projected more > budget less) — skipping group`);
 const m = /sleep-(\d+)/.exec(model);
 if (m) {
     // Like the real one, stopping it (SIGTERM) ends the review gracefully, writing what it used to stderr.

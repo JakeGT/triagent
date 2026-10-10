@@ -20,7 +20,7 @@ export interface ClaimedJob {
     maxTokensBudget: number | null;
     /** The protocol OCR speaks to the model, and this job's credentials for it: the first of `models`. */
     model: RunnerModel;
-    /** Every model to review with, in order, each with how people know it, and its own token budget if it has one (else the job's). */
+    /** Every model to review with (all at once), in order, each with how people know it, and its own token budget if it has one (else the job's). */
     models?: (RunnerModel & { label: string; maxTokensBudget?: number | null })[];
 }
 
@@ -31,6 +31,26 @@ export interface FinishPart {
     error?: string | null;
     tokens?: number | null;
     seconds?: number | null;
+    /** Why it was stopped, when it was: it went quiet, or passed the time limit or its token budget. */
+    reason?: "stalled" | "timeLimit" | "overBudget";
+}
+
+/** A model the server wants stopped while the job's others carry on: by its place in the job's `models`. */
+export interface ModelStop {
+    index: number;
+    label?: string;
+    reason: "overBudget";
+    /** The token budget it passed. */
+    budget?: number | null;
+}
+
+/**
+ * What the server says back to a heartbeat or a batch of events: stop the whole job (`cancel`), or only
+ * some of its models (`stop`; absent from a server older than models reviewing at once).
+ */
+export interface Orders {
+    cancel: boolean;
+    stop?: ModelStop[];
 }
 
 export interface RunnerIdentity {
@@ -86,11 +106,11 @@ export class ServerClient {
         return (await this.post<{ job: ClaimedJob | null }>("/internal/runner/claim", {})).job;
     }
 
-    heartbeat(jobId: string): Promise<{ cancel: boolean }> {
+    heartbeat(jobId: string): Promise<Orders> {
         return this.post(`/internal/runner/jobs/${encodeURIComponent(jobId)}/heartbeat`, {});
     }
 
-    events(jobId: string, lines: { at: string; line: string }[], progress: Record<string, unknown> | null): Promise<{ cancel: boolean }> {
+    events(jobId: string, lines: { at: string; line: string }[], progress: Record<string, unknown> | null): Promise<Orders> {
         return this.post(`/internal/runner/jobs/${encodeURIComponent(jobId)}/events`, { lines, ...(progress ? { progress } : {}) });
     }
 

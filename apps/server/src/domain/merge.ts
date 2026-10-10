@@ -9,7 +9,7 @@ import type { RawComment, RawReport } from "./report.ts";
 /** Lines apart that still count as the same place: models point at the same code a line or two differently. */
 const LINE_SLACK = 3;
 /** At most this many models review a change, and have their reports merged. */
-export const MAX_MODELS = 3;
+export const MAX_MODELS = 5;
 
 export interface ModelReport {
     /** How people know the model: its name, with its provider when two list the same name. */

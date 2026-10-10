@@ -10,6 +10,9 @@
 // Groups are reviewed in parallel, so "current" and "round" are whichever group spoke last. Tokens come
 // from what OCR says when a budget stops it and from the usage record it writes when it fails or is
 // stopped, so a review that ends without a report still says what it cost.
+//
+// A job with several models runs them at once: each has its own progress (`models`), and the job's own
+// fields are all of them together.
 
 export interface Progress {
     phase?: string;
@@ -23,8 +26,57 @@ export interface Progress {
     toolFailures?: number;
     /** The most model tokens OCR has said it used so far (its report may never come: a time limit, a cancel). */
     tokens?: number;
-    /** With several models: which one is reviewing now, e.g. "gpt-5 (2 of 3)". */
+    /** With several models: how many, and how many have finished, e.g. "3 models (1 finished)". */
     model?: string;
+    /** With several models: each one's own progress, in the job's order. The fields above are all of them together. */
+    models?: ModelProgress[];
+}
+
+/** Why a model's review was stopped before it finished. */
+export type StopReason = "stalled" | "timeLimit" | "overBudget";
+
+/**
+ * One model's progress in a job with several. Its phase is "waiting" until its turn comes (when more
+ * models are listed than run at once), then OCR's own, then how it ended: "done", "failed" or "cancelled".
+ */
+export interface ModelProgress extends Omit<Progress, "model" | "models"> {
+    /** How people know the model. */
+    label: string;
+    startedAt?: string;
+    /** How long it took, once it has ended. */
+    seconds?: number;
+    reason?: StopReason;
+}
+
+/** A model's phases while OCR runs, in order. */
+const RUNNING = ["starting", "planning", "reviewing", "summarising"];
+
+/**
+ * Several models' progress as one: tokens, tool calls and failed rounds added up, the most files any of
+ * them has, and the phase of whichever running model is furthest behind (the job isn't summarising until
+ * they all are). `before` is kept as it is where no model has anything to say.
+ */
+export function combined(before: Progress, models: readonly ModelProgress[]): Progress {
+    const sum = (key: "tokens" | "toolCalls" | "toolFailures" | "roundsFailed") =>
+        models.some((m) => m[key] !== undefined) ? { [key]: models.reduce((n, m) => n + (m[key] ?? 0), 0) } : {};
+    const most = (key: "files" | "filesChanged" | "groups") =>
+        models.some((m) => m[key] !== undefined) ? { [key]: Math.max(...models.map((m) => m[key] ?? 0)) } : {};
+    const phase = RUNNING.find((ph) => models.some((m) => m.phase === ph)) ?? before.phase;
+    const finished = models.filter((m) => m.phase === "done" || m.phase === "failed" || m.phase === "cancelled").length;
+    const { current: _c, round: _r, ...rest } = before;
+    return {
+        ...rest,
+        ...(phase ? { phase } : {}),
+        ...most("files"),
+        ...most("filesChanged"),
+        ...most("groups"),
+        ...sum("roundsFailed"),
+        ...sum("toolCalls"),
+        ...sum("toolFailures"),
+        ...sum("tokens"),
+        model: `${models.length} models${finished ? ` (${finished} finished)` : ""}`,
+        models: [...models],
+    };
 }
 
 const UNIT: Record<string, number> = { "": 1, K: 1_000, M: 1_000_000 };

@@ -12,11 +12,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { FakeGitHub } from "../../../tests/fakes/github.ts";
-import { ServerError } from "../src/client.ts";
+import { type ClaimedJob, type ModelStop, ServerError } from "../src/client.ts";
 import { loadConfig, secretFileWarning } from "../src/config.ts";
 import { checkBranch, Git, gitVersionProblem, mirrorPath } from "../src/git.ts";
 import { start } from "../src/process.ts";
-import { readProgress } from "../src/progress.ts";
+import { combined, type ModelProgress, readProgress } from "../src/progress.ts";
 import { JobRun, ocrArgs, ocrEnv, Runner } from "../src/runner.ts";
 
 describe("progress from OCR's stderr", () => {
@@ -712,6 +712,7 @@ describe("a job's life", () => {
                 secret: "s".repeat(40),
                 name: "test",
                 concurrency: 1,
+                modelParallelism: 5,
                 cacheDir: path.join(dir, "cache"),
                 workDir: path.join(dir, "work"),
                 pollMs: 1000,
@@ -787,6 +788,7 @@ describe("time limits and stalled reviews", () => {
             secret: "s".repeat(40),
             name: "test",
             concurrency: 1,
+            modelParallelism: 5,
             cacheDir: path.join(dir, "cache"),
             workDir: path.join(dir, "work"),
             pollMs: 1000,
@@ -924,9 +926,322 @@ describe("time limits and stalled reviews", () => {
             models: [model("fake/model"), model("fake/a", { maxTokensBudget: 12_000 }), model("fake/b", { maxTokensBudget: null })],
         });
         assert.equal(outcomes.get("budgets")?.status, "done");
-        const args = (logs.get("budgets") ?? [])
-            .filter((l) => l.includes("[fake-ocr] args: "))
-            .map((l) => l.replace(/^.*--color never ?/, ""));
-        assert.deepEqual(args, ["--max-tokens-budget 30000", "--max-tokens-budget 12000", ""]);
+        // The models run at once, so their lines come in any order: each starts with its model's label.
+        const args = (label: string) =>
+            (logs.get("budgets") ?? []).find((l) => l.startsWith(`[${label}] [fake-ocr] args: `))?.replace(/^.*--color never ?/, "");
+        assert.deepEqual(["fake/model", "fake/a", "fake/b"].map(args), ["--max-tokens-budget 30000", "--max-tokens-budget 12000", ""]);
+    });
+});
+
+describe("several models at once", () => {
+    const FAKE_OCR = path.resolve(import.meta.dirname, "../../../tests/fakes/ocr.ts");
+    const token = `github_pat_${"p".repeat(30)}`;
+    let fake: FakeGitHub;
+    let dir: string;
+    let http: ReturnType<typeof createServer>;
+    let url = "";
+    /** A stand-in `ocr` that notes each start and end in a file, then runs the fake one. */
+    let countingOcr = "";
+    let procs = "";
+    type Sent = { models?: ModelProgress[]; tokens?: number; phase?: string; model?: string };
+    /** What the runner told the server, by job: its log, each progress it sent, and how it ended. */
+    const logs = new Map<string, string[]>();
+    const progress = new Map<string, Sent[]>();
+    const outcomes = new Map<string, { status: string; error?: string | null; parts?: Part[] }>();
+    type Part = { status: string; error?: string; reason?: string; report?: unknown; tokens?: number | null; seconds?: number };
+    /** What the server answers a job's events and heartbeats with, given what it has heard so far. */
+    const orders = new Map<string, (heard: { log: string[]; progress: Sent[] }) => { cancel?: boolean; stop?: ModelStop[] }>();
+
+    before(async () => {
+        fake = await new FakeGitHub().start();
+        await fake.gitRepo("acme/app", { "src/a.ts": "export const a = 1;\n" });
+        fake.pat(token, "octo", ["acme/app"]);
+        http = createServer((req, res) => {
+            let body = "";
+            req.on("data", (d) => {
+                body += d;
+            });
+            req.on("end", () => {
+                const [, id, what] = /\/jobs\/([^/]+)\/(\w+)$/.exec(req.url ?? "") ?? [];
+                const sent = JSON.parse(body || "{}");
+                if (id && what === "events") {
+                    logs.set(id, [...(logs.get(id) ?? []), ...(sent.lines as { line: string }[]).map((l) => l.line)]);
+                    if (sent.progress) progress.set(id, [...(progress.get(id) ?? []), sent.progress]);
+                }
+                if (id && what === "finish") outcomes.set(id, sent);
+                const say = id ? orders.get(id)?.({ log: logs.get(id) ?? [], progress: progress.get(id) ?? [] }) : undefined;
+                res.writeHead(200, { "content-type": "application/json" });
+                res.end(JSON.stringify({ cancel: false, ok: true, ...say }));
+            });
+        });
+        await new Promise<void>((r) => http.listen(0, "127.0.0.1", () => r()));
+        url = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
+        dir = mkdtempSync(path.join(tmpdir(), "runner-parallel-"));
+        procs = path.join(dir, "procs");
+        countingOcr = path.join(dir, "ocr");
+        writeFileSync(
+            countingOcr,
+            `#!/bin/sh\necho start >> ${procs}\ntrap 'echo end >> ${procs}' EXIT\ntrap 'exit 143' TERM\n${process.execPath} ${FAKE_OCR} "$@" &\nwait $!\n`,
+            { mode: 0o755 },
+        );
+    });
+    after(async () => {
+        http.close();
+        await fake.stop();
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    const runner = (name: string, extra: { modelParallelism?: number; ocrBin?: string } = {}) =>
+        new Runner({
+            serverUrl: url,
+            secret: "s".repeat(40),
+            name: "test",
+            concurrency: 1,
+            modelParallelism: 5,
+            cacheDir: path.join(dir, `cache-${name}`),
+            workDir: path.join(dir, `work-${name}`),
+            pollMs: 1000,
+            healthPort: null,
+            ocrBin: FAKE_OCR,
+            gitBin: "git",
+            llmTimeout: null,
+            path: process.env.PATH ?? "",
+            warnings: [],
+            ...extra,
+        });
+    const model = (name: string) => ({
+        url: "https://llm.test/v1",
+        model: name,
+        apiKey: "k".repeat(20),
+        protocol: "openai" as const,
+        provider: "openrouter",
+        label: name,
+    });
+    const job = (id: string, names: string[], extra: Partial<ClaimedJob> = {}): ClaimedJob => ({
+        id,
+        kind: "full",
+        title: "t",
+        leaseSeconds: 60,
+        repository: { fullName: "acme/app", cloneUrl: `${fake.url}/acme/app.git` },
+        git: { username: "x-access-token", token },
+        pr: null,
+        gitRef: "main",
+        baseRef: null,
+        headSha: null,
+        maxTokensBudget: null,
+        timeoutMinutes: null,
+        stallMinutes: null,
+        model: model(names[0] as string),
+        models: names.map(model),
+        ...extra,
+    });
+    const parts = (id: string) => outcomes.get(id)?.parts ?? [];
+    /** The last progress the runner sent for each model. */
+    const last = (id: string) => progress.get(id)?.findLast((p) => p.models)?.models ?? [];
+
+    test("the job's progress is its models' together: tokens added up, the phase of whichever is furthest behind", () => {
+        const p = combined({ phase: "starting", current: "src", round: "1/2" }, [
+            { label: "a", phase: "summarising", files: 4, tokens: 1200, toolCalls: 3, toolFailures: 1 },
+            { label: "b", phase: "planning", files: 6, tokens: 300, toolCalls: 2 },
+            { label: "c", phase: "done", tokens: 500, seconds: 4 },
+            { label: "d", phase: "waiting" },
+        ]);
+        const { models, ...job } = p;
+        assert.deepEqual(job, { phase: "planning", files: 6, toolCalls: 5, toolFailures: 1, tokens: 2000, model: "4 models (1 finished)" });
+        assert.equal(models?.length, 4);
+        // Nothing said yet: the job's own phase stands, and no figure is made up.
+        const waiting = [
+            { label: "a", phase: "waiting" },
+            { label: "b", phase: "waiting" },
+        ];
+        assert.deepEqual(combined({ phase: "starting" }, waiting), { phase: "starting", model: "2 models", models: waiting });
+    });
+
+    test("they take about as long as the slowest, not as long as all of them one after another", async () => {
+        const t0 = Date.now();
+        await runner("fast").execute(
+            job("fast", ["fake/sleep-2", "fake/sleep-2-wordy", "fake/sleep-2-extra", "fake/sleep-1", "fake/model"]),
+        );
+        const took = Date.now() - t0;
+        assert.equal(outcomes.get("fast")?.status, "done", outcomes.get("fast")?.error ?? "");
+        assert.deepEqual(
+            parts("fast").map((p) => p.status),
+            ["done", "done", "done", "done", "done"],
+        );
+        // Seven seconds of work between them; the slowest takes two.
+        assert.ok(took < 5000, `took ${took}ms`);
+        const log = logs.get("fast") ?? [];
+        assert.ok(
+            log.includes(
+                "[triagent] Reviewing with 5 models at once: fake/sleep-2, fake/sleep-2-wordy, fake/sleep-2-extra, fake/sleep-1, fake/model.",
+            ),
+        );
+        // Every line of a model's OCR, and the runner's lines about it, start with its label.
+        for (const name of ["fake/sleep-2", "fake/sleep-2-wordy", "fake/sleep-2-extra", "fake/sleep-1", "fake/model"]) {
+            assert.ok(
+                log.some((l) => l.startsWith(`[${name}] [fake-ocr] args: scan`)),
+                `${name}'s own lines`,
+            );
+            assert.ok(
+                log.some((l) => l.startsWith(`[${name}] [triagent] Running ocr scan `) && l.includes(`with ${name} via openrouter.`)),
+            );
+            assert.ok(log.includes(`[${name}] [triagent] Finished.`));
+        }
+        assert.ok(!log.some((l) => l.startsWith("[fake-ocr]") || l.startsWith("[ocr]")), "no OCR line without its model");
+        // Progress is each model's own, with the job's on top.
+        const sent = progress.get("fast") ?? [];
+        const during = sent.find((p) => p.models?.filter((m) => m.phase === "reviewing").length === 4 && p.models[4]?.phase === "done");
+        assert.ok(during, "four still reviewing once the quick one has finished");
+        assert.equal(during.phase, "reviewing");
+        assert.equal(during.model, "5 models (1 finished)");
+        assert.deepEqual(
+            last("fast").map((m) => [m.label, m.phase, m.files, typeof m.seconds, typeof m.startedAt]),
+            ["fake/sleep-2", "fake/sleep-2-wordy", "fake/sleep-2-extra", "fake/sleep-1", "fake/model"].map((n) => [
+                n,
+                "done",
+                1,
+                "number",
+                "string",
+            ]),
+        );
+        assert.equal(sent.at(-1)?.phase, "uploading");
+    });
+
+    test("one fails and one stalls while the others finish", async () => {
+        await runner("mixed").execute(
+            job("mixed", ["fake/sleep-1", "fake/fail", "fake/silent-30", "fake/model"], { stallMinutes: 0.01, timeoutMinutes: 5 }),
+        );
+        const outcome = outcomes.get("mixed");
+        assert.equal(outcome?.status, "done", outcome?.error ?? "");
+        assert.deepEqual(
+            parts("mixed").map((p) => [p.status, p.reason ?? null]),
+            [
+                ["done", null],
+                ["failed", null],
+                ["failed", "stalled"],
+                ["done", null],
+            ],
+        );
+        assert.match(parts("mixed")[1]?.error ?? "", /^Open Code Review failed \(exit 1\)/);
+        assert.match(parts("mixed")[2]?.error ?? "", /^Stalled: Open Code Review printed nothing for 0\.01 minutes/);
+        assert.deepEqual(
+            last("mixed").map((m) => [m.phase, m.reason ?? null]),
+            [
+                ["done", null],
+                ["failed", null],
+                ["failed", "stalled"],
+                ["done", null],
+            ],
+        );
+        const log = logs.get("mixed") ?? [];
+        assert.ok(log.some((l) => l.startsWith("[fake/silent-30] [triagent] Failed: Stalled: ")));
+    });
+
+    test("the time limit is each model's own", async () => {
+        await runner("limit").execute(job("limit", ["fake/sleep-30", "fake/model"], { timeoutMinutes: 0.02 }));
+        assert.equal(outcomes.get("limit")?.status, "done");
+        assert.deepEqual(
+            parts("limit").map((p) => [p.status, p.reason ?? null]),
+            [
+                ["failed", "timeLimit"],
+                ["done", null],
+            ],
+        );
+        assert.match(parts("limit")[0]?.error ?? "", /^Stopped after 0\.02 minutes, the project's time limit/);
+    });
+
+    test("cancelling part-way stops every model", async () => {
+        // Cancelled once all three are reviewing.
+        orders.set("stopped", ({ progress: sent }) => ({ cancel: sent.some((p) => p.models?.every((m) => m.phase === "reviewing")) }));
+        const t0 = Date.now();
+        await runner("stopped").execute(job("stopped", ["fake/sleep-30", "fake/sleep-31", "fake/sleep-32"]));
+        assert.ok(Date.now() - t0 < 10_000, `took ${Date.now() - t0}ms`);
+        assert.equal(outcomes.get("stopped")?.status, "cancelled");
+        assert.deepEqual(
+            parts("stopped").map((p) => p.status),
+            ["cancelled", "cancelled", "cancelled"],
+        );
+        // Each said what it had used as it stopped.
+        assert.deepEqual(
+            parts("stopped").map((p) => p.tokens),
+            [4321, 4321, 4321],
+        );
+    });
+
+    test("no more of a job's models run at once than the runner allows; the rest wait their turn", async () => {
+        writeFileSync(procs, "");
+        const names = ["fake/sleep-1", "fake/sleep-1-wordy", "fake/sleep-1-extra", "fake/model"];
+        const t0 = Date.now();
+        await runner("capped", { modelParallelism: 2, ocrBin: countingOcr }).execute(job("capped", names));
+        const took = Date.now() - t0;
+        assert.equal(outcomes.get("capped")?.status, "done", outcomes.get("capped")?.error ?? "");
+        assert.equal(parts("capped").length, 4);
+        // Every process noted its start and its end: never more than two between them.
+        let now = 0;
+        let most = 0;
+        const noted = readFileSync(procs, "utf8").trim().split("\n");
+        for (const line of noted) {
+            now += line === "start" ? 1 : -1;
+            most = Math.max(most, now);
+        }
+        assert.equal(noted.filter((l) => l === "start").length, 4);
+        assert.equal(most, 2, noted.join(" "));
+        assert.equal(now, 0);
+        assert.ok(took >= 2000, `two at a time takes at least two rounds of a second each, took ${took}ms`);
+        const log = logs.get("capped") ?? [];
+        assert.ok(log.includes(`[triagent] Reviewing with 4 models, 2 at a time: ${names.join(", ")}.`));
+        // While the first two review, the others wait.
+        const sent = progress.get("capped") ?? [];
+        assert.ok(
+            sent.some((p) => p.models?.[0]?.phase === "reviewing" && p.models[2]?.phase === "waiting" && p.models[3]?.phase === "waiting"),
+        );
+    });
+
+    test("a model the server stops for passing its token budget is stopped alone, and says why", async () => {
+        // As the server does: the model whose own tokens have passed its budget of 20,000 is named.
+        orders.set("budget", ({ progress: sent }) => {
+            const models = sent.findLast((p) => p.models)?.models ?? [];
+            return {
+                stop: models.flatMap((m, index) =>
+                    (m.tokens ?? 0) > 20_000 && m.phase !== "failed"
+                        ? [{ index, label: m.label, reason: "overBudget" as const, budget: 20_000 }]
+                        : [],
+                ),
+            };
+        });
+        const t0 = Date.now();
+        await runner("budget").execute(job("budget", ["fake/sleep-3", "fake/spend-25000-sleep-30", "fake/spend-9000-sleep-2"]));
+        assert.ok(Date.now() - t0 < 10_000, `took ${Date.now() - t0}ms`);
+        const outcome = outcomes.get("budget");
+        assert.equal(outcome?.status, "done", outcome?.error ?? "");
+        assert.deepEqual(
+            parts("budget").map((p) => [p.status, p.reason ?? null]),
+            [
+                ["done", null],
+                ["failed", "overBudget"],
+                ["done", null],
+            ],
+        );
+        assert.equal(parts("budget")[1]?.error, "Stopped: it passed its token budget of 20,000 tokens.");
+        assert.equal(parts("budget")[1]?.tokens, 25_000);
+        assert.deepEqual(
+            last("budget").map((m) => [m.phase, m.reason ?? null]),
+            [
+                ["done", null],
+                ["failed", "overBudget"],
+                ["done", null],
+            ],
+        );
+        const log = logs.get("budget") ?? [];
+        assert.ok(log.includes("[fake/spend-25000-sleep-30] [triagent] Failed: Stopped: it passed its token budget of 20,000 tokens."));
+    });
+
+    test("a server that only says whether to cancel (an older one) stops nothing", async () => {
+        orders.set("older", () => ({ stop: undefined }));
+        await runner("older").execute(job("older", ["fake/spend-25000-sleep-1", "fake/model"]));
+        assert.deepEqual(
+            parts("older").map((p) => p.status),
+            ["done", "done"],
+        );
     });
 });
