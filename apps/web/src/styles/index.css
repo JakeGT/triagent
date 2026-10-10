@@ -253,8 +253,8 @@
     }
 }
 
-/* The landing page's backdrop, made of the product's own marks: a field of agreement dots, clearest at the
-   edges and gone behind the words, and the four severity shapes at poster size. Never behind an app page. */
+/* The landing page's backdrop: a field of dots, clearest at the edges and gone behind the words, a soft wash
+   from the top, and the diff under review running off both edges. Never behind an app page. */
 @layer components {
     .landing-field {
         position: relative;
@@ -285,31 +285,48 @@
     .landing-field-top {
         --landing-mask: linear-gradient(#000, transparent 70%);
     }
-    .landing-shape {
+    /* A soft wash of the action colour from the top edge, so the page has a near and a far. */
+    .landing-field::after {
+        content: "";
         position: absolute;
-        z-index: -1;
+        inset: 0;
+        z-index: -3;
         pointer-events: none;
-        background: var(--c);
-        opacity: 0.14;
+        background: radial-gradient(ellipse 70% 60% at 50% -10%, color-mix(in oklab, var(--primary) 16%, transparent), transparent 70%);
     }
-    .dark .landing-shape {
-        opacity: 0.2;
+    /* The change under review, running off both edges of a wide screen: read as texture, not as text. */
+    .landing-code {
+        position: absolute;
+        top: 3.5rem;
+        z-index: -1;
+        width: 26rem;
+        pointer-events: none;
+        user-select: none;
+        font-family: var(--font-mono);
+        font-size: 0.8125rem;
+        line-height: 1.7;
+        white-space: pre;
+        color: color-mix(in oklab, var(--foreground) 34%, transparent);
     }
-    .landing-shape-critical {
-        --c: var(--sev-critical);
-        clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    .landing-code-start {
+        left: calc(50% - 53rem);
+        mask-image: linear-gradient(to right, #000 30%, transparent 92%), linear-gradient(#000 55%, transparent);
+        mask-composite: intersect;
     }
-    .landing-shape-high {
-        --c: var(--sev-high);
-        clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+    .landing-code-end {
+        right: calc(50% - 53rem);
+        mask-image: linear-gradient(to left, #000 30%, transparent 92%), linear-gradient(#000 55%, transparent);
+        mask-composite: intersect;
     }
-    .landing-shape-medium {
-        --c: var(--sev-medium);
-        border-radius: 0.5rem;
+    .landing-code > span {
+        display: block;
+        padding-inline: 0.75rem;
     }
-    .landing-shape-low {
-        --c: var(--sev-low);
-        border-radius: 999px;
+    .landing-code > .add {
+        background: color-mix(in oklab, var(--diff-add) 75%, transparent);
+    }
+    .landing-code > .del {
+        background: color-mix(in oklab, var(--diff-del) 75%, transparent);
     }
 }
 

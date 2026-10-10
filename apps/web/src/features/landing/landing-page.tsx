@@ -151,14 +151,62 @@ function Agreement() {
     );
 }
 
-/** The four severity shapes at poster size, behind the top of the page, where a wide screen has room beside the words. */
-function Shapes() {
+/** The made-up pull request's diff, as it would sit in an editor: [sign, line]. */
+const DIFF_START: [string, string][] = [
+    [" ", "export async function retry(id: string, session: Session) {"],
+    [" ", "    const order = await orders.get(id);"],
+    ["+", "    if (order.customerId !== session.customerId) {"],
+    ["+", "        throw notFound();"],
+    ["+", "    }"],
+    [" ", "    const attempt = await attempts.next(order);"],
+    ["-", "    await processor.charge({ amount, card });"],
+    ["+", "    await processor.charge({ amount, card }, {"],
+    ["+", "        idempotencyKey: attempt.id,"],
+    ["+", "    });"],
+    [" ", "    return attempt;"],
+    [" ", "}"],
+    [" ", ""],
+    [" ", "function backoff(attempt: Attempt) {"],
+    ["-", "    return attempt.delay * 2;"],
+    ["+", "    return Math.min(attempt.delay * 2, MAX_DELAY);"],
+    [" ", "}"],
+];
+const DIFF_END: [string, string][] = [
+    [" ", "const failed = await payments"],
+    ["-", '    .where({ status: "failed" });'],
+    ["+", '    .where({ status: "failed" })'],
+    ["+", "    .limit(BATCH)"],
+    ["+", "    .forUpdate({ skipLocked: true });"],
+    [" ", ""],
+    [" ", "for (const payment of failed) {"],
+    ["-", '    console.log("retrying", card.last4);'],
+    [" ", '    await queue.add("retry", payment.id);'],
+    [" ", "}"],
+    [" ", ""],
+    ["-", "const MAX_ATTEMPTS = 5;"],
+    ["+", 'import { MAX_ATTEMPTS } from "./limits";'],
+    [" ", ""],
+    ["+", 'test("succeeds on the second attempt", async () => {'],
+    ["+", "    processor.failOnce();"],
+    ["+", "    await expect(retry(order.id, session)).resolves.toBeDefined();"],
+];
+
+/** The change under review, behind the top of the page where a wide screen has room beside the words. Texture only. */
+function Backdrop() {
+    const side = (lines: [string, string][], where: string) => (
+        <div className={cn("landing-code", where)}>
+            {lines.map(([sign, text], i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one fixed listing
+                <span key={i} className={sign === "+" ? "add" : sign === "-" ? "del" : undefined}>
+                    {sign} {text}
+                </span>
+            ))}
+        </div>
+    );
     return (
-        <div aria-hidden="true" className="max-lg:hidden">
-            <span className="landing-shape landing-shape-critical top-20 left-[max(1.5rem,calc(50%-45rem))] size-44 -rotate-12" />
-            <span className="landing-shape landing-shape-medium top-[21rem] left-[max(4rem,calc(50%-39rem))] size-20 rotate-12" />
-            <span className="landing-shape landing-shape-high top-12 right-[max(3rem,calc(50%-41rem))] size-28 rotate-6" />
-            <span className="landing-shape landing-shape-low top-[15rem] right-[max(1rem,calc(50%-46rem))] size-48" />
+        <div aria-hidden="true" className="max-xl:hidden">
+            {side(DIFF_START, "landing-code-start")}
+            {side(DIFF_END, "landing-code-end")}
         </div>
     );
 }
@@ -216,7 +264,7 @@ export function LandingPage() {
 
             <main id="main">
                 <section aria-labelledby="hero-title" className="landing-field">
-                    <Shapes />
+                    <Backdrop />
                     <div className={cn(COLUMN, "grid gap-10 pt-10 pb-14 sm:gap-12 sm:pt-14 sm:pb-24")}>
                         <div className="grid justify-items-center gap-7 text-center">
                             {/* The headline is the change Triagent makes, written the way a change is: one line out, one in. */}
