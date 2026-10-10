@@ -417,8 +417,8 @@ export function LandingPage() {
                         <Logo className="size-5" /> Triagent
                     </span>
                     <span>Free software under the AGPL-3.0. Reviews by Open Code Review.</span>
-                    <Link to="/sign-in" className="ms-auto underline underline-offset-2 hover:text-foreground">
-                        Sign in
+                    <Link to={signedIn ? "/dashboard" : "/sign-in"} className="ms-auto underline underline-offset-2 hover:text-foreground">
+                        {signedIn ? "Open dashboard" : "Sign in"}
                     </Link>
                 </div>
             </footer>

@@ -26,6 +26,8 @@ test("signed in, the front door is still the landing page, with a button to the 
     await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toContainText("One list");
+    // Every way in says so, the footer's too.
+    await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(0);
     await page.getByRole("link", { name: "Open dashboard" }).first().click();
     await expect(page).toHaveURL(/\/w\//);
 });

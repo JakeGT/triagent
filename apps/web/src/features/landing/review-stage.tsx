@@ -4,7 +4,7 @@
 // for people who've asked their system for less motion.
 
 import { Bot, Check, Pause, Play, RotateCcw, User } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { SeverityMark, StatusMark } from "@/components/marks";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -55,7 +55,7 @@ function Lane({ model, rows }: { model: SampleModel; rows: number }) {
 }
 
 /** What has happened to each merged finding by `frame`. */
-function triageAt(frame: number, index: number): { status: SampleFinding["status"]; note: React.ReactNode } {
+function triageAt(frame: number, index: number): { status: SampleFinding["status"]; note: ReactNode } {
     if (index === 0 && frame === 5)
         return {
             status: "in_progress",
