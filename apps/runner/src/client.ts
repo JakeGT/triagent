@@ -76,7 +76,10 @@ export interface RunnerIdentity {
     id: string;
     name: string;
     version: string | null;
+    /** How many more jobs it can take now. */
     slots: number;
+    /** How many it works on at once in all (a server older than this ignores it). */
+    capacity: number;
 }
 
 export class ServerError extends Error {

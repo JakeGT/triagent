@@ -7,7 +7,7 @@
 // the clone URL's own protocol is allowed.
 
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync } from "node:fs";
 import path from "node:path";
 import { run, start } from "./process.ts";
 
@@ -107,6 +107,12 @@ export function fetchEnv(ctx: GitContext, cloneUrl: string, username: string, to
         GIT_ALLOW_PROTOCOL: url.protocol.replace(/:$/, ""),
     };
 }
+
+/** Why a review's worktree is locked in the mirror: how a runner's own are told from anyone else's. */
+const WORKTREE_LOCK = "triagent review";
+/** How often a running review shows its worktree is in use, and how long without that before it counts as abandoned. */
+export const WORKTREE_KEEP_MS = 10 * 60_000;
+export const WORKTREE_ABANDONED_MS = 24 * 60 * 60_000;
 
 const SHA = /^[0-9a-f]{40}$/;
 /** What git says when the other end doesn't have (or won't give) a commit asked for by itself. */
@@ -272,18 +278,66 @@ export class Git {
      */
     async addWorktree(mirror: string, dir: string, commit: string, attrSource: string | null = null, signal?: AbortSignal): Promise<void> {
         if (!SHA.test(commit) || (attrSource !== null && !SHA.test(attrSource))) throw new Error("Not a commit.");
+        // Locked, so no `git worktree prune` takes its record out of the mirror while it's in use: not git's own
+        // (after a fetch), and not another runner's sharing the cache, to which this directory may not exist.
         await this.git(
-            ["--git-dir", mirror, "worktree", "add", "--detach", "--force", "--quiet", dir, commit],
+            ["--git-dir", mirror, "worktree", "add", "--lock", "--reason", WORKTREE_LOCK, "--detach", "--force", "--quiet", dir, commit],
             { ...gitEnv(this.ctx), ...(attrSource ? { GIT_ATTR_SOURCE: attrSource } : {}) },
             10 * 60_000,
             signal,
         );
     }
 
+    /**
+     * Remove a job's worktree and the mirror's record of it. Only its own: other jobs (and other runners
+     * sharing the cache) have worktrees in the same mirror, so nothing here prunes them all.
+     */
     async removeWorktree(mirror: string, dir: string): Promise<void> {
-        await this.git(["--git-dir", mirror, "worktree", "remove", "--force", dir]).catch(() => {});
+        // Twice: once for a worktree with changes (the base's review rules are put into it), once for a locked one.
+        const names = sameDirectory(dir);
+        await this.git(["--git-dir", mirror, "worktree", "remove", "--force", "--force", dir]).catch(() => {});
         rmSync(dir, { recursive: true, force: true });
-        await this.git(["--git-dir", mirror, "worktree", "prune"]).catch(() => {});
+        // If git couldn't (the worktree was half made, say), its record goes by hand.
+        for (const record of worktreeRecords(mirror))
+            if (record.dir && names.has(record.dir)) rmSync(record.at, { recursive: true, force: true });
+    }
+
+    /**
+     * Show that the worktree at `dir` is still in use (a running review does, every so often), so
+     * `sweepWorktrees` leaves its record alone.
+     */
+    keepWorktree(mirror: string, dir: string): void {
+        const t = new Date();
+        const names = sameDirectory(dir);
+        for (const record of worktreeRecords(mirror)) {
+            if (!record.dir || !names.has(record.dir)) continue;
+            try {
+                utimesSync(path.join(record.at, "locked"), t, t);
+            } catch {
+                // gone: nothing to keep
+            }
+        }
+    }
+
+    /**
+     * Remove the records of worktrees a runner left behind when it died: locked by a runner, and not kept
+     * (`keepWorktree`) for `olderThanMs`. Their directories went with the runner's work directory, or will.
+     * Call it while holding the mirror, so two runners don't tidy at once. Returns how many went.
+     */
+    sweepWorktrees(mirror: string, olderThanMs = WORKTREE_ABANDONED_MS): number {
+        let n = 0;
+        for (const record of worktreeRecords(mirror)) {
+            try {
+                const locked = path.join(record.at, "locked");
+                if (!readFileSync(locked, "utf8").startsWith(WORKTREE_LOCK)) continue;
+                if (Date.now() - statSync(locked).mtimeMs < olderThanMs) continue;
+                rmSync(record.at, { recursive: true, force: true });
+                n++;
+            } catch {
+                // not locked, or gone meanwhile
+            }
+        }
+        return n;
     }
 
     /**
@@ -405,6 +459,35 @@ export class Git {
         // The rule file itself, in case the base's is a link to somewhere the change edits.
         return this.restoreFromBase(mirror, dir, base, [".opencodereview/rule.json", ...named]);
     }
+}
+
+/** `dir` as given and as git records it (with links in its path followed). */
+function sameDirectory(dir: string): Set<string> {
+    try {
+        return new Set([dir, realpathSync(dir)]);
+    } catch {
+        return new Set([dir]);
+    }
+}
+
+/** The mirror's records of its worktrees (`<mirror>/worktrees/<name>`), each with the directory it's for. */
+function worktreeRecords(mirror: string): { at: string; dir: string | null }[] {
+    const root = path.join(mirror, "worktrees");
+    let names: string[];
+    try {
+        names = readdirSync(root);
+    } catch {
+        return [];
+    }
+    return names.map((name) => {
+        const at = path.join(root, name);
+        try {
+            // Its `gitdir` file names the worktree's own `.git` file.
+            return { at, dir: path.dirname(readFileSync(path.join(at, "gitdir"), "utf8").trim()) };
+        } catch {
+            return { at, dir: null };
+        }
+    });
 }
 
 function lstatOrNull(p: string) {

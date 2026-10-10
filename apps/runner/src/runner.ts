@@ -30,8 +30,9 @@ import {
     ServerError,
 } from "./client.ts";
 import type { RunnerConfig } from "./config.ts";
-import { Git, gitEnv, mirrorPath } from "./git.ts";
+import { Git, gitEnv, mirrorPath, WORKTREE_KEEP_MS } from "./git.ts";
 import { type Judged, judgeFindings, whyNot } from "./judge.ts";
+import { type LockOptions, PathLocks } from "./lock.ts";
 import { start } from "./process.ts";
 import { combined, type ModelProgress, type Progress, readProgress } from "./progress.ts";
 
@@ -460,6 +461,8 @@ export class Runner {
     private readonly config: RunnerConfig;
     private readonly server: ServerClient;
     private readonly git: Git;
+    /** One fetch at a time into each repository's mirror, among this runner's jobs and any other runner sharing the cache. */
+    private readonly locks: PathLocks;
     readonly id = `runner-${randomBytes(9).toString("base64url")}`;
     private readonly active = new Map<string, JobRun>();
     private stopping = false;
@@ -469,8 +472,9 @@ export class Runner {
     /** Called when a job ends (tests wait on it). */
     onJobEnd: (jobId: string) => void = () => {};
 
-    constructor(config: RunnerConfig) {
+    constructor(config: RunnerConfig, locks: LockOptions = {}) {
         this.config = config;
+        this.locks = new PathLocks(locks);
         this.server = new ServerClient(config.serverUrl, config.secret, () => this.identity());
         this.git = new Git({ gitBin: config.gitBin, path: config.path, home: path.join(config.workDir, "git-home") });
         mkdirSync(path.join(config.workDir, "git-home"), { recursive: true, mode: 0o700 });
@@ -478,7 +482,13 @@ export class Runner {
     }
 
     identity(): RunnerIdentity {
-        return { id: this.id, name: this.config.name, version: VERSION, slots: Math.max(0, this.config.concurrency - this.active.size) };
+        return {
+            id: this.id,
+            name: this.config.name,
+            version: VERSION,
+            slots: Math.max(0, this.config.concurrency - this.active.size),
+            capacity: this.config.concurrency,
+        };
     }
 
     get running(): number {
@@ -543,6 +553,7 @@ export class Runner {
         let fetched: { head: string; base: string | null } | null = null;
         let outcome: Parameters<ServerClient["finish"]>[1];
         let ocrStarted = false;
+        let keep: ReturnType<typeof setInterval> | null = null;
         try {
             work = mkdtempSync(path.join(this.config.workDir, "job-"));
             tree = path.join(work, "tree");
@@ -550,34 +561,45 @@ export class Runner {
             run.say(
                 `Fetching ${job.kind === "pr" ? `pull request #${job.pr?.number}` : job.gitRef}${job.baseRef ? ` and ${job.baseRef}` : ""} from ${job.repository.fullName}…`,
             );
-            fetched = await this.git.fetch(
+            // One fetch at a time into a repository's mirror: two at once would trip over each other's refs. Jobs
+            // for other repositories don't wait, and nor does anything after the fetch (each job has its own worktree).
+            fetched = await this.locks.hold(
                 mirror,
-                {
-                    kind: job.kind,
-                    cloneUrl: job.repository.cloneUrl,
-                    username: job.git.username,
-                    token: job.git.token,
-                    pr: job.pr?.number ?? null,
-                    gitRef: job.gitRef,
-                    baseRef: job.baseRef,
+                async () => {
+                    run.check();
+                    this.git.sweepWorktrees(mirror);
+                    let got = await this.git.fetch(
+                        mirror,
+                        {
+                            kind: job.kind,
+                            cloneUrl: job.repository.cloneUrl,
+                            username: job.git.username,
+                            token: job.git.token,
+                            pr: job.pr?.number ?? null,
+                            gitRef: job.gitRef,
+                            baseRef: job.baseRef,
+                        },
+                        run.signal,
+                    );
+                    run.check();
+                    if (job.commit) {
+                        // A model of a finished review, run again: the commit that review was of, not where things are now.
+                        const now = got.head;
+                        got = await this.git.pin(
+                            mirror,
+                            { cloneUrl: job.repository.cloneUrl, username: job.git.username, token: job.git.token },
+                            job.commit,
+                            run.signal,
+                        );
+                        run.check();
+                        run.say(
+                            `Reviewing ${got.head.slice(0, 7)}, the commit the review this belongs to was of${now === got.head ? "" : ` (it's at ${now.slice(0, 7)} now)`}.`,
+                        );
+                    }
+                    return got;
                 },
-                run.signal,
+                { signal: run.signal, onWait: () => run.say("Waiting for another review's fetch of this repository…") },
             );
-            run.check();
-            if (job.commit) {
-                // A model of a finished review, run again: the commit that review was of, not where things are now.
-                const now = fetched.head;
-                fetched = await this.git.pin(
-                    mirror,
-                    { cloneUrl: job.repository.cloneUrl, username: job.git.username, token: job.git.token },
-                    job.commit,
-                    run.signal,
-                );
-                run.check();
-                run.say(
-                    `Reviewing ${fetched.head.slice(0, 7)}, the commit the review this belongs to was of${now === fetched.head ? "" : ` (it's at ${now.slice(0, 7)} now)`}.`,
-                );
-            }
             if (job.kind === "pr" && job.headSha && fetched.head !== job.headSha)
                 run.say(`The pull request moved on to ${fetched.head.slice(0, 7)} since it was queued; reviewing that.`);
             if (fetched.base && fetched.base === fetched.head)
@@ -585,6 +607,9 @@ export class Runner {
                     `There are no changes to review: ${job.gitRef ?? "the pull request"} has nothing that isn't on ${job.baseRef}.`,
                 );
             await this.git.addWorktree(mirror, tree, fetched.head, fetched.base, run.signal);
+            // A long review keeps showing that its worktree is in use, so its record isn't taken for one left by a dead runner.
+            keep = setInterval(() => this.git.keepWorktree(mirror, tree), WORKTREE_KEEP_MS);
+            keep.unref();
             run.check();
             if (fetched.base) {
                 const rules = await this.git.useBaseReviewRules(mirror, tree, fetched.base);
@@ -695,6 +720,7 @@ export class Runner {
         } finally {
             // So the server doesn't charge an estimate for a review that never reached the model.
             if (!ocrStarted) run.setProgress({ ...run.currentProgress, tokens: 0 });
+            if (keep) clearInterval(keep);
             if (work) {
                 await this.git.removeWorktree(mirror, tree).catch(() => {});
                 try {
