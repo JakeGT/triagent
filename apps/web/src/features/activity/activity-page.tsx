@@ -13,6 +13,7 @@ import { formatDateTime, timeAgo } from "@/lib/format";
 import { branchesQuery } from "@/lib/queries";
 import { useProject } from "@/lib/session";
 import type { ActivityRow } from "@/lib/types";
+import { FirstReviewActions } from "../runs/first-review";
 import { describeActivity } from "./describe";
 
 const PAGE = 100;
@@ -91,25 +92,33 @@ export function ActivityPage() {
             ) : activity.isError ? (
                 <LoadError error={activity.error} onRetry={() => activity.refetch()} title="Couldn't load the activity" />
             ) : rows.length === 0 ? (
-                <EmptyState title="Nothing has changed yet">Uploads, triage and notes will appear here.</EmptyState>
+                <EmptyState title="Nothing has changed yet" action={filter ? undefined : <FirstReviewActions />}>
+                    Activity is the record of who did what in this project: reviews and uploads, changes of status and assignee, and notes.
+                </EmptyState>
             ) : (
                 <>
                     <ol className="divide-y rounded-lg border bg-card" data-tour="activity-list">
                         {rows.map((row) => (
-                            <li key={row.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2 text-sm">
+                            // On a phone each part has a line of its own: when, what, then where.
+                            <li key={row.id} className="grid gap-x-3 gap-y-0.5 px-3 py-2 text-sm sm:flex sm:items-baseline">
                                 <time
                                     dateTime={row.at}
                                     title={formatDateTime(row.at)}
-                                    className="w-28 shrink-0 text-xs text-muted-foreground"
+                                    className="shrink-0 text-xs text-muted-foreground sm:w-28"
                                 >
                                     {timeAgo(row.at)}
                                 </time>
                                 <span className="min-w-0 flex-1">
                                     <span className="font-medium">{row.actor}</span> {describeActivity(row)}
-                                    {VIA[row.via] ? <span className="text-muted-foreground"> {VIA[row.via]}</span> : null}
+                                    {/* A review's own row says what it reviewed; where the reviewer runs from adds nothing. */}
+                                    {VIA[row.via] && row.kind !== "run" ? (
+                                        <span className="text-muted-foreground"> {VIA[row.via]}</span>
+                                    ) : null}
                                 </span>
-                                <ItemLink row={row} ws={ws} slug={slug} defaultBranch={project.defaultBranch} />
-                                {row.branch && <span className="font-mono text-xs text-muted-foreground">{row.branch}</span>}
+                                <span className="flex flex-wrap items-baseline gap-x-3 sm:max-w-[45%] sm:shrink-0 sm:justify-end">
+                                    <ItemLink row={row} ws={ws} slug={slug} defaultBranch={project.defaultBranch} />
+                                    {row.branch && <span className="font-mono text-xs break-all text-muted-foreground">{row.branch}</span>}
+                                </span>
                             </li>
                         ))}
                     </ol>
@@ -134,7 +143,7 @@ function ItemLink({ row, ws, slug, defaultBranch }: { row: ActivityRow; ws: stri
                 to="/w/$ws/p/$project/issues/$issueId"
                 params={{ ws, project: slug, issueId: row.itemId }}
                 search={{ branch } as never}
-                className="font-mono text-xs underline"
+                className="link font-mono text-xs"
             >
                 {row.itemId}
             </Link>
@@ -145,9 +154,15 @@ function ItemLink({ row, ws, slug, defaultBranch }: { row: ActivityRow; ws: stri
                 to="/w/$ws/p/$project/tasks/$taskId"
                 params={{ ws, project: slug, taskId: row.itemId }}
                 search={{ branch }}
-                className="font-mono text-xs underline"
+                className="link font-mono text-xs"
             >
                 {row.itemId}
+            </Link>
+        );
+    if (row.kind === "run")
+        return (
+            <Link to="/w/$ws/p/$project/runs/$runId" params={{ ws, project: slug, runId: row.itemId }} className="link text-xs">
+                View the run
             </Link>
         );
     return null;

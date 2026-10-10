@@ -115,7 +115,7 @@ for (const theme of ["light", "dark"] as const) {
         await expect(page.getByText("Lower confidence", { exact: true })).toHaveCount(1);
         await expect(rows.filter({ hasText: "thinks this is critical" })).toContainText("Found by 1 of 2");
         await axe(page, `issues with a lower-confidence finding (${theme})`);
-        await page.getByRole("button", { name: "More filters" }).click();
+        await page.getByRole("button", { name: "File, assignee, flags" }).click();
         await page.getByLabel("Lower confidence (one model found it)").selectOption("false");
         await page.getByRole("button", { name: "Apply filters" }).click();
         await expect(page).toHaveURL(/lowerConfidence=false/);
@@ -341,7 +341,7 @@ for (const theme of ["light", "dark"] as const) {
 
         // The branch is as it was: the one model's report, its one finding.
         expect((await admin.get(`/api/v1/w/${ws}/p/app/branches`)).items).toEqual(before);
-        await page.getByRole("link", { name: "The run" }).click();
+        await page.getByRole("link", { name: "Back to the run" }).click();
         await expect(panel.getByRole("heading", { level: 2 })).toHaveText("Comparison: Full scan of main");
         await page.goto(`/w/${ws}/p/app/issues?branch=main`);
         await expect(page.getByRole("row")).toHaveCount(2);

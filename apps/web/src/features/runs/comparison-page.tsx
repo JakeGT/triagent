@@ -43,7 +43,7 @@ export function ComparisonPage() {
     const back = (
         <Button variant="outline" size="sm" asChild>
             <Link to="/w/$ws/p/$project/runs/$runId" params={{ ws, project: slug, runId }}>
-                <ArrowLeft /> The run
+                <ArrowLeft /> Back to the run
             </Link>
         </Button>
     );
@@ -112,13 +112,13 @@ export function ComparisonPage() {
                                 <TableHead scope="col" className="text-end">
                                     Another found too
                                 </TableHead>
-                                <TableHead scope="col" className="text-end">
+                                <TableHead scope="col" className="hidden text-end sm:table-cell">
                                     Tokens
                                 </TableHead>
-                                <TableHead scope="col" className="text-end">
+                                <TableHead scope="col" className="hidden text-end sm:table-cell">
                                     Cost
                                 </TableHead>
-                                <TableHead scope="col" className="text-end">
+                                <TableHead scope="col" className="hidden text-end sm:table-cell">
                                     Time
                                 </TableHead>
                             </TableRow>
@@ -137,11 +137,13 @@ export function ComparisonPage() {
                                     <TableCell className="text-end tabular-nums">{m.total ?? "—"}</TableCell>
                                     <TableCell className="text-end tabular-nums">{m.unique ?? "—"}</TableCell>
                                     <TableCell className="text-end tabular-nums">{m.shared ?? "—"}</TableCell>
-                                    <TableCell className="text-end tabular-nums">
+                                    <TableCell className="hidden text-end tabular-nums sm:table-cell">
                                         {m.tokens ? m.tokens.total.toLocaleString("en-GB") : "—"}
                                     </TableCell>
-                                    <TableCell className="text-end tabular-nums">{m.tokens ? usd(m.cost) : "—"}</TableCell>
-                                    <TableCell className="text-end tabular-nums">
+                                    <TableCell className="hidden text-end tabular-nums sm:table-cell">
+                                        {m.tokens ? usd(m.cost) : "—"}
+                                    </TableCell>
+                                    <TableCell className="hidden text-end tabular-nums sm:table-cell">
                                         {m.seconds === null ? "—" : duration(m.seconds)}
                                     </TableCell>
                                 </TableRow>
@@ -234,11 +236,11 @@ export function ComparisonPage() {
                         {c.findings.length === 0 ? "No model found anything." : "No findings like that."}
                     </p>
                 ) : (
-                    <ul className="grid gap-2" data-testid="comparison-findings">
+                    <ul className="divide-y rounded-md border" data-testid="comparison-findings">
                         {list.map((f, i) => (
                             // The list is as the server sent it and never reorders, so a finding's place is what it is.
                             // biome-ignore lint/suspicious/noArrayIndexKey: see above
-                            <li key={`${show}-${i}`} className="grid gap-1 rounded-md border bg-card p-3">
+                            <li key={`${show}-${i}`} className="grid grid-cols-[minmax(0,1fr)] gap-1 p-3">
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                                     <SeverityMark severity={f.severity} />
                                     <span className="text-muted-foreground">

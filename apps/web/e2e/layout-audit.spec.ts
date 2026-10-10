@@ -162,9 +162,9 @@ for (const theme of ["light", "dark"] as const)
             await expect(page.getByTestId("issue-panel")).toBeVisible();
             await dialog("dialog-duplicate", () => page.getByRole("button", { name: "Mark as a duplicate…" }).click());
             if (width >= 1024) {
-                await page.getByRole("button", { name: "More filters" }).click();
+                await page.getByRole("button", { name: "File, assignee, flags" }).click();
                 await expect(page.getByRole("dialog")).toBeVisible();
-                await shot("popover-more-filters", false);
+                await shot("popover-other-filters", false);
                 await page.keyboard.press("Escape");
             }
             await page.goto(`${s.base}/settings/general`);

@@ -1,4 +1,4 @@
-// Start a review: a page for that alone, reached from the rail's New review button (or a link with the
+// Start a review: a page for that alone, reached from the rail's Start review button (or a link with the
 // choice made, ?kind=pr&number=12). It says whether a review can start now, then asks what to review and
 // with which models.
 
@@ -47,7 +47,7 @@ export function StartReviewPage() {
                 description={
                     <>
                         Open Code Review runs on {project.name}'s code from GitHub, and its findings go to the branch's report here.{" "}
-                        <Link to="/w/$ws/p/$project/runs" params={{ ws, project: slug }} className="underline">
+                        <Link to="/w/$ws/p/$project/runs" params={{ ws, project: slug }} className="link">
                             See all runs
                         </Link>
                     </>
@@ -69,7 +69,7 @@ export function StartReviewPage() {
                             <AlertDescription>
                                 <p>Reviews fetch the code from GitHub, so they can't start until it is.</p>
                                 {can("configure") && (
-                                    <Link to="/w/$ws/p/$project/settings/github" params={{ ws, project: slug }} className="underline">
+                                    <Link to="/w/$ws/p/$project/settings/github" params={{ ws, project: slug }} className="link">
                                         Connect it in the project's GitHub settings
                                     </Link>
                                 )}

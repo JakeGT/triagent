@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { STATUSES, type Status } from "@triagent/shared";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, X } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
@@ -157,6 +157,10 @@ function TaskView({ id }: { id: string }) {
             className="flex min-w-0 flex-col gap-4 border-s bg-card/40 p-4 md:p-5 lg:h-[calc(100svh-2.75rem)] lg:overflow-y-auto"
             data-testid="task-panel"
         >
+            {/* Below `lg` the open task replaces the list: the way back says where it goes. */}
+            <Button variant="outline" size="sm" className="self-start lg:hidden" onClick={close}>
+                <ArrowLeft /> Back to tasks
+            </Button>
             <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-x-3 text-sm">
@@ -168,7 +172,14 @@ function TaskView({ id }: { id: string }) {
                         <InlineCode text={task.title} />
                     </h2>
                 </div>
-                <Button variant="ghost" size="icon" className="size-8" onClick={close} aria-label="Close task">
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="hidden size-8 lg:inline-flex"
+                    onClick={close}
+                    aria-label="Close task"
+                    title="Close task"
+                >
                     <X />
                 </Button>
             </div>
@@ -201,7 +212,7 @@ function TaskView({ id }: { id: string }) {
                             >
                                 Apply my change to their version
                             </Button>
-                            <Button size="sm" variant="ghost" onClick={() => setConflict(null)}>
+                            <Button size="sm" variant="outline" onClick={() => setConflict(null)}>
                                 Dismiss
                             </Button>
                         </div>
@@ -262,7 +273,7 @@ function TaskView({ id }: { id: string }) {
                                     <Button type="submit" size="sm" disabled={update.isPending}>
                                         Save
                                     </Button>
-                                    <Button type="button" size="sm" variant="ghost" onClick={() => setAssignee(null)}>
+                                    <Button type="button" size="sm" variant="outline" onClick={() => setAssignee(null)}>
                                         Cancel
                                     </Button>
                                 </>
@@ -282,7 +293,7 @@ function TaskView({ id }: { id: string }) {
                                         <Button
                                             type="button"
                                             size="sm"
-                                            variant="ghost"
+                                            variant="outline"
                                             onClick={() => void change({ assignee: null }, "Unassigned.")}
                                         >
                                             Unassign
@@ -296,7 +307,7 @@ function TaskView({ id }: { id: string }) {
             )}
 
             {task.body.trim() && (
-                <section aria-labelledby="task-body-heading" className="grid gap-1.5">
+                <section aria-labelledby="task-body-heading" className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                     <h3 id="task-body-heading" className="text-sm font-medium">
                         What the reviewer said
                     </h3>
@@ -304,7 +315,7 @@ function TaskView({ id }: { id: string }) {
                 </section>
             )}
 
-            <section aria-labelledby="task-files-heading" className="grid gap-1.5">
+            <section aria-labelledby="task-files-heading" className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                 <h3 id="task-files-heading" className="text-sm font-medium">
                     Files
                 </h3>
@@ -318,7 +329,7 @@ function TaskView({ id }: { id: string }) {
                                     to="/w/$ws/p/$project/issues"
                                     params={{ ws, project: slug }}
                                     search={issuesLink({ path: f })}
-                                    className="font-mono text-xs underline"
+                                    className="link font-mono text-xs"
                                 >
                                     {f}
                                 </Link>
@@ -328,7 +339,7 @@ function TaskView({ id }: { id: string }) {
                 )}
             </section>
 
-            <section aria-labelledby="task-issues-heading" className="grid gap-1.5">
+            <section aria-labelledby="task-issues-heading" className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h3 id="task-issues-heading" className="text-sm font-medium">
                         Issues ({task.issuesDone} of {task.issueCount} dealt with)
@@ -338,7 +349,7 @@ function TaskView({ id }: { id: string }) {
                             to="/w/$ws/p/$project/issues"
                             params={{ ws, project: slug }}
                             search={issuesLink({ task: task.id })}
-                            className="text-sm underline"
+                            className="link text-sm"
                         >
                             All {plural(task.issueCount, "issue")} in Issues
                         </Link>
@@ -347,9 +358,9 @@ function TaskView({ id }: { id: string }) {
                 {task.issues.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No issues are linked to this task.</p>
                 ) : (
-                    <ul className="grid gap-1.5 text-sm">
+                    <ul className="divide-y rounded-md border bg-background text-sm">
                         {task.issues.map((x) => (
-                            <li key={x.id} className="grid gap-0.5 rounded-md border bg-card px-3 py-2">
+                            <li key={x.id} className="grid grid-cols-[minmax(0,1fr)] gap-0.5 px-3 py-2">
                                 <span className="flex flex-wrap items-center gap-x-3">
                                     <SeverityMark severity={x.severity} className="text-xs" />
                                     <StatusMark status={x.status} className="text-xs" />
@@ -369,7 +380,7 @@ function TaskView({ id }: { id: string }) {
                 )}
             </section>
 
-            <section aria-labelledby="task-notes-heading" className="grid gap-2">
+            <section aria-labelledby="task-notes-heading" className="grid grid-cols-[minmax(0,1fr)] gap-2">
                 <h3 id="task-notes-heading" className="text-sm font-medium">
                     Notes
                 </h3>

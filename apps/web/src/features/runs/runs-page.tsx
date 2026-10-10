@@ -13,6 +13,7 @@ import { formatDateTime, timeAgo } from "@/lib/format";
 import { pullRequestsQuery, runListQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { Run, RunList } from "@/lib/types";
+import { FirstReviewActions } from "./first-review";
 import { NewReviewButton } from "./new-review-button";
 import { CancelRun, duration, findingsText, kindText, progressText, RunModels, RunStatusBadge } from "./run-bits";
 
@@ -25,7 +26,7 @@ export function WaitingBanner({ list, ws }: { list: Pick<RunList, "ready" | "wai
             <AlertDescription>
                 <p>{list.waiting}</p>
                 {/Settings → Models/.test(list.waiting) && (
-                    <Link to="/w/$ws/settings/models" params={{ ws }} className="underline">
+                    <Link to="/w/$ws/settings/models" params={{ ws }} className="link">
                         Open Models
                     </Link>
                 )}
@@ -67,12 +68,7 @@ export function RunsPage() {
                 description={
                     <>
                         Open Code Review runs for {all ? "every project in this workspace" : project.name}.{" "}
-                        <Link
-                            to="/w/$ws/p/$project/runs"
-                            params={{ ws, project: slug }}
-                            search={all ? {} : { all: "1" }}
-                            className="underline"
-                        >
+                        <Link to="/w/$ws/p/$project/runs" params={{ ws, project: slug }} search={all ? {} : { all: "1" }} className="link">
                             {all ? `Only ${project.name}` : "Show every project"}
                         </Link>
                     </>
@@ -99,15 +95,15 @@ export function RunsPage() {
                         {data.running.length === 0 ? (
                             <p className="text-sm text-muted-foreground">Nothing is running.</p>
                         ) : (
-                            <ul className="grid gap-2">
+                            <ul className="divide-y rounded-md border">
                                 {data.running.map((r) => (
-                                    <li key={r.id} className="grid gap-1 rounded-md border p-3" data-testid={`running-${r.id}`}>
+                                    <li key={r.id} className="grid grid-cols-[minmax(0,1fr)] gap-1 p-3" data-testid={`running-${r.id}`}>
                                         <div className="flex flex-wrap items-center gap-2">
                                             <RunStatusBadge status={r.status} />
                                             <RunLink run={r} ws={ws} project={slug} />
                                             <span className="ms-auto flex items-center gap-2 text-xs text-muted-foreground">
                                                 {duration(r.elapsedSeconds)}
-                                                {can("operate") && <CancelRun ws={ws} run={r} compact />}
+                                                {can("operate") && <CancelRun ws={ws} run={r} />}
                                             </span>
                                         </div>
                                         <p className="text-sm" aria-live="off">
@@ -138,7 +134,9 @@ export function RunsPage() {
                                     <TableHeader>
                                         <TableRow>
                                             <TableHead scope="col">Review</TableHead>
-                                            <TableHead scope="col">Requested</TableHead>
+                                            <TableHead scope="col" className="hidden sm:table-cell">
+                                                Requested
+                                            </TableHead>
                                             <TableHead scope="col">Waiting for</TableHead>
                                             <TableHead scope="col">
                                                 <span className="sr-only">Actions</span>
@@ -154,7 +152,7 @@ export function RunsPage() {
                                                         <span className="block text-xs text-muted-foreground">{kindText(r)}</span>
                                                     )}
                                                 </TableCell>
-                                                <TableCell className="text-xs">
+                                                <TableCell className="hidden text-xs sm:table-cell">
                                                     {r.source === "automation" ? "Automatically" : `By ${r.requestedBy.name}`},{" "}
                                                     <time dateTime={r.queuedAt} title={formatDateTime(r.queuedAt)}>
                                                         {timeAgo(r.queuedAt)}
@@ -162,7 +160,7 @@ export function RunsPage() {
                                                 </TableCell>
                                                 <TableCell className="max-w-md text-xs whitespace-normal">{r.waiting}</TableCell>
                                                 <TableCell className="text-end">
-                                                    {can("operate") && <CancelRun ws={ws} run={r} compact />}
+                                                    {can("operate") && <CancelRun ws={ws} run={r} />}
                                                 </TableCell>
                                             </TableRow>
                                         ))}
@@ -186,9 +184,10 @@ export function RunsPage() {
                             </p>
                         )}
                         {data.recent.length === 0 ? (
-                            <EmptyState title="No reviews yet">
+                            <EmptyState title="No reviews yet" action={all ? undefined : <FirstReviewActions quiet upload={false} />}>
+                                Runs shows each time Open Code Review ran: what it reviewed, how far it has got and what it found.{" "}
                                 {can("operate")
-                                    ? "Start one above, or switch on automatic reviews in the project's Automation settings."
+                                    ? "Start one, or switch on automatic reviews in the project's Automation settings."
                                     : "Reviews appear here once someone starts one, or automatic reviews are switched on."}
                             </EmptyState>
                         ) : (
@@ -198,9 +197,13 @@ export function RunsPage() {
                                         <TableRow>
                                             <TableHead scope="col">Status</TableHead>
                                             <TableHead scope="col">Review</TableHead>
-                                            <TableHead scope="col">Branch</TableHead>
+                                            <TableHead scope="col" className="hidden sm:table-cell">
+                                                Branch
+                                            </TableHead>
                                             <TableHead scope="col">Result</TableHead>
-                                            <TableHead scope="col">Finished</TableHead>
+                                            <TableHead scope="col" className="hidden sm:table-cell">
+                                                Finished
+                                            </TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -216,7 +219,7 @@ export function RunsPage() {
                                                     )}
                                                     <RunModels run={r} className="mt-1 block" />
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="hidden sm:table-cell">
                                                     {r.project && (r.status === "done" || r.status === "partial") ? (
                                                         <Link
                                                             to="/w/$ws/p/$project/issues"
@@ -233,7 +236,7 @@ export function RunsPage() {
                                                 <TableCell className="max-w-sm text-xs whitespace-normal">
                                                     {r.status === "done" || r.status === "partial" ? findingsText(r) : (r.error ?? "")}
                                                 </TableCell>
-                                                <TableCell className="text-xs">
+                                                <TableCell className="hidden text-xs sm:table-cell">
                                                     {r.finishedAt && (
                                                         <time dateTime={r.finishedAt} title={formatDateTime(r.finishedAt)}>
                                                             {timeAgo(r.finishedAt)}

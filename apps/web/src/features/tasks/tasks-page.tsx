@@ -9,6 +9,7 @@ import { InlineCode, Markdown } from "@/components/markdown";
 import { StatusMark } from "@/components/marks";
 import { EmptyState, PageMeta } from "@/components/page";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { FirstReviewActions, useNoReportYet } from "@/features/runs/first-review";
 import { plural } from "@/lib/format";
 import { summaryQuery, tasksQuery } from "@/lib/queries";
 import { useProject } from "@/lib/session";
@@ -39,6 +40,7 @@ export function TasksPage() {
     const summary = useQuery({ ...summaryQuery(ws, slug, branch), enabled: tab === "summary" });
     const current = tab === "summary" ? "summary" : "tasks";
 
+    const noReport = useNoReportYet();
     const sections = tasks.data?.sections ?? [];
     const items = tasks.data?.items ?? [];
 
@@ -48,7 +50,7 @@ export function TasksPage() {
             <section
                 aria-labelledby="tasks-heading"
                 className={cn(
-                    "flex min-h-0 min-w-0 flex-col gap-3 p-4 md:p-5",
+                    "flex min-h-0 min-w-0 flex-col gap-3 p-4 md:p-6",
                     taskId && "hidden lg:flex lg:h-[calc(100svh-2.75rem)] lg:overflow-y-auto",
                 )}
             >
@@ -79,9 +81,16 @@ export function TasksPage() {
                         ) : tasks.isError ? (
                             <LoadError error={tasks.error} onRetry={() => tasks.refetch()} title="Couldn't load the tasks" />
                         ) : items.length === 0 ? (
-                            <EmptyState title="No tasks on this branch">
-                                Tasks come from the lists in the reviewer's summary. This branch's report has none.
-                            </EmptyState>
+                            noReport ? (
+                                <EmptyState title="No tasks on this branch yet" action={<FirstReviewActions />}>
+                                    Tasks are the groups of issues the reviewer suggested fixing together, from the lists in its summary.
+                                    They appear when the branch has a report.
+                                </EmptyState>
+                            ) : (
+                                <EmptyState title="No tasks on this branch">
+                                    Tasks come from the lists in the reviewer's summary. This branch's report has none.
+                                </EmptyState>
+                            )
                         ) : (
                             <div className="grid gap-5">
                                 {sections.map((s) => {

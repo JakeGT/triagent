@@ -93,7 +93,7 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** The project the rail is about: the one in the URL, or the last one used in this workspace. */
-function useRailProject(ws: string): string | undefined {
+export function useRailProject(ws: string): string | undefined {
     const params = useParams({ strict: false }) as { project?: string };
     const projects = useQuery(projectsQuery(ws));
     if (params.project) return params.project;
@@ -138,7 +138,7 @@ export function AppSidebar() {
                             {can("operate") && (
                                 <SidebarGroup className="pb-0">
                                     <SidebarMenu>
-                                        <NavItem label="New review" icon={<Play />} active={active_("/start-review")}>
+                                        <NavItem label="Start review" icon={<Play />} active={active_("/start-review")}>
                                             {(c) => (
                                                 <Link
                                                     to="/w/$ws/p/$project/start-review"

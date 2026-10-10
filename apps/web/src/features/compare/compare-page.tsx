@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useId, useState } from "react";
+import { Stat, Stats } from "@/components/charts";
 import { Field, FieldError, FieldRow, FieldRowActions, NativeSelect } from "@/components/field";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { InlineCode } from "@/components/markdown";
@@ -38,7 +39,7 @@ export function ComparePage() {
             {branches.data && names.length < 2 ? (
                 <EmptyState title="Only one branch has a report">
                     Upload a report to another branch on{" "}
-                    <Link to="/w/$ws/p/$project/branches" params={{ ws, project: slug }} className="underline">
+                    <Link to="/w/$ws/p/$project/branches" params={{ ws, project: slug }} className="link">
                         Branches &amp; reports
                     </Link>{" "}
                     to compare them.
@@ -92,34 +93,39 @@ export function ComparePage() {
                     <LoadError error={result.error} onRetry={() => result.refetch()} title="Couldn't compare the branches" />
                 ) : (
                     <>
-                        <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-tour="compare-summary">
-                            <div className="rounded-lg border bg-card p-3">
-                                <dt className="text-xs text-muted-foreground">
-                                    New on <span className="font-mono">{result.data.head}</span>
-                                </dt>
-                                <dd className="flex items-center gap-2 text-2xl font-semibold tabular-nums">
-                                    {result.data.added.total}
-                                    <SeverityBar counts={result.data.added.severity} />
-                                </dd>
-                            </div>
-                            <div className="rounded-lg border bg-card p-3">
-                                <dt className="text-xs text-muted-foreground">
-                                    No longer on <span className="font-mono">{result.data.head}</span>
-                                </dt>
-                                <dd className="flex items-center gap-2 text-2xl font-semibold tabular-nums">
-                                    {result.data.gone.total}
-                                    <SeverityBar counts={result.data.gone.severity} />
-                                </dd>
-                            </div>
-                            <div className="rounded-lg border bg-card p-3">
-                                <dt className="text-xs text-muted-foreground">On both</dt>
-                                <dd className="text-2xl font-semibold tabular-nums">{result.data.shared.total}</dd>
-                                <dd className="text-xs text-muted-foreground">
-                                    {result.data.shared.doneOnBase} dealt with on {result.data.base}, {result.data.shared.doneOnHead} on{" "}
-                                    {result.data.head}
-                                </dd>
-                            </div>
-                        </dl>
+                        <Stats data-tour="compare-summary">
+                            <Stat
+                                label={
+                                    <>
+                                        New on <span className="font-mono">{result.data.head}</span>
+                                    </>
+                                }
+                                value={
+                                    <span className="flex items-center gap-2">
+                                        {result.data.added.total}
+                                        <SeverityBar counts={result.data.added.severity} />
+                                    </span>
+                                }
+                            />
+                            <Stat
+                                label={
+                                    <>
+                                        No longer on <span className="font-mono">{result.data.head}</span>
+                                    </>
+                                }
+                                value={
+                                    <span className="flex items-center gap-2">
+                                        {result.data.gone.total}
+                                        <SeverityBar counts={result.data.gone.severity} />
+                                    </span>
+                                }
+                            />
+                            <Stat
+                                label="On both"
+                                value={result.data.shared.total}
+                                note={`${result.data.shared.doneOnBase} dealt with on ${result.data.base}, ${result.data.shared.doneOnHead} on ${result.data.head}`}
+                            />
+                        </Stats>
                         {result.data.headScope === "diff" && (
                             <p className="rounded-md border bg-muted/40 p-3 text-sm">
                                 The report on <span className="font-mono">{result.data.head}</span> reviewed only that branch's changes, so
@@ -175,9 +181,9 @@ function IssueList({
             {items.length === 0 ? (
                 <p className="text-sm text-muted-foreground">None.</p>
             ) : (
-                <ul className="grid gap-1.5 text-sm">
+                <ul className="divide-y rounded-md border text-sm">
                     {items.map((x) => (
-                        <li key={x.id} className="grid gap-0.5 rounded-md border bg-card px-3 py-2">
+                        <li key={x.id} className="grid grid-cols-[minmax(0,1fr)] gap-0.5 px-3 py-2">
                             <span className="flex flex-wrap items-center gap-x-3">
                                 <SeverityMark severity={x.severity} className="text-xs" />
                                 <StatusMark status={x.status} className="text-xs" />

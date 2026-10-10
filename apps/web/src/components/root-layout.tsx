@@ -10,7 +10,8 @@ export function RootLayout() {
             <Outlet />
             <Announcer />
             <ReauthDialog />
-            <Toaster position="bottom-right" />
+            {/* On a phone, clear of the bottom bar. */}
+            <Toaster position="bottom-right" mobileOffset={{ bottom: "4.5rem", left: "1rem", right: "1rem" }} />
         </>
     );
 }

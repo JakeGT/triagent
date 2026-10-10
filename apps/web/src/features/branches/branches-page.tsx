@@ -16,6 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableFrame, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { FirstReviewActions } from "@/features/runs/first-review";
 import { NewReviewButton } from "@/features/runs/new-review-button";
 import { StartReview } from "@/features/runs/start-review";
 import { api, errorMessage, paths } from "@/lib/api";
@@ -61,10 +62,11 @@ export function BranchesPage() {
                 ) : branches.isError ? (
                     <LoadError error={branches.error} onRetry={() => branches.refetch()} title="Couldn't load the branches" />
                 ) : branches.data.items.length === 0 ? (
-                    <EmptyState title="No reports yet">
+                    <EmptyState title="No reports yet" action={<FirstReviewActions quiet upload={false} />}>
+                        A branch appears here once it has a report, with how much of it is still unresolved.{" "}
                         {can("upload")
-                            ? "Upload the JSON report Open Code Review wrote, above."
-                            : "Someone with upload access needs to upload a report."}
+                            ? "Start a review, or upload the JSON report Open Code Review wrote with the form above."
+                            : "Someone with upload access needs to start a review or upload a report."}
                     </EmptyState>
                 ) : (
                     <TableFrame>
@@ -72,19 +74,22 @@ export function BranchesPage() {
                             <TableHeader>
                                 <TableRow>
                                     <TableHead scope="col">Branch</TableHead>
-                                    <TableHead scope="col" className="text-end">
+                                    {/* On a phone: the branch, what's left on it and what you can do with it. */}
+                                    <TableHead scope="col" className="hidden text-end sm:table-cell">
                                         Issues
                                     </TableHead>
                                     <TableHead scope="col" className="text-end">
-                                        Unresolved
+                                        Still to do
                                     </TableHead>
-                                    <TableHead scope="col" className="text-end">
+                                    <TableHead scope="col" className="hidden text-end sm:table-cell">
                                         In progress
                                     </TableHead>
-                                    <TableHead scope="col" className="text-end">
+                                    <TableHead scope="col" className="hidden text-end sm:table-cell">
                                         Done
                                     </TableHead>
-                                    <TableHead scope="col">Report</TableHead>
+                                    <TableHead scope="col" className="hidden sm:table-cell">
+                                        Report
+                                    </TableHead>
                                     <TableHead scope="col">
                                         <span className="sr-only">Actions</span>
                                     </TableHead>
@@ -93,12 +98,12 @@ export function BranchesPage() {
                             <TableBody>
                                 {branches.data.items.map((b) => (
                                     <TableRow key={b.name} data-testid={`branch-${b.name}`}>
-                                        <TableCell>
+                                        <TableCell className="max-w-40 whitespace-normal sm:max-w-none sm:whitespace-nowrap">
                                             <Link
                                                 to="/w/$ws/p/$project/overview"
                                                 params={{ ws, project: slug }}
                                                 search={{ branch: b.isDefault ? undefined : b.name }}
-                                                className="font-mono text-xs font-medium hover:underline"
+                                                className="font-mono text-xs font-medium [overflow-wrap:anywhere] hover:underline"
                                             >
                                                 {b.name}
                                             </Link>
@@ -108,11 +113,11 @@ export function BranchesPage() {
                                                 </Badge>
                                             )}
                                         </TableCell>
-                                        <TableCell className="text-end tabular-nums">{b.issues}</TableCell>
+                                        <TableCell className="hidden text-end tabular-nums sm:table-cell">{b.issues}</TableCell>
                                         <TableCell className="text-end tabular-nums">{b.unresolved}</TableCell>
-                                        <TableCell className="text-end tabular-nums">{b.inProgress}</TableCell>
-                                        <TableCell className="text-end tabular-nums">{b.done}</TableCell>
-                                        <TableCell className="min-w-56 text-xs whitespace-normal">
+                                        <TableCell className="hidden text-end tabular-nums sm:table-cell">{b.inProgress}</TableCell>
+                                        <TableCell className="hidden text-end tabular-nums sm:table-cell">{b.done}</TableCell>
+                                        <TableCell className="hidden min-w-56 text-xs whitespace-normal sm:table-cell">
                                             <span className="font-mono">{b.fileName}</span>
                                             <span className="block text-muted-foreground">
                                                 {b.scope === "diff" ? "Changes only" : "Whole codebase"} · {b.uploadedBy},{" "}
@@ -129,7 +134,7 @@ export function BranchesPage() {
                                             <GithubState branch={b} />
                                         </TableCell>
                                         <TableCell>
-                                            <span className="flex flex-wrap justify-end gap-1">
+                                            <span className="flex flex-col items-stretch gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                                                 {b.github?.onGitHub && !b.github.current && (
                                                     <StartReview
                                                         defaults={
@@ -138,24 +143,24 @@ export function BranchesPage() {
                                                                 : { kind: "changes", branch: b.name, base: branches.data.defaultBranch }
                                                         }
                                                         trigger={
-                                                            <Button variant="ghost" size="sm">
+                                                            <Button variant="outline" size="sm">
                                                                 <RotateCw /> Review again<span className="sr-only"> {b.name}</span>
                                                             </Button>
                                                         }
                                                     />
                                                 )}
-                                                <Button variant="ghost" size="sm" onClick={() => setHistory(b.name)}>
+                                                <Button variant="outline" size="sm" onClick={() => setHistory(b.name)}>
                                                     <History /> History<span className="sr-only"> of {b.name}</span>
                                                 </Button>
                                                 {can("configure") && (
-                                                    <Button variant="ghost" size="sm" onClick={() => setMoving(b)}>
+                                                    <Button variant="outline" size="sm" onClick={() => setMoving(b)}>
                                                         <MoveRight /> Move<span className="sr-only"> {b.name}</span>
                                                     </Button>
                                                 )}
                                                 {can("configure") && !b.isDefault && (
                                                     <ConfirmAction
                                                         trigger={
-                                                            <Button variant="ghost" size="sm">
+                                                            <Button variant="danger" size="sm" className="mt-2 sm:ms-3 sm:mt-0">
                                                                 <Trash2 /> Delete<span className="sr-only"> {b.name}</span>
                                                             </Button>
                                                         }
@@ -164,7 +169,7 @@ export function BranchesPage() {
                                                             <>
                                                                 <p>
                                                                     Its report and triage are moved to the project's archive and the branch
-                                                                    disappears from every page.
+                                                                    disappears from every page. It can't be restored from here.
                                                                 </p>
                                                                 {b.unresolved > 0 && (
                                                                     <p className="mt-2 font-medium">
@@ -200,7 +205,7 @@ export function BranchesPage() {
                                 <StartReview
                                     defaults={{ kind: "changes", branch: name, base: branches.data.defaultBranch }}
                                     trigger={
-                                        <Button variant="ghost" size="sm">
+                                        <Button variant="outline" size="sm">
                                             Review<span className="sr-only"> {name}</span>
                                         </Button>
                                     }
@@ -233,9 +238,9 @@ function HistoryDialog({ branch, onClose }: { branch: string | null; onClose(): 
                 ) : history.isError ? (
                     <LoadError error={history.error} onRetry={() => history.refetch()} />
                 ) : (
-                    <ol className="grid max-h-96 gap-2 overflow-y-auto text-sm">
+                    <ol className="max-h-96 divide-y overflow-y-auto rounded-md border text-sm">
                         {current && (
-                            <li className="rounded-md border p-2">
+                            <li className="p-2">
                                 <span className="font-mono">{current.fileName}</span> <Badge variant="secondary">current</Badge>
                                 <span className="block text-xs text-muted-foreground">
                                     Uploaded by {current.uploadedBy} on {formatDateTime(current.uploadedAt)}
@@ -244,7 +249,7 @@ function HistoryDialog({ branch, onClose }: { branch: string | null; onClose(): 
                             </li>
                         )}
                         {history.data.archived.map((a) => (
-                            <li key={`${a.upload.id}-${a.archivedAt}`} className="rounded-md border p-2">
+                            <li key={`${a.upload.id}-${a.archivedAt}`} className="p-2">
                                 <span className="font-mono">{a.upload.fileName}</span>, {plural(a.findings, "finding")}
                                 <span className="block text-xs text-muted-foreground">
                                     Uploaded by {a.upload.uploadedBy} on {formatDateTime(a.upload.uploadedAt)}
@@ -253,7 +258,7 @@ function HistoryDialog({ branch, onClose }: { branch: string | null; onClose(): 
                                 </span>
                             </li>
                         ))}
-                        {!current && history.data.archived.length === 0 && <li className="text-muted-foreground">No reports.</li>}
+                        {!current && history.data.archived.length === 0 && <li className="p-2 text-muted-foreground">No reports.</li>}
                     </ol>
                 )}
             </DialogContent>
@@ -321,7 +326,7 @@ function MoveDialog({ branch, onClose }: { branch: Branch | null; onClose(): voi
                     </CheckField>
                     <FieldError message={move.error ? errorMessage(move.error) : null} />
                     <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={close}>
+                        <Button type="button" variant="outline" onClick={close}>
                             Cancel
                         </Button>
                         <Button type="submit" disabled={move.isPending || !to.trim()}>

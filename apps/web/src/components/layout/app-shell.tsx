@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useNavigate, useRouter } from "@tanstack/react-router";
 import { useCallback } from "react";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { MobileNav } from "@/components/layout/mobile-nav";
 import { SkipToMain } from "@/components/skip-to-main";
 import { Separator } from "@/components/ui/separator";
 import { SIDEBAR_PREF, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -64,9 +65,16 @@ export function AppShell() {
                         <LiveIndicator status={status} />
                     </span>
                 </header>
-                <main id="content" tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
+                {/* On a phone the page ends above the bottom bar, so nothing is hidden behind it. */}
+                <main
+                    id="content"
+                    data-app-main=""
+                    tabIndex={-1}
+                    className="flex min-h-0 flex-1 flex-col pb-[calc(3.5rem+env(safe-area-inset-bottom))] outline-none md:pb-0"
+                >
                     <Outlet />
                 </main>
+                <MobileNav />
                 <SetupHost />
             </SidebarInset>
         </SidebarProvider>

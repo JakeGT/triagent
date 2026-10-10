@@ -46,7 +46,9 @@ export function Deliveries({ items }: { items: GithubDelivery[] }) {
                 <TableHeader>
                     <TableRow>
                         <TableHead scope="col">Received</TableHead>
-                        <TableHead scope="col">Event</TableHead>
+                        <TableHead scope="col" className="hidden sm:table-cell">
+                            Event
+                        </TableHead>
                         <TableHead scope="col">Outcome</TableHead>
                         <TableHead scope="col">What happened</TableHead>
                     </TableRow>
@@ -60,7 +62,7 @@ export function Deliveries({ items }: { items: GithubDelivery[] }) {
                                     {timeAgo(d.at)}
                                 </time>
                             </TableCell>
-                            <TableCell className="font-mono text-xs">
+                            <TableCell className="hidden font-mono text-xs sm:table-cell">
                                 {d.event ?? "?"}
                                 {d.what ? ` (${d.what})` : ""}
                             </TableCell>
@@ -94,7 +96,7 @@ function Automation({ data, ws, slug }: { data: PullRequests; ws: string; slug: 
                 {data.automation.enabled
                     ? `Automatic reviews are on: ${FIRST_REVIEW[data.automation.firstReview]} (checked on webhook events, or ${every}).`
                     : "Automatic reviews are off: pull requests are only reviewed when someone uses Review now."}{" "}
-                <Link to="/w/$ws/p/$project/settings/automation" params={{ ws, project: slug }} className="underline">
+                <Link to="/w/$ws/p/$project/settings/automation" params={{ ws, project: slug }} className="link">
                     Automation settings
                 </Link>
             </p>
@@ -107,7 +109,7 @@ function Automation({ data, ws, slug }: { data: PullRequests; ws: string; slug: 
             {data.automation.enabled && data.automation.firstReview === "checks" && data.checksReadable === false && (
                 <p data-testid="checks-unreadable">
                     GitHub won't show Triagent this repository's check runs, so pull requests are reviewed when ready instead.{" "}
-                    <Link to="/w/$ws/p/$project/settings/github" params={{ ws, project: slug }} className="underline">
+                    <Link to="/w/$ws/p/$project/settings/github" params={{ ws, project: slug }} className="link">
                         GitHub settings
                     </Link>{" "}
                     say what's needed.
@@ -214,9 +216,14 @@ export function PullRequestsPage() {
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead scope="col">Pull request</TableHead>
-                                        <TableHead scope="col">Branch</TableHead>
+                                        {/* On a phone the branch moves under the title, and the last check gives way. */}
+                                        <TableHead scope="col" className="hidden sm:table-cell">
+                                            Branch
+                                        </TableHead>
                                         <TableHead scope="col">Review</TableHead>
-                                        <TableHead scope="col">Last check</TableHead>
+                                        <TableHead scope="col" className="hidden md:table-cell">
+                                            Last check
+                                        </TableHead>
                                         <TableHead scope="col">
                                             <span className="sr-only">Actions</span>
                                         </TableHead>
@@ -231,46 +238,46 @@ export function PullRequestsPage() {
                                                     <span className="font-medium">
                                                         #{p.number} {p.title}
                                                     </span>
+                                                    <span className="block font-mono text-xs break-all text-muted-foreground sm:hidden">
+                                                        {p.branch}
+                                                    </span>
                                                     <span className="block text-xs text-muted-foreground">
                                                         {p.author ? `by ${p.author}` : ""}
                                                         {p.draft ? " · draft" : ""}
                                                         {url && (
                                                             <>
                                                                 {" · "}
-                                                                <a
-                                                                    href={url}
-                                                                    target="_blank"
-                                                                    rel="noopener noreferrer"
-                                                                    className="underline"
-                                                                >
+                                                                <a href={url} target="_blank" rel="noopener noreferrer" className="link">
                                                                     GitHub<span className="sr-only"> (opens in a new tab)</span>
                                                                 </a>
                                                             </>
                                                         )}
                                                     </span>
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="hidden sm:table-cell">
                                                     <span className="font-mono text-xs">{p.branch}</span>
                                                     <span className="block font-mono text-xs text-muted-foreground">
                                                         {p.headSha.slice(0, 7)}
                                                     </span>
                                                 </TableCell>
-                                                <TableCell className="text-xs">
+                                                <TableCell className="text-xs whitespace-normal">
                                                     {p.run ? (
-                                                        <Link
-                                                            to="/w/$ws/p/$project/runs/$runId"
-                                                            params={{ ws, project: slug, runId: p.run.id }}
-                                                            className="inline-flex items-center gap-1 hover:underline"
-                                                        >
+                                                        <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
                                                             <RunStatusBadge status={p.run.status} />
-                                                            <span className="sr-only">View the run</span>
-                                                        </Link>
+                                                            <Link
+                                                                to="/w/$ws/p/$project/runs/$runId"
+                                                                params={{ ws, project: slug, runId: p.run.id }}
+                                                                className="link"
+                                                            >
+                                                                View the run<span className="sr-only"> of #{p.number}</span>
+                                                            </Link>
+                                                        </span>
                                                     ) : p.reviewed ? (
                                                         <Link
                                                             to="/w/$ws/p/$project/issues"
                                                             params={{ ws, project: slug }}
                                                             search={{ branch: p.branch }}
-                                                            className="underline"
+                                                            className="link"
                                                         >
                                                             Reviewed
                                                         </Link>
@@ -282,7 +289,7 @@ export function PullRequestsPage() {
                                                             to="/w/$ws/p/$project/issues"
                                                             params={{ ws, project: slug }}
                                                             search={{ branch: p.branch }}
-                                                            className="underline"
+                                                            className="link"
                                                         >
                                                             {sentence(p.status)}
                                                         </Link>
@@ -290,7 +297,7 @@ export function PullRequestsPage() {
                                                         <span>{sentence(p.status)}</span>
                                                     )}
                                                 </TableCell>
-                                                <TableCell className="max-w-md text-xs whitespace-normal">
+                                                <TableCell className="hidden max-w-md text-xs whitespace-normal md:table-cell">
                                                     {!p.lastDecision
                                                         ? ""
                                                         : p.lastDecision.action === "waiting"
