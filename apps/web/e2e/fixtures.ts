@@ -88,6 +88,7 @@ export async function issuesOf(api: Api, ws: string, project: string) {
         status: string;
         rev: number;
         noteCount: number;
+        assignee: string | null;
     }[];
 }
 

@@ -1,7 +1,7 @@
 // The filter bar above the issue list. Every control writes to the URL; the list follows the URL.
 
 import { CATEGORIES, ISSUE_SORTS, type IssueSort, SEVERITIES, STATUSES } from "@triagent/shared";
-import { ArrowDownUp, Filter, Search, X } from "lucide-react";
+import { ArrowDownUp, ChevronDown, Filter, Search, X } from "lucide-react";
 import { type RefObject, useEffect, useId, useState } from "react";
 import { Field, NativeSelect } from "@/components/field";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +45,7 @@ function FoundBy({ models, search, onChange }: { models: string[]; search: Issue
                             {label(Math.min(search.foundBy, n))}
                         </Badge>
                     )}
+                    <ChevronDown className="text-muted-foreground" aria-hidden="true" />
                 </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-64">
@@ -94,6 +95,7 @@ function Facet<T extends string>({
                             {n === 1 ? names[selected?.[0] as T] : `${n} selected`}
                         </Badge>
                     )}
+                    <ChevronDown className="text-muted-foreground" aria-hidden="true" />
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-60 p-2">
@@ -119,7 +121,7 @@ const flagDraft = (s: IssueSearch): FlagDraft =>
     Object.fromEntries(FLAGS.map((f) => [f, s[f] === undefined ? "" : String(s[f])])) as FlagDraft;
 
 /** Path, assignee and the yes/no flags. Applied with a button, so changing a select never reloads the list by itself. */
-function MoreFilters({
+function OtherFilters({
     search,
     markSingles,
     onChange,
@@ -150,12 +152,13 @@ function MoreFilters({
         >
             <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className="border-dashed">
-                    <Filter /> More filters
+                    <Filter /> File, assignee, flags
                     {n > 0 && (
                         <Badge variant="secondary" className="rounded-sm px-1 font-normal">
                             {n}
                         </Badge>
                     )}
+                    <ChevronDown className="text-muted-foreground" aria-hidden="true" />
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-80">
@@ -273,11 +276,14 @@ export function IssueFilters({
                 onToggle={(v) => onChange(withFilter(search, { category: toggle(search.category, v) }))}
             />
             {models && models.length > 1 && <FoundBy models={models} search={search} onChange={onChange} />}
-            <MoreFilters search={search} markSingles={Boolean(markSingles)} onChange={onChange} />
+            <OtherFilters search={search} markSingles={Boolean(markSingles)} onChange={onChange} />
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm">
-                        <ArrowDownUp /> {SORT_LABEL[sort]}
+                    <Button variant="outline" size="sm">
+                        <ArrowDownUp />
+                        <span className="sr-only">Sort: </span>
+                        {SORT_LABEL[sort]}
+                        <ChevronDown className="text-muted-foreground" aria-hidden="true" />
                     </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
@@ -297,7 +303,7 @@ export function IssueFilters({
                 </DropdownMenuContent>
             </DropdownMenu>
             {activeFilters(search) > 0 && (
-                <Button variant="ghost" size="sm" onClick={() => onChange(withoutFilters(search))}>
+                <Button variant="outline" size="sm" onClick={() => onChange(withoutFilters(search))}>
                     <X /> Clear filters
                 </Button>
             )}

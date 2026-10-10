@@ -31,14 +31,14 @@ export function CodeView({
     if (!existing && !suggestion) return null;
     if (!(existing && suggestion)) {
         return (
-            <section className="grid gap-1.5">
+            <section className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                 <h3 className="text-sm font-medium">{existing ? "Code" : "Suggested code"}</h3>
                 <CodeBlock code={existing || suggestion || ""} />
             </section>
         );
     }
     return (
-        <section className="grid gap-1.5">
+        <section className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
             <h3 className="text-sm font-medium">Code and suggested fix</h3>
             <Tabs value={tab} onValueChange={setTab}>
                 <TabsList>

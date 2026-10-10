@@ -22,6 +22,7 @@ import { issuesQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
 import type { IssueSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { FirstReviewActions, useNoReportYet } from "../runs/first-review";
 import { BulkBar } from "./bulk-bar";
 import { IssueFilters } from "./issue-filters";
 import { isTypingTarget } from "./keys";
@@ -34,7 +35,6 @@ const MAX_SHOWN = 500;
 /** Columns that give way on narrow screens, and while an issue is open beside the list. */
 function columnClass(id: string, panelOpen: boolean): string | false {
     if (id === "category" || id === "assignee") return panelOpen ? "hidden 2xl:table-cell" : "hidden md:table-cell";
-    if (id === "flags") return panelOpen ? "hidden xl:table-cell" : "hidden sm:table-cell";
     return false;
 }
 
@@ -43,32 +43,40 @@ function summaryText(total: number, counts: Record<string, number> | undefined):
     return `${plural(total, "issue")}${parts.length ? `: ${parts.join(", ")}` : ""}`;
 }
 
-function Flags({ issue: x }: { issue: IssueSummary }) {
+/** What's been said about an issue, in words beside its file: each mark has its label, at every width. */
+function Flags({ issue: x, panelOpen }: { issue: IssueSummary; panelOpen: boolean }) {
+    if (!(x.needsDiscussion || x.duplicateOf || x.hasSuggestion || x.noteCount > 0)) return null;
     return (
-        <span className="flex items-center gap-1.5 text-muted-foreground [&_svg]:size-3.5">
+        <span
+            // Beside an open issue the list is narrow until `xl`: they give way there, as the panel says the same.
+            className={cn(
+                "flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground [&_svg]:size-3.5",
+                panelOpen ? "hidden xl:flex" : "flex",
+            )}
+            data-testid="issue-flags"
+        >
             {x.needsDiscussion && (
-                <span title="Needs discussion">
+                <span className="inline-flex items-center gap-1 font-medium text-foreground">
                     <Users aria-hidden="true" />
-                    <span className="sr-only">Needs discussion</span>
+                    Needs discussion
                 </span>
             )}
             {x.duplicateOf && (
-                <span title={`Duplicate of ${x.duplicateOf}`}>
+                <span className="inline-flex items-center gap-1" title={`Duplicate of ${x.duplicateOf}`}>
                     <Duplicate aria-hidden="true" />
-                    <span className="sr-only">Duplicate</span>
+                    Duplicate
                 </span>
             )}
             {x.hasSuggestion && (
-                <span title="Has a suggested fix">
+                <span className="inline-flex items-center gap-1">
                     <Lightbulb aria-hidden="true" />
-                    <span className="sr-only">Has a suggested fix</span>
+                    Suggested fix
                 </span>
             )}
             {x.noteCount > 0 && (
-                <span title={plural(x.noteCount, "note")} className="flex items-center gap-0.5 text-xs">
+                <span className="inline-flex items-center gap-1">
                     <MessageSquare aria-hidden="true" />
-                    {x.noteCount}
-                    <span className="sr-only"> {x.noteCount === 1 ? "note" : "notes"}</span>
+                    {plural(x.noteCount, "note")}
                 </span>
             )}
         </span>
@@ -193,6 +201,7 @@ export function IssuesPage() {
                                 {x.path}
                                 {x.startLine ? `:${lines(x.startLine, x.endLine)}` : ""}
                             </span>
+                            <Flags issue={x} panelOpen={Boolean(issueId)} />
                             {x.foundBy && modelCount > 1 && (
                                 <span className="text-xs text-muted-foreground" title={x.foundBy.join(", ")}>
                                     Found by{" "}
@@ -229,7 +238,6 @@ export function IssuesPage() {
                     </span>
                 ),
             },
-            { id: "flags", header: () => <span className="sr-only">Flags</span>, cell: ({ row }) => <Flags issue={row.original} /> },
         ];
     }, [canTriage, issueId, ws, slug, detailSearch, modelCount]);
 
@@ -303,6 +311,7 @@ export function IssuesPage() {
     }, [issueId]);
 
     const filtered = activeFilters(search) > 0;
+    const noReport = useNoReportYet();
     return (
         <div
             className={cn("grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)]", issueId && "lg:grid-cols-[minmax(0,1fr)_minmax(26rem,0.95fr)]")}
@@ -314,7 +323,7 @@ export function IssuesPage() {
             <section
                 aria-labelledby="issues-heading"
                 className={cn(
-                    "flex min-h-0 min-w-0 flex-col gap-3 p-4 md:p-5",
+                    "flex min-h-0 min-w-0 flex-col gap-3 p-4 md:p-6",
                     issueId && "hidden lg:flex lg:h-[calc(100svh-2.75rem)] lg:overflow-y-auto",
                 )}
             >
@@ -338,6 +347,7 @@ export function IssuesPage() {
                 {selectedIds.length > 0 && canTriage && (
                     <BulkBar
                         ids={selectedIds}
+                        known={items}
                         notShown={notShown}
                         showingSelected={shown !== null}
                         onShowSelected={showSelected}
@@ -383,14 +393,13 @@ export function IssuesPage() {
                                 </Button>
                             }
                         />
-                    ) : (
-                        <EmptyState title="No issues on this branch">
-                            Upload an Open Code Review report on{" "}
-                            <Link to="/w/$ws/p/$project/branches" params={{ ws, project: slug }} className="underline">
-                                Branches &amp; reports
-                            </Link>
-                            .
+                    ) : noReport ? (
+                        <EmptyState title="No issues on this branch yet" action={<FirstReviewActions />}>
+                            Issues is the list of everything a review found on the branch, most urgent first, to open, assign and mark as
+                            dealt with. It fills in when the branch has a report.
                         </EmptyState>
+                    ) : (
+                        <EmptyState title="No issues on this branch">The branch's report has no findings.</EmptyState>
                     )
                 ) : (
                     <>
@@ -471,7 +480,7 @@ export function IssuesPage() {
                             <p className="text-xs text-muted-foreground">
                                 Shortcuts: <kbd>j</kbd>/<kbd>k</kbd> next and previous, <kbd>x</kbd> select, <kbd>1</kbd>–<kbd>4</kbd> set
                                 status, <kbd>/</kbd> search, <kbd>Esc</kbd> close.{" "}
-                                <Link to="/w/$ws/settings/appearance" params={{ ws }} className="underline">
+                                <Link to="/w/$ws/settings/appearance" params={{ ws }} className="link">
                                     Turn shortcuts off
                                 </Link>
                             </p>

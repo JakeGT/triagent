@@ -5,7 +5,7 @@ import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-q
 import type { Category, Severity, Status } from "@triagent/shared";
 import { api, conflictCurrent, paths } from "@/lib/api";
 import { keys } from "@/lib/queries";
-import type { IssueDetail, Note } from "@/lib/types";
+import type { IssueDetail, IssueList, IssueSummary, Note } from "@/lib/types";
 
 export interface IssueChange {
     status?: Status;
@@ -74,15 +74,82 @@ export function useUpdateIssue(ref: Ref, onSaved?: (issue: IssueDetail) => void)
     });
 }
 
+/** What a bulk change can set: the fields the list knows the previous value of, so each can be put back. */
+export type BulkChange = Pick<IssueChange, "status" | "assignee" | "severity" | "needsDiscussion">;
+type Before = Pick<IssueSummary, "id" | "status" | "assignee" | "severity" | "reviewerSeverity" | "needsDiscussion">;
+
+/** The change that puts one issue back as it was before `change`. */
+export function inverseOf(x: Before, change: BulkChange): BulkChange {
+    const back: BulkChange = {};
+    if (change.status !== undefined) back.status = x.status;
+    if (change.assignee !== undefined) back.assignee = x.assignee;
+    // A rating someone corrected is put back as theirs; otherwise it goes back to the reviewer's.
+    if (change.severity !== undefined) back.severity = x.reviewerSeverity ? x.severity : "reviewer";
+    if (change.needsDiscussion !== undefined) back.needsDiscussion = x.needsDiscussion;
+    return back;
+}
+
+/** Undo for a bulk change: one bulk request for each distinct previous value, with the issues that had it. */
+export function undoPlan(before: readonly Before[], change: BulkChange): { ids: string[]; change: BulkChange }[] {
+    const groups = new Map<string, { ids: string[]; change: BulkChange }>();
+    for (const x of before) {
+        const back = inverseOf(x, change);
+        const key = JSON.stringify([back.status, back.assignee, back.severity, back.needsDiscussion]);
+        const group = groups.get(key);
+        if (group) group.ids.push(x.id);
+        else groups.set(key, { ids: [x.id], change: back });
+    }
+    return [...groups.values()];
+}
+
+/** How many ids go in one request's address when reading issues by id. */
+const IDS_PER_REQUEST = 100;
+
 export function useBulkUpdate(ref: Ref) {
     const queryClient = useQueryClient();
+    const url = `${paths.project(ref.ws, ref.project)}/issues`;
+    const post = (ids: string[], change: BulkChange) =>
+        api.post<{ matched: number; changed: number }>(`${url}/bulk`, { ids, ...change }, { branch: ref.branch });
     return useMutation({
-        mutationFn: ({ ids, change }: { ids: string[]; change: Omit<IssueChange, "note"> & { note?: string } }) =>
-            api.post<{ matched: number; changed: number }>(
-                `${paths.project(ref.ws, ref.project)}/issues/bulk`,
-                { ids, ...change },
-                { branch: ref.branch },
-            ),
+        /**
+         * Makes the change, and answers with how to undo it: the issues as they were just before, from the
+         * list on screen (`known`) and, for selected issues that aren't in it, read from the server first.
+         * If those can't be read the change still goes ahead, without an undo.
+         */
+        mutationFn: async ({ ids, change, known }: { ids: string[]; change: BulkChange; known: readonly IssueSummary[] }) => {
+            const byId = new Map(known.map((x) => [x.id, x]));
+            const missing = ids.filter((id) => !byId.has(id));
+            let complete = true;
+            try {
+                for (let i = 0; i < missing.length; i += IDS_PER_REQUEST) {
+                    const chunk = missing.slice(i, i + IDS_PER_REQUEST);
+                    const page = await api.get<IssueList>(url, {
+                        branch: ref.branch,
+                        ids: chunk.join(","),
+                        limit: String(IDS_PER_REQUEST),
+                    });
+                    for (const x of page.items) byId.set(x.id, x);
+                }
+            } catch {
+                complete = false;
+            }
+            const before = ids.map((id) => byId.get(id)).filter((x): x is IssueSummary => x !== undefined);
+            const result = await post(ids, change);
+            const plan = complete && before.length === ids.length ? undoPlan(before, change) : null;
+            return {
+                ...result,
+                /** Puts every issue back as it was; null when the previous values aren't all known. */
+                undo: plan
+                    ? async () => {
+                          try {
+                              for (const step of plan) await post(step.ids, step.change);
+                          } finally {
+                              refreshBranch(queryClient, ref);
+                          }
+                      }
+                    : null,
+            };
+        },
         onSettled: () => refreshBranch(queryClient, ref),
     });
 }

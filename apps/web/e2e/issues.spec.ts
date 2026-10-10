@@ -222,10 +222,50 @@ test("bulk changes apply to every selected issue", async ({ page, admin }) => {
     await expect(bar).toContainText("4 issues selected");
     await bar.getByRole("button", { name: "Status" }).click();
     await page.getByRole("menuitem", { name: "Won't fix" }).click();
-    await expect(page.getByText("Marked won't fix: 4 issues changed.")).toBeVisible();
+    await expect(page.getByText("Marked 4 issues as won't fix.")).toBeVisible();
     await expect(page.locator("[data-issue-row]").filter({ hasText: "Won't fix" })).toHaveCount(4);
     const after = await issuesOf(admin, ws, project);
     expect(after.filter((x) => x.status === "wont_fix")).toHaveLength(4);
+});
+
+test("a bulk change says what it did and can be undone, back to what each issue was", async ({ page, admin }) => {
+    const { ws, project } = await seedProject(admin);
+    // Two of the four start differently, so Undo has two different things to put back.
+    const before = await issuesOf(admin, ws, project);
+    const low = before.filter((x) => x.severity === "low");
+    expect(low).toHaveLength(4);
+    const [first, second] = low as [(typeof low)[number], (typeof low)[number]];
+    await admin.post(`/api/v1/w/${ws}/p/${project}/issues/bulk`, { ids: [first.id], status: "in_progress", assignee: "Sam" });
+    await admin.post(`/api/v1/w/${ws}/p/${project}/issues/bulk`, { ids: [second.id], status: "resolved" });
+
+    await page.goto(`/w/${ws}/p/${project}/issues?severity=low`);
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^4 issues/);
+    await page.getByRole("checkbox", { name: "Select all issues on this page" }).click();
+    const bar = page.getByRole("region", { name: "Change selected issues" });
+    await bar.getByRole("button", { name: "Status" }).click();
+    await page.getByRole("menuitem", { name: "Won't fix" }).click();
+    const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Marked 4 issues as won't fix." });
+    await expect(toast).toBeVisible();
+    expect((await issuesOf(admin, ws, project)).filter((x) => x.status === "wont_fix")).toHaveLength(4);
+
+    await toast.getByRole("button", { name: "Undo" }).click();
+    await expect(page.getByText("Undone: 4 issues put back as they were.")).toBeVisible();
+    const after = await issuesOf(admin, ws, project);
+    const status = (id: string) => after.find((x) => x.id === id)?.status;
+    expect(status(first.id)).toBe("in_progress");
+    expect(status(second.id)).toBe("resolved");
+    expect(after.filter((x) => x.severity === "low" && x.status === "open")).toHaveLength(2);
+    expect(after.find((x) => x.id === first.id)?.assignee).toBe("Sam");
+    await expect(page.locator("[data-issue-row]").filter({ hasText: "Won't fix" })).toHaveCount(0);
+
+    // An assignee change is undone the same way: the one who had it gets it back, the rest are unassigned again.
+    await bar.getByRole("button", { name: "Assign" }).click();
+    await page.getByRole("button", { name: "Unassign" }).click();
+    const unassigned = page.locator("[data-sonner-toast]").filter({ hasText: "Unassigned 1 issue." });
+    await expect(unassigned).toBeVisible();
+    await unassigned.getByRole("button", { name: "Undo" }).click();
+    await expect(page.getByText("Undone: 1 issue put back as it was.")).toBeVisible();
+    expect((await issuesOf(admin, ws, project)).find((x) => x.id === first.id)?.assignee).toBe("Sam");
 });
 
 test("someone else's change arrives live, and never clobbers a note being typed", async ({ page, admin, baseURL }) => {

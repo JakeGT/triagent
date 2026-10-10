@@ -20,10 +20,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { errorMessage } from "@/lib/api";
 import { plural, SEVERITY_LABEL, STATUS_LABEL } from "@/lib/format";
 import { useMe } from "@/lib/session";
-import { type IssueChange, useBulkUpdate } from "./use-issue-actions";
+import type { IssueSummary } from "@/lib/types";
+import { type BulkChange, useBulkUpdate } from "./use-issue-actions";
 
 export function BulkBar({
     ids,
+    known,
     notShown,
     showingSelected,
     onShowSelected,
@@ -31,6 +33,8 @@ export function BulkBar({
     refs,
 }: {
     ids: string[];
+    /** The issues in the list now: what they are before a change, so it can be undone. */
+    known: readonly IssueSummary[];
     /** How many of them aren't in the list as it's filtered and paged now. */
     notShown: number;
     /** The list is narrowed to the selection. */
@@ -45,14 +49,38 @@ export function BulkBar({
     const [assignOpen, setAssignOpen] = useState(false);
     const assigneeId = useId();
 
-    const apply = (change: IssueChange, what: string) =>
+    /** `done` says what happened to how many: "Marked 3 issues as resolved". */
+    const apply = (change: BulkChange, done: (issues: string) => string) =>
         bulk.mutate(
-            { ids, change },
+            { ids, change, known },
             {
                 onSuccess: (r) => {
-                    toast.success(`${what}: ${plural(r.changed, "issue")} changed.`);
                     setAssignOpen(false);
                     setAssignee("");
+                    if (!r.changed) {
+                        toast.info(
+                            `Nothing to change: ${ids.length === 1 ? "the issue was" : `all ${ids.length} issues were`} already like that.`,
+                        );
+                        return;
+                    }
+                    const undo = r.undo;
+                    // Long enough to read and reach; a later toast stacks above it rather than replacing it.
+                    toast.success(`${done(plural(r.changed, "issue"))}.`, {
+                        duration: undo ? 10_000 : undefined,
+                        action: undo
+                            ? {
+                                  label: "Undo",
+                                  onClick: () =>
+                                      void undo().then(
+                                          () =>
+                                              toast.success(
+                                                  `Undone: ${plural(r.changed, "issue")} put back as ${r.changed === 1 ? "it was" : "they were"}.`,
+                                              ),
+                                          (err) => toast.error(`Couldn't undo that. ${errorMessage(err)}`),
+                                      ),
+                              }
+                            : undefined,
+                    });
                 },
             },
         );
@@ -73,7 +101,10 @@ export function BulkBar({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                     {STATUSES.map((s) => (
-                        <DropdownMenuItem key={s} onSelect={() => apply({ status: s }, `Marked ${STATUS_LABEL[s].toLowerCase()}`)}>
+                        <DropdownMenuItem
+                            key={s}
+                            onSelect={() => apply({ status: s }, (n) => `Marked ${n} as ${STATUS_LABEL[s].toLowerCase()}`)}
+                        >
                             <span className={`status status-${s}`}>{STATUS_LABEL[s]}</span>
                         </DropdownMenuItem>
                     ))}
@@ -90,7 +121,8 @@ export function BulkBar({
                         className="grid gap-2"
                         onSubmit={(e) => {
                             e.preventDefault();
-                            if (assignee.trim()) apply({ assignee: assignee.trim() }, `Assigned to ${assignee.trim()}`);
+                            const name = assignee.trim();
+                            if (name) apply({ assignee: name }, (n) => `Assigned ${n} to ${name}`);
                         }}
                     >
                         <Label htmlFor={assigneeId}>Assign to</Label>
@@ -104,16 +136,16 @@ export function BulkBar({
                                 size="sm"
                                 variant="outline"
                                 disabled={bulk.isPending}
-                                onClick={() => apply({ assignee: me.user.displayName }, "Assigned to you")}
+                                onClick={() => apply({ assignee: me.user.displayName }, (n) => `Assigned ${n} to you`)}
                             >
                                 Assign to me
                             </Button>
                             <Button
                                 type="button"
                                 size="sm"
-                                variant="ghost"
+                                variant="outline"
                                 disabled={bulk.isPending}
-                                onClick={() => apply({ assignee: null }, "Unassigned")}
+                                onClick={() => apply({ assignee: null }, (n) => `Unassigned ${n}`)}
                             >
                                 Unassign
                             </Button>
@@ -130,12 +162,12 @@ export function BulkBar({
                 <DropdownMenuContent>
                     <DropdownMenuLabel className="text-xs text-muted-foreground">Correct the severity</DropdownMenuLabel>
                     {SEVERITIES.map((s) => (
-                        <DropdownMenuItem key={s} onSelect={() => apply({ severity: s }, `Rated ${s}`)}>
+                        <DropdownMenuItem key={s} onSelect={() => apply({ severity: s }, (n) => `Rated ${n} ${s}`)}>
                             <span className={`sev sev-${s}`}>{SEVERITY_LABEL[s]}</span>
                         </DropdownMenuItem>
                     ))}
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={() => apply({ severity: "reviewer" }, "Reviewer's rating restored")}>
+                    <DropdownMenuItem onSelect={() => apply({ severity: "reviewer" }, (n) => `Restored the reviewer's rating on ${n}`)}>
                         Restore the reviewer's rating
                     </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -147,10 +179,10 @@ export function BulkBar({
                     </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
-                    <DropdownMenuItem onSelect={() => apply({ needsDiscussion: true }, "Flagged for discussion")}>
+                    <DropdownMenuItem onSelect={() => apply({ needsDiscussion: true }, (n) => `Flagged ${n} for discussion`)}>
                         Needs discussion
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => apply({ needsDiscussion: false }, "Discussion flag cleared")}>
+                    <DropdownMenuItem onSelect={() => apply({ needsDiscussion: false }, (n) => `Cleared the discussion flag on ${n}`)}>
                         Doesn't need discussion
                     </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -158,11 +190,11 @@ export function BulkBar({
             <span className="ms-auto flex flex-wrap items-center gap-2">
                 {/* The way back is beside the list's note, which stays when nothing is selected any more. */}
                 {notShown > 0 && !showingSelected && (
-                    <Button size="sm" variant="ghost" onClick={() => onShowSelected(true)}>
+                    <Button size="sm" variant="outline" onClick={() => onShowSelected(true)}>
                         <Eye /> Show selected
                     </Button>
                 )}
-                <Button size="sm" variant="ghost" onClick={onClear}>
+                <Button size="sm" variant="outline" onClick={onClear}>
                     <X /> Clear selection
                 </Button>
             </span>

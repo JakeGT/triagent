@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { CATEGORIES, type Category, SEVERITIES, type Severity, STATUSES, type Status } from "@triagent/shared";
-import { AlertTriangle, ChevronDown, ExternalLink, RotateCcw, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ChevronDown, ExternalLink, RotateCcw, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
@@ -80,7 +80,7 @@ function ConflictAlert({ conflict, onRetry, onDismiss }: { conflict: IssueConfli
                     <Button size="sm" variant="outline" onClick={onRetry}>
                         Apply my change to their version
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={onDismiss}>
+                    <Button size="sm" variant="outline" onClick={onDismiss}>
                         Dismiss
                     </Button>
                 </div>
@@ -200,6 +200,10 @@ function IssueView({ id }: { id: string }) {
             className="flex min-w-0 flex-col gap-4 border-s bg-card/40 p-4 md:p-5 lg:h-[calc(100svh-2.75rem)] lg:overflow-y-auto"
             data-testid="issue-panel"
         >
+            {/* Below `lg` the open issue replaces the list: the way back says where it goes. */}
+            <Button variant="outline" size="sm" className="self-start lg:hidden" onClick={close}>
+                <ArrowLeft /> Back to issues
+            </Button>
             <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -219,7 +223,7 @@ function IssueView({ id }: { id: string }) {
                             {issue.startLine ? `:${lines(issue.startLine, issue.endLine)}` : ""}
                         </span>
                         {source && (
-                            <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 underline">
+                            <a href={source} target="_blank" rel="noopener noreferrer" className="link inline-flex items-center gap-1">
                                 View source <ExternalLink className="size-3" aria-hidden="true" />
                                 <span className="sr-only">(opens in a new tab)</span>
                             </a>
@@ -228,7 +232,14 @@ function IssueView({ id }: { id: string }) {
                         {issue.addedBy && <span>Added by {issue.addedBy}</span>}
                     </p>
                 </div>
-                <Button variant="ghost" size="icon" className="size-8" onClick={close} aria-label="Close issue">
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="hidden size-8 lg:inline-flex"
+                    onClick={close}
+                    aria-label="Close issue"
+                    title="Close issue"
+                >
                     <X />
                 </Button>
             </div>
@@ -303,7 +314,7 @@ function IssueView({ id }: { id: string }) {
                                     <Button type="submit" size="sm" disabled={update.isPending}>
                                         Save
                                     </Button>
-                                    <Button type="button" size="sm" variant="ghost" onClick={() => setAssignee(null)}>
+                                    <Button type="button" size="sm" variant="outline" onClick={() => setAssignee(null)}>
                                         Cancel
                                     </Button>
                                 </>
@@ -322,7 +333,7 @@ function IssueView({ id }: { id: string }) {
                                 <Button
                                     type="button"
                                     size="sm"
-                                    variant="ghost"
+                                    variant="outline"
                                     onClick={() => void change({ assignee: null }, "Unassigned.")}
                                 >
                                     Unassign
@@ -391,7 +402,7 @@ function IssueView({ id }: { id: string }) {
                             {(issue.reviewerSeverity || issue.reviewerCategory) && (
                                 <Button
                                     size="sm"
-                                    variant="ghost"
+                                    variant="outline"
                                     onClick={() =>
                                         void change(
                                             {
@@ -424,7 +435,7 @@ function IssueView({ id }: { id: string }) {
                             {issue.duplicateOf ? (
                                 <Button
                                     size="sm"
-                                    variant="ghost"
+                                    variant="outline"
                                     onClick={() => void change({ duplicateOf: null }, "No longer a duplicate.")}
                                 >
                                     Not a duplicate
@@ -454,15 +465,15 @@ function IssueView({ id }: { id: string }) {
                         to="/w/$ws/p/$project/issues/$issueId"
                         params={{ ws, project: slug, issueId: issue.duplicateOf }}
                         search={{ ...listSearch, branch: branchParam } as never}
-                        className="underline"
+                        className="link"
                     >
                         {issue.duplicateOfTitle ? <InlineCode text={issue.duplicateOfTitle} /> : issue.duplicateOf}
                     </Link>
                 </p>
             )}
 
-            <div className="grid gap-4" data-tour="issue-finding">
-                <section aria-labelledby="finding-heading" className="grid gap-1.5">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-4" data-tour="issue-finding">
+                <section aria-labelledby="finding-heading" className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                     <h3 id="finding-heading" className="text-sm font-medium">
                         Finding
                     </h3>
@@ -472,7 +483,7 @@ function IssueView({ id }: { id: string }) {
                 <CodeView existing={issue.existingCode} suggestion={issue.suggestionCode} startLine={issue.startLine} />
 
                 {issue.foundBy && issue.foundBy.length > 0 && (
-                    <section aria-labelledby="found-by-heading" className="grid gap-1.5" data-testid="found-by">
+                    <section aria-labelledby="found-by-heading" className="grid grid-cols-[minmax(0,1fr)] gap-1.5" data-testid="found-by">
                         <h3 id="found-by-heading" className="text-sm font-medium">
                             Found by {issue.foundBy.length === 1 ? "one model" : `${issue.foundBy.length} models`}
                         </h3>
@@ -484,10 +495,7 @@ function IssueView({ id }: { id: string }) {
                         {issue.alsoFound.map((o) => (
                             <details key={o.model} className="group rounded-md border bg-background">
                                 <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm [&::-webkit-details-marker]:hidden">
-                                    <ChevronDown
-                                        className="size-4 shrink-0 -rotate-90 transition-transform group-open:rotate-0"
-                                        aria-hidden="true"
-                                    />
+                                    <ChevronDown className="size-4 shrink-0 -rotate-90 group-open:rotate-0" aria-hidden="true" />
                                     <span className="font-medium">What {o.model} said</span>
                                     <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                                         {o.severity && <SeverityMark severity={o.severity} />}
@@ -495,7 +503,7 @@ function IssueView({ id }: { id: string }) {
                                         {o.startLine ? <span className="font-mono">line {lines(o.startLine, o.endLine)}</span> : null}
                                     </span>
                                 </summary>
-                                <div className="grid gap-3 border-t px-3 py-2">
+                                <div className="grid grid-cols-[minmax(0,1fr)] gap-3 border-t px-3 py-2">
                                     <Markdown>{o.content}</Markdown>
                                     {o.suggestionCode && <CodeView existing={null} suggestion={o.suggestionCode} startLine={o.startLine} />}
                                 </div>
@@ -506,7 +514,7 @@ function IssueView({ id }: { id: string }) {
             </div>
 
             {issue.duplicates.length > 0 && (
-                <section aria-labelledby="dups-heading" className="grid gap-1.5">
+                <section aria-labelledby="dups-heading" className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                     <h3 id="dups-heading" className="text-sm font-medium">
                         Duplicates of this issue
                     </h3>
@@ -517,7 +525,7 @@ function IssueView({ id }: { id: string }) {
                                     to="/w/$ws/p/$project/issues/$issueId"
                                     params={{ ws, project: slug, issueId: d.id }}
                                     search={{ ...listSearch, branch: branchParam } as never}
-                                    className="underline"
+                                    className="link"
                                 >
                                     <InlineCode text={d.title} />
                                 </Link>{" "}
@@ -532,7 +540,7 @@ function IssueView({ id }: { id: string }) {
             )}
 
             {issue.tasks.length > 0 && (
-                <section aria-labelledby="tasks-heading" className="grid gap-1.5">
+                <section aria-labelledby="tasks-heading" className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                     <h3 id="tasks-heading" className="text-sm font-medium">
                         Related tasks
                     </h3>
@@ -543,7 +551,7 @@ function IssueView({ id }: { id: string }) {
                                     to="/w/$ws/p/$project/tasks/$taskId"
                                     params={{ ws, project: slug, taskId: t.id }}
                                     search={{ branch: branchParam }}
-                                    className="underline"
+                                    className="link"
                                 >
                                     <InlineCode text={t.title} />
                                 </Link>{" "}
@@ -554,7 +562,7 @@ function IssueView({ id }: { id: string }) {
                 </section>
             )}
 
-            <section aria-labelledby="notes-heading" className="grid gap-2">
+            <section aria-labelledby="notes-heading" className="grid grid-cols-[minmax(0,1fr)] gap-2">
                 <h3 id="notes-heading" className="text-sm font-medium">
                     Notes
                 </h3>
