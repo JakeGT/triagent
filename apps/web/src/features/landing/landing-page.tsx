@@ -306,10 +306,10 @@ export function LandingPage() {
             <main id="main">
                 <section aria-labelledby="hero-title" className={cn(COLUMN, "grid gap-10 pt-10 pb-8 sm:gap-12 sm:pt-16 sm:pb-12")}>
                     <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-x-12 gap-y-10 lg:grid-cols-12">
-                        <div className="grid gap-6 lg:col-span-5">
+                        <div className="grid gap-6 lg:col-span-6">
                             <h1
                                 id="hero-title"
-                                className="text-4xl leading-[1.08] font-semibold tracking-tight text-balance sm:text-5xl xl:text-6xl"
+                                className="text-4xl leading-[1.08] font-semibold tracking-tight sm:text-5xl lg:text-[2.5rem] xl:text-5xl"
                             >
                                 <span className="block">Every model's review.</span>{" "}
                                 <span className="block">One list to work through.</span>
@@ -328,7 +328,7 @@ export function LandingPage() {
                                 Self-hosted and free software, built on Open Code Review.
                             </p>
                         </div>
-                        <div className="min-w-0 lg:col-span-7">
+                        <div className="min-w-0 lg:col-span-6">
                             <ReviewStage />
                         </div>
                     </div>
