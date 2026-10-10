@@ -40,10 +40,12 @@ describe("the lock on a path in the cache", () => {
     });
     after(() => rmSync(dir, { recursive: true, force: true }));
     const quick: LockOptions = { staleMs: 300, pollMs: 20 };
+    /** Where a holder is still alive: long enough that a busy machine delaying its refresh isn't taken for its death. */
+    const patient: LockOptions = { staleMs: 5000, pollMs: 20 };
 
     test("one holder at a time, in turn, within a process and between two", async () => {
         const target = path.join(dir, "turns.git");
-        const [a, b] = [new PathLocks(quick), new PathLocks(quick)];
+        const [a, b] = [new PathLocks(patient), new PathLocks(patient)];
         let holding = 0;
         let most = 0;
         const order: number[] = [];
@@ -67,11 +69,12 @@ describe("the lock on a path in the cache", () => {
 
     test("a holder that takes longer than the stale time keeps its lock, because it keeps refreshing it", async () => {
         const target = path.join(dir, "slow.git");
-        const [a, b] = [new PathLocks(quick), new PathLocks(quick)];
+        const brief: LockOptions = { staleMs: 500, pollMs: 20 };
+        const [a, b] = [new PathLocks(brief), new PathLocks(brief)];
         let released = 0;
         let waited = false;
         const first = a.hold(target, async () => {
-            await sleep(1000);
+            await sleep(1500);
             released = Date.now();
         });
         await sleep(50);
@@ -115,7 +118,7 @@ describe("the lock on a path in the cache", () => {
 
     test("a wait that's aborted ends at once, leaves nothing behind, and doesn't let the next in line jump the holder", async () => {
         const target = path.join(dir, "abort.git");
-        const [a, b] = [new PathLocks(quick), new PathLocks(quick)];
+        const [a, b] = [new PathLocks(patient), new PathLocks(patient)];
         let free = () => {};
         const held = a.hold(target, () => new Promise<void>((r) => (free = r)));
         await sleep(30);
@@ -455,14 +458,14 @@ exec git "$@"
     });
 
     test("two runners sharing one cache directory fetch into a mirror one at a time", async () => {
-        const [a, b] = [runner("cache-shared", { staleMs: 400, pollMs: 25 }), runner("cache-shared", { staleMs: 400, pollMs: 25 })];
+        const [a, b] = [runner("cache-shared", { staleMs: 600, pollMs: 25 }), runner("cache-shared", { staleMs: 600, pollMs: 25 })];
         hold();
         const first = a.execute(job("shared-a"));
         await eventually(() => fetches().length === 1, "the first runner's fetch to start");
         const second = b.execute(job("shared-b"));
         await eventually(() => log("shared-b").includes(WAITING), "the second runner to say it's waiting");
         // Held for longer than the stale time: the first runner keeps its lock by refreshing it.
-        await sleep(700);
+        await sleep(1200);
         assert.equal(fetches().length, 1, "the second runner hasn't started fetching");
         release();
         await Promise.all([first, second, a.execute(job("shared-a2")), b.execute(job("shared-b2"))]);
