@@ -135,8 +135,9 @@ test("the page follows the reader's theme, and the switch says what it gives", a
     await page.goto("/");
     await expect(page.locator("html")).toHaveClass(/light/);
     // Nothing is forced dark on a light page but the part about agents: a picture of a terminal.
-    await expect(page.locator(".dark")).toHaveCount(1);
-    await expect(page.locator(".dark")).toContainText("claude mcp add");
+    await expect(page.locator(".dark")).toHaveCount(2);
+    await expect(page.locator("section.dark")).toHaveCount(1);
+    await expect(page.locator("section.dark")).toContainText("claude mcp add");
     const light = await page.locator("header").evaluate((el) => getComputedStyle(el).backgroundColor);
     await page.getByRole("button", { name: "Dark theme" }).click();
     await expect(page.locator("html")).toHaveClass(/dark/);

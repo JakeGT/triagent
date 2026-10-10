@@ -276,7 +276,6 @@
         --landing-dot: color-mix(in oklab, var(--foreground) 26%, transparent);
         /* Clear in the middle, where the headline and the paragraph are; fading out towards the bottom. */
         --landing-mask: radial-gradient(ellipse 46% 52% at 50% 38%, transparent 55%, #000 100%), linear-gradient(#000 45%, transparent 96%);
-        mask-composite: intersect;
     }
     .landing-field::before {
         mask-composite: intersect;
@@ -300,6 +299,7 @@
         top: 3.5rem;
         z-index: -1;
         width: 26rem;
+        overflow: hidden;
         pointer-events: none;
         user-select: none;
         font-family: var(--font-mono);
