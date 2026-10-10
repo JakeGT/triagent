@@ -10,6 +10,7 @@ import { mergeReports } from "../src/domain/merge.ts";
 import { parseReport, priorityCompare } from "../src/domain/report.ts";
 import { commentBody, finishedStatus } from "../src/domain/review-run.ts";
 import { agreedCritical, effectiveOptions, readJudged } from "../src/services/runs.ts";
+import type { Job } from "../src/store/types.ts";
 import { eventually, finished, MODEL_KEY, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
 
 const on = (change: Partial<RunOptions>): RunOptions => ({ ...structuredClone(NO_OPTIONS), ...change });
@@ -52,6 +53,59 @@ describe("which findings are the same, as the server and the runner both work it
         assert.deepEqual(candidatePairs(parts, 2), { pairs: pairs.slice(0, 2), total: 6 });
         // What the lines and category already made one finding isn't asked about.
         assert.deepEqual(candidatePairs([[f("x.ts", 10)], [f("x.ts", 11)]]), { pairs: [], total: 0 });
+    });
+
+    test("a file with thousands of findings: the same closest pairs as comparing every one, without holding them all", () => {
+        // What the pairs are, written the plain way: every pair, sorted, then cut.
+        const plain = (parts: ReturnType<typeof f>[][], max: number) => {
+            const groups = groupFindings(parts).map((g) => ({
+                lead: g[0] as { part: number; index: number },
+                models: g.map((r) => r.part),
+            }));
+            const at = (r: { part: number; index: number }) => parts[r.part]?.[r.index] as ReturnType<typeof f>;
+            const all: { pair: object; gap: number }[] = [];
+            // A file at a time, in the order the files come up.
+            const paths = [...new Set(groups.map((g) => at(g.lead).path))];
+            for (const path of paths)
+                for (const [i, x] of groups.entries())
+                    for (const y of groups.slice(i + 1)) {
+                        const [a, b] = [at(x.lead), at(y.lead)];
+                        if (a.path !== path || b.path !== path || x.models.some((m) => y.models.includes(m))) continue;
+                        const [s, t] = [a.start_line ?? null, b.start_line ?? null];
+                        const gap = s === null || t === null ? Number.MAX_SAFE_INTEGER : Math.abs(s - t);
+                        all.push({ pair: { a: x.lead, b: y.lead }, gap });
+                    }
+            all.sort((p, q) => p.gap - q.gap);
+            return { pairs: all.slice(0, max).map((p) => p.pair), total: all.length };
+        };
+        // Three models' findings scattered over two files, some without lines, many as close as each other.
+        let seed = 7;
+        const random = (n: number) => {
+            seed = (seed * 1103515245 + 12345) % 2147483648;
+            return seed % n;
+        };
+        const categories = ["bug", "style", "security", "performance"];
+        const scattered = [0, 1, 2].map(() =>
+            Array.from({ length: 120 }, () =>
+                f(random(4) ? "big.ts" : "small.ts", random(12) ? 1 + random(400) : null, categories[random(4)]),
+            ),
+        );
+        for (const max of [0, 1, 7, 200, 100_000]) assert.deepEqual(candidatePairs(scattered, max), plain(scattered, max), `max ${max}`);
+        // Thousands in one file, every one of a model's on a line of its own: 4,000 each, 16 million pairs.
+        const many = (step: number, category: string) => Array.from({ length: 4000 }, (_, i) => f("huge.ts", 1 + i * 10 + step, category));
+        const t0 = Date.now();
+        const huge = candidatePairs([many(0, "bug"), many(5, "style")]);
+        assert.equal(huge.total, 16_000_000);
+        assert.equal(huge.pairs.length, 200);
+        assert.deepEqual(huge.pairs[0], { a: { part: 0, index: 0 }, b: { part: 1, index: 0 } });
+        // And all on the same lines: nothing is closer than that, so it stops at the first 200.
+        const piled = candidatePairs([
+            many(0, "bug").map((c) => ({ ...c, start_line: 3, end_line: 3 })),
+            many(0, "style").map((c) => ({ ...c, start_line: 3, end_line: 3 })),
+        ]);
+        assert.equal(piled.total, 16_000_000);
+        assert.deepEqual(piled.pairs.at(-1), { a: { part: 0, index: 0 }, b: { part: 1, index: 199 } });
+        assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0}ms`);
     });
 
     test("groups a model said are the same are joined, unless a model would then be in one twice", () => {
@@ -575,6 +629,20 @@ describe("running a model that failed again", () => {
         assert.equal(refused.isError, true);
         assert.match(refused.content[0].text, /findings have been added already/);
         assert.equal((await mcp(reader, "rerun_model", { id: first.id, model: "fake/model" })).isError, true);
+        // The model as the run lists it, give or take the space around it; one it hasn't got is answered with those it has.
+        assert.match(
+            (await mcp(agent, "rerun_model", { id: first.id, model: " fake/wordy-extra-fail-once\n" })).content[0].text,
+            /added already/,
+        );
+        assert.match(
+            (await mcp(agent, "rerun_model", { id: first.id, model: "fake/other" })).content[0].text,
+            /no model called "fake\/other"\. Its models are: "fake\/model", "fake\/wordy-extra-fail-once"\./,
+        );
+        // A run that lists no models says why it has none to run again, not that the name is wrong.
+        assert.match(
+            (await mcp(agent, "rerun_model", { id: again.id, model: "fake/model" })).content[0].text,
+            /is itself one model being run again/,
+        );
     });
 
     test("a pull request's check and comment follow the report once the model's findings are in", async () => {
@@ -1357,6 +1425,17 @@ describe("comparing models only", () => {
         assert.match(told.content[0].text, /- fake\/wordy-extra: 3 finding\(s\), 1 only it found, 2 another found too, 1500 tokens/);
         assert.match(told.content[0].text, /- fake\/model: .*US\$0\.0054/);
         assert.equal(told.structuredContent.findings.length, 3);
+        // A comparison too long to keep whole says how many of its findings are in the data, not how many there were.
+        const kept = (await env.t.services.store.jobs.get(done.id)) as Job;
+        const made = kept.result?.bakeOff as { findings: unknown[] };
+        const findings = Array.from({ length: 60 }, () => made.findings[0]);
+        await env.t.services.store.jobs.put({
+            ...kept,
+            result: { ...kept.result, bakeOff: { ...made, findings, total: 620, truncated: true } },
+        });
+        const long = (await mcp(agent, "get_comparison", { id: done.id })).content[0].text;
+        assert.match(long, /…and 10 more \(in the data\)\.\nOnly 60 of the 620 findings were kept/);
+        await env.t.services.store.jobs.put(kept);
         // But only someone who may start reviews may start one.
         assert.equal(
             (await mcp(agent, "start_review", { kind: "full", models: models.slice(0, 2), options: { bakeOff: true } })).isError,

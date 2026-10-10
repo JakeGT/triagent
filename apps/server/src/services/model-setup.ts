@@ -11,7 +11,7 @@
 // the new shape the next time it's saved.
 
 import { createHash, randomBytes } from "node:crypto";
-import { MODEL_PROTOCOLS, type ModelProtocol, type RunnerModel } from "@triagent/shared/model";
+import { canBeAsked, MODEL_PROTOCOLS, type ModelProtocol, type RunnerModel } from "@triagent/shared/model";
 import { badRequest, notFound } from "../errors.ts";
 import type { Repos, Workspace } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
@@ -352,7 +352,7 @@ export class ModelSetup {
                 isDefault: f.id === stored.defaultId,
                 ready: missing === null,
                 missing,
-                canJudge: protocolOf(spec, stored.options?.[spec.id] ?? {}) !== "anthropic-bedrock",
+                canJudge: canBeAsked(protocolOf(spec, stored.options?.[spec.id] ?? {})),
             };
         });
         return {

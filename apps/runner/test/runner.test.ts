@@ -337,13 +337,16 @@ describe("stopping git", () => {
                 gitRef: null,
                 baseRef: "main",
             };
-            for (const step of ["fetch", "worktree"] as const) {
+            for (const step of ["fetch", "pin", "worktree"] as const) {
                 const stop = new AbortController();
                 const t0 = Date.now();
+                // Asking for one commit by itself is a fetch like any other: stopped, not "that commit is gone".
                 const pending =
                     step === "fetch"
                         ? git.fetch(path.join(dir, `m-${step}`), job, stop.signal)
-                        : git.addWorktree(path.join(dir, "m"), path.join(dir, "tree"), "a".repeat(40), null, stop.signal);
+                        : step === "pin"
+                          ? git.pin(path.join(dir, "m"), job, { head: "a".repeat(40), base: null }, stop.signal)
+                          : git.addWorktree(path.join(dir, "m"), path.join(dir, "tree"), "a".repeat(40), null, stop.signal);
                 setTimeout(() => stop.abort(), 200);
                 await assert.rejects(pending, /stopped/);
                 assert.ok(Date.now() - t0 < 5000, `${step} took ${Date.now() - t0}ms to stop`);
@@ -431,6 +434,13 @@ describe("git against a fake GitHub", () => {
         // One that isn't in what was fetched (another branch's) is asked for by itself.
         const elsewhere = await fake.commit("acme/app", "elsewhere", { "src/e.ts": "export const e = 5;\n" }, "Add e", "main");
         assert.deepEqual(await git.pin(mirror, job(), { head: elsewhere, base: null }), { head: elsewhere, base: null });
+        // It's there to check out, with no ref left in the mirror to keep it for good.
+        const tree = path.join(work, "tree-pin");
+        await git.addWorktree(mirror, tree, elsewhere);
+        assert.equal(readFileSync(path.join(tree, "src/e.ts"), "utf8"), "export const e = 5;\n");
+        await git.removeWorktree(mirror, tree);
+        const refs = execFileSync("git", ["--git-dir", mirror, "for-each-ref", "--format=%(refname)"], { encoding: "utf8" });
+        assert.ok(!refs.includes("refs/triagent/commit/") && !refs.includes(elsewhere), refs);
         // One GitHub doesn't have, and something that isn't a commit at all.
         await assert.rejects(
             git.pin(mirror, job(), { head: "c".repeat(40), base }),
@@ -438,6 +448,12 @@ describe("git against a fake GitHub", () => {
         );
         await assert.rejects(git.pin(mirror, job(), { head, base: "d".repeat(40) }), /Commit ddddddd/);
         await assert.rejects(git.pin(mirror, job(), { head: "main; rm -rf /", base: null }), /isn't a commit/);
+        // A fetch that fails for another reason says that reason, not that the commit is gone.
+        const other = await fake.commit("acme/app", "other", { "src/o.ts": "export const o = 6;\n" }, "Add o", "main");
+        await assert.rejects(
+            git.pin(mirror, job({ token: `github_pat_${"w".repeat(30)}` }), { head: other, base: null }),
+            (err: Error) => /fetch failed|Authentication/.test(err.message) && !/any more/.test(err.message),
+        );
     });
 
     test("a change under review can't bring its own review rules: the base's are used, or none", async () => {

@@ -761,7 +761,10 @@ export const TOOLS: Tool[] = [
                         (f) =>
                             `- [${f.severity}/${f.category}] \`${f.path}${f.startLine ? `:${f.startLine}` : ""}\` — ${f.title} (found by ${f.foundBy.join(", ")})`,
                     ),
-                ...(comparison.findings.length > 50 ? [`…and ${comparison.total - 50} more (in the data).`] : []),
+                ...(comparison.findings.length > 50 ? [`…and ${comparison.findings.length - 50} more (in the data).`] : []),
+                ...(comparison.truncated
+                    ? [`Only ${comparison.findings.length} of the ${comparison.total} findings were kept: the ones most models agreed on.`]
+                    : []),
             ].join("\n");
             return { text, data: { run, ...comparison, models } };
         },
@@ -778,9 +781,15 @@ export const TOOLS: Tool[] = [
         }),
         async run(ctx, args) {
             const run = await ctx.services.runs.get(ctx.access.workspace, String(args.id));
-            const index = (run.result?.models as { label: string }[] | undefined)?.findIndex((m) => m.label === args.model) ?? -1;
-            if (index < 0) throw badRequest(`That review has no model called "${String(args.model).slice(0, 100)}".`);
-            const r = await ctx.services.runs.rerun(ctx.actor, ctx.access.workspace, run.id, index);
+            const models = Array.isArray(run.result?.models) ? (run.result.models as { label: string }[]) : [];
+            const want = String(args.model).trim();
+            const index = models.findIndex((m) => m.label === want);
+            if (index < 0 && models.length)
+                throw badRequest(
+                    `That review has no model called "${want.slice(0, 100)}". Its models are: ${models.map((m) => `"${m.label}"`).join(", ")}.`,
+                );
+            // A run that lists no models (a review with one, or one that never started) has none to run again: asking says why.
+            const r = await ctx.services.runs.rerun(ctx.actor, ctx.access.workspace, run.id, Math.max(index, 0));
             return { text: `Queued run ${r.id}: ${r.title}. Use wait_for_run with this id to wait for it.`, data: r };
         },
     }),

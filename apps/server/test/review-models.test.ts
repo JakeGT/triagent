@@ -536,6 +536,75 @@ describe("removing a favourite that projects use", () => {
     });
 });
 
+describe("a favourite that a project's reviews ask which findings are the same problem", () => {
+    test("removing it is refused naming the project, and with force the project asks nobody; renaming it changes nothing", async () => {
+        const at = await place();
+        const b = await favourite(at, "fake/b");
+        const judge = await favourite(at, "fake/judge");
+        const automation = (body: object) =>
+            env.t.request(`/api/v1/w/${at.ws}/p/app/settings/automation`, { method: "PATCH", session: env.admin, body });
+        const saved = async () => await env.t.services.settings.automation(env.t.services.store, at.p);
+        // It's in none of the project's sets: only the model asked.
+        ok(await automation({ models: { all: [at.usual, b] }, options: { retryFailed: true, judge } }));
+
+        // Renamed, it's the same favourite: the project still asks it, by its new name.
+        ok(
+            await env.t.request(`/api/v1/w/${at.ws}/settings/models/favourites/${judge}`, {
+                method: "PATCH",
+                session: env.admin,
+                body: { name: "The judge" },
+            }),
+        );
+        assert.equal((await saved()).options.judge, judge);
+        const asked = await env.t.services.models.judgeFor(at.w, [], judge);
+        assert.equal("model" in asked ? asked.model.label : asked.error, "The judge");
+        // The instance's model is never the one asked, and that's what's said: not that a favourite has gone.
+        assert.deepEqual(await env.t.services.models.judgeFor(at.w, [], "instance"), { error: "the instance's model can't be asked" });
+        assert.deepEqual(await env.t.services.models.judgeFor(at.w, [], "first"), {
+            error: "none of this review's models can be asked: each is on Amazon Bedrock, or is the instance's model",
+        });
+
+        const refused = await removeFavourite(at, judge);
+        assert.equal(refused.status, 409, refused.text);
+        assert.equal(refused.body.code, "favourite_in_use");
+        assert.deepEqual(refused.body.projects, [{ slug: "app", name: "app", sets: [], judge: true }]);
+        assert.equal((await saved()).options.judge, judge, "nothing changed");
+
+        ok(await removeFavourite(at, judge, "?force=true"));
+        // Nobody is asked now; the project's other options and its models are as they were.
+        assert.deepEqual((await saved()).options, { retryFailed: true });
+        assert.deepEqual((await saved()).models, { all: [at.usual, b] });
+        const audit = (await env.t.request(`/api/v1/w/${at.ws}/settings/audit?limit=5`, { session: env.admin })).body.items;
+        const change = audit.find(
+            (x: { target: string; changes: { options?: unknown } }) => x.target === "project:app:automation" && x.changes.options,
+        );
+        assert.deepEqual(change?.changes, { options: { from: { retryFailed: true, judge }, to: { retryFailed: true } } });
+        // A favourite in a set as well is taken out of both.
+        const both = await favourite(at, "fake/both");
+        ok(await automation({ models: { all: [at.usual, both] }, options: { judge: both } }));
+        assert.deepEqual((await removeFavourite(at, both)).body.projects, [{ slug: "app", name: "app", sets: ["all"], judge: true }]);
+        ok(await removeFavourite(at, both, "?force=true"));
+        assert.deepEqual([(await saved()).models, (await saved()).options], [{ all: [at.usual] }, {}]);
+    });
+
+    test("a project's options are saved whole: what a change leaves out is off", async () => {
+        const at = await place();
+        const b = await favourite(at, "fake/b");
+        const automation = (body: object) =>
+            env.t.request(`/api/v1/w/${at.ws}/p/app/settings/automation`, { method: "PATCH", session: env.admin, body });
+        const saved = async () => await env.t.services.settings.automation(env.t.services.store, at.p);
+        ok(await automation({ models: { all: [at.usual, b], pr: [b] }, options: { retryFailed: true, judge: "first" } }));
+        // Like `models`, where a set left out is no longer set.
+        ok(await automation({ models: { all: [at.usual, b] }, options: { agreement: { markSingles: true } } }));
+        assert.deepEqual([(await saved()).models, (await saved()).options], [{ all: [at.usual, b] }, { agreement: { markSingles: true } }]);
+        // A change that doesn't mention them leaves them alone, and `{}` turns them all off.
+        ok(await automation({ pollMinutes: 5 }));
+        assert.deepEqual((await saved()).options, { agreement: { markSingles: true } });
+        ok(await automation({ options: {} }));
+        assert.deepEqual((await saved()).options, {});
+    });
+});
+
 describe("choosing models over the API and MCP", () => {
     let at: Place;
     let a: string;

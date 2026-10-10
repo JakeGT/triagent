@@ -6,6 +6,12 @@
 export const MODEL_PROTOCOLS = ["openai", "openai-responses", "anthropic", "anthropic-bedrock"] as const;
 export type ModelProtocol = (typeof MODEL_PROTOCOLS)[number];
 
+/**
+ * Whether a model speaking `protocol` can be asked a question of one's own (which findings are the same
+ * problem): not on Amazon Bedrock, whose requests are signed with AWS credentials (apps/runner/src/judge.ts).
+ */
+export const canBeAsked = (protocol: ModelProtocol): boolean => protocol !== "anthropic-bedrock";
+
 export interface RunnerModel {
     /** Triagent's provider id, for the log. */
     provider: string;

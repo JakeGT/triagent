@@ -105,7 +105,9 @@ export function addModel(report: RawReport, label: string, part: RawReport): { r
         if (!c || typeof c !== "object" || typeof c.path !== "string") continue;
         let best: RawComment | null = null;
         let bestGap = Number.POSITIVE_INFINITY;
-        for (const k of comments.slice(0, before)) {
+        // Only what was there before: its own findings, added below, are never joined to each other.
+        for (let i = 0; i < before; i++) {
+            const k = comments[i] as RawComment;
             if (k.added_by || found(k).includes(label)) continue;
             const gap = distance(k, c);
             if (gap !== null && gap < bestGap) {

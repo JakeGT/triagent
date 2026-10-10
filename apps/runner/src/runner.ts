@@ -31,7 +31,7 @@ import {
 } from "./client.ts";
 import type { RunnerConfig } from "./config.ts";
 import { Git, gitEnv, mirrorPath } from "./git.ts";
-import { judgeFindings } from "./judge.ts";
+import { type Judged, judgeFindings, whyNot } from "./judge.ts";
 import { start } from "./process.ts";
 import { combined, type ModelProgress, type Progress, readProgress } from "./progress.ts";
 
@@ -708,14 +708,22 @@ export class Runner {
         if (!run.lost) await this.report(job.id, { ...outcome, headSha: fetched?.head ?? null, baseSha: fetched?.base ?? null });
     }
 
-    /** Ask the job's judging model about the findings its reviews left apart, saying in the log how it went. */
-    private async judge(model: NonNullable<ClaimedJob["judge"]>, run: JobRun, parts: readonly FinishPart[]) {
-        run.setProgress({ ...run.currentProgress, phase: "merging" });
-        run.say(`Asking ${model.label} which findings from different models are the same problem…`);
-        const judged = await judgeFindings(model, parts, {
-            ...(this.config.llmTimeout ? { timeoutMs: Number(this.config.llmTimeout) * 1000 } : {}),
-            signal: run.signal,
-        });
+    /**
+     * Ask the job's judging model about the findings its reviews left apart, saying in the log how it went.
+     * It never throws: the reviews are done by now, and whatever goes wrong here they're merged by place.
+     */
+    private async judge(model: NonNullable<ClaimedJob["judge"]>, run: JobRun, parts: readonly FinishPart[]): Promise<Judged> {
+        let judged: Judged;
+        try {
+            run.setProgress({ ...run.currentProgress, phase: "merging" });
+            run.say(`Asking ${model.label} which findings from different models are the same problem…`);
+            judged = await judgeFindings(model, parts, {
+                ...(this.config.llmTimeout ? { timeoutMs: Number(this.config.llmTimeout) * 1000 } : {}),
+                signal: run.signal,
+            });
+        } catch (err) {
+            judged = { pairs: [], total: 0, tokens: null, seconds: 0, error: whyNot(err).slice(0, 500) };
+        }
         const error = judged.error ? run.redactLine(judged.error) : undefined;
         const same = judged.pairs.filter((p) => p.same).length;
         const asked = `${judged.pairs.length} pair${judged.pairs.length === 1 ? "" : "s"}`;

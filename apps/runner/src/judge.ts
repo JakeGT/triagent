@@ -197,6 +197,9 @@ async function limited(res: Response): Promise<string> {
 /** One request to the model. Throws saying what went wrong, never with the key in it (the caller redacts anyway). */
 async function ask(model: RunnerModel, user: string, timeoutMs: number, signal?: AbortSignal): Promise<Said> {
     if (model.protocol === "anthropic-bedrock") throw new Error("a model on Amazon Bedrock can't be asked");
+    // A server newer than this runner may name a protocol it doesn't speak.
+    if (!Object.hasOwn(PROTOCOLS, model.protocol))
+        throw new Error(`this runner can't ask a model that speaks ${String(model.protocol).slice(0, 40)}`);
     const protocol = PROTOCOLS[model.protocol];
     const url = `${model.url.replace(/\/+$/, "")}${protocol.path}`;
     if (!/^https?:\/\//i.test(url)) throw new Error("the model has no address to ask at");
@@ -230,6 +233,9 @@ async function ask(model: RunnerModel, user: string, timeoutMs: number, signal?:
     return protocol.read(answer as Record<string, unknown>);
 }
 
+/** What went wrong, whatever was thrown. */
+export const whyNot = (err: unknown): string => (err instanceof Error && err.message) || String(err) || "something went wrong";
+
 /**
  * Ask `model` about every pair of the review's findings worth asking about (up to the limit). All of
  * them answered, or none: an answer that can't be had, or isn't true or false for each pair, is an
@@ -241,12 +247,15 @@ export async function judgeFindings(
     options: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<Judged> {
     const began = Date.now();
-    const findings = findingsOf(parts);
-    const { pairs, total } = candidatePairs(findings);
     const tokens = { input: 0, output: 0 };
     const out: Judged["pairs"] = [];
     const seconds = () => Math.round((Date.now() - began) / 1000);
+    let total = 0;
     try {
+        // Working out the pairs is inside too: nothing that goes wrong here may cost the review its reports.
+        const findings = findingsOf(parts);
+        const { pairs, total: all } = candidatePairs(findings);
+        total = all;
         for (let i = 0; i < pairs.length; i += BATCH) {
             const batch = pairs.slice(i, i + BATCH);
             const said = await ask(model, question(findings, batch), options.timeoutMs ?? TIMEOUT_MS, options.signal);
@@ -258,7 +267,7 @@ export async function judgeFindings(
         }
     } catch (err) {
         const used = tokens.input + tokens.output ? tokens : null;
-        return { pairs: [], total, tokens: used, seconds: seconds(), error: (err as Error).message.slice(0, 500) };
+        return { pairs: [], total, tokens: used, seconds: seconds(), error: whyNot(err).slice(0, 500) };
     }
-    return { pairs: out, total, tokens: pairs.length ? tokens : null, seconds: seconds() };
+    return { pairs: out, total, tokens: out.length ? tokens : null, seconds: seconds() };
 }

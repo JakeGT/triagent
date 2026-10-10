@@ -115,6 +115,8 @@ export const projectRoutes: Route[] = [
         permission: "configure",
         tag: "Settings",
         summary: "Change automatic review settings",
+        description:
+            "Only the settings given change. `models` and `options` are each saved whole: a set or an option left out of the one given is no longer set, so send all of it (`options: {}` turns every option off).",
         body: AutomationSchema.partial().strict(),
         async handler({ services, project: p, body, actor }) {
             return json(await services.settings.setAutomation(actor, project(p), body));

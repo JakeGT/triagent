@@ -31,14 +31,22 @@ export const MAX_FAVOURITE_NAME = 40;
 /** What people call a favourite: its nickname, or the model's own name. */
 export const favouriteLabel = (f: Pick<Favourite, "name" | "model">) => f.name ?? f.model;
 
-/** A project whose reviews use a favourite, and in which of its sets (the server's 409 when one is removed). */
+/**
+ * A project whose reviews use a favourite: in which of its sets, and whether it's the model they ask which
+ * findings are the same problem (the server's 409 when one is removed).
+ */
 interface FavouriteUse {
     slug: string;
     name: string;
     sets: ModelSet[];
+    judge?: true;
 }
 
 const SET_WORDS: Record<ModelSet, string> = { all: "every review", pr: "pull requests", changes: "branch changes", full: "full scans" };
+
+/** What a project uses a favourite for, in words. */
+export const usedFor = (u: Pick<FavouriteUse, "sets" | "judge">): string =>
+    [...u.sets.map((k) => SET_WORDS[k]), ...(u.judge ? ["asked which findings are the same problem"] : [])].join(", ");
 
 /** The projects using a favourite, from the server's refusal to remove it; null for any other error. */
 function usesFrom(err: unknown): FavouriteUse[] | null {
@@ -53,11 +61,14 @@ function InUse({ uses }: { uses: FavouriteUse[] }) {
             <ul className="list-disc ps-5">
                 {uses.map((u) => (
                     <li key={u.slug}>
-                        {u.name} ({u.sets.map((k) => SET_WORDS[k]).join(", ")})
+                        {u.name} ({usedFor(u)})
                     </li>
                 ))}
             </ul>
-            <p>Removing it takes it out of their review models too. A project left with none uses the workspace default.</p>
+            <p>
+                Removing it takes it out of their review models too. A project left with none uses the workspace default
+                {uses.some((u) => u.judge) ? ", and one that asked it about findings asks no model" : ""}.
+            </p>
         </div>
     );
 }

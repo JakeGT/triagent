@@ -155,17 +155,19 @@ export const AutomationSchema = z.object({
     /**
      * Options for reviews run with several models, for those that don't choose their own (automatic
      * reviews, and reviews started without `options`). All off unless set; a review with one model has none.
+     * Saved whole, like `models` and a review's own `options`: what a change leaves out is off, and `{}` is none.
      */
     options: ProjectOptionsInput,
 });
 export type Automation = z.infer<typeof AutomationSchema>;
 export type ProjectModels = Automation["models"];
 
-/** A project using a favourite model, and in which of its sets. */
+/** A project using a favourite model: in which of its sets, and whether it's the model its reviews ask about findings. */
 export interface FavouriteUse {
     slug: string;
     name: string;
     sets: ModelSet[];
+    judge?: true;
 }
 
 export const AUTOMATION_DEFAULTS: Automation = {
@@ -434,13 +436,14 @@ export class Settings {
         return this.setup.updateFavourite(actor, workspace, id, input);
     }
 
-    /** The projects whose reviews use a favourite, and in which of their sets. */
+    /** The projects whose reviews use a favourite: in which of their sets, and as the model asked about findings. */
     async favouriteUses(repos: Repos, workspace: Workspace, id: string): Promise<FavouriteUse[]> {
         const uses: FavouriteUse[] = [];
         for (const p of await repos.projects.forWorkspace(workspace.id)) {
-            const { models } = await this.automation(repos, p);
+            const { models, options } = await this.automation(repos, p);
             const sets = MODEL_SETS.filter((k) => models[k]?.includes(id));
-            if (sets.length) uses.push({ slug: p.slug, name: p.name, sets });
+            const judge = options.judge === id;
+            if (sets.length || judge) uses.push({ slug: p.slug, name: p.name, sets, ...(judge ? { judge } : {}) });
         }
         return uses;
     }
@@ -448,7 +451,8 @@ export class Settings {
     /**
      * Remove a favourite. One that projects' reviews use is refused (409, naming the projects) unless
      * `force`, which takes it out of those projects' sets too: a set left empty falls through to the next
-     * rule, as if it had never been chosen.
+     * rule, as if it had never been chosen. A project whose reviews ask it which findings are the same
+     * problem then asks nobody.
      */
     removeFavourite(actor: Actor, workspace: Workspace, id: string, defaultId?: string, force = false) {
         return this.core.write(actor, async (w) => {
@@ -467,12 +471,24 @@ export class Settings {
                         return left.length ? [[k, left]] : [];
                     }),
                 ) as ProjectModels;
-                await w.tx.settings.put({ workspaceId: workspace.id, projectId: p.id, key: "automation", value: { ...before, models } });
+                const { judge, ...rest } = before.options;
+                const options = judge === id ? rest : before.options;
+                await w.tx.settings.put({
+                    workspaceId: workspace.id,
+                    projectId: p.id,
+                    key: "automation",
+                    value: { ...before, models, options },
+                });
                 await w.audit({
                     workspaceId: workspace.id,
                     kind: "settings",
                     target: `project:${p.slug}:automation`,
-                    changes: { models: { from: before.models, to: models } },
+                    changes: {
+                        ...(JSON.stringify(models) !== JSON.stringify(before.models)
+                            ? { models: { from: before.models, to: models } }
+                            : {}),
+                        ...(options !== before.options ? { options: { from: before.options, to: options } } : {}),
+                    },
                 });
             }
             return this.setup.removeFavourite(actor, workspace, id, defaultId);

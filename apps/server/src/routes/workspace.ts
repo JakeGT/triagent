@@ -471,7 +471,7 @@ export const workspaceRoutes: Route[] = [
         tag: "Settings",
         summary: "Remove a favourite model",
         description:
-            "The last favourite can't be removed. Removing the default needs `defaultId`: the favourite that becomes the default instead. One that projects' reviews use is refused with 409 and those `projects`, unless `force=true`, which takes it out of their review models too.",
+            "The last favourite can't be removed. Removing the default needs `defaultId`: the favourite that becomes the default instead. One that projects' reviews use (in their review models, `sets`, or as the model their reviews ask which findings are the same problem, `judge`) is refused with 409 and those `projects`, unless `force=true`, which takes it out of them too.",
         query: z.object({ defaultId: z.string().max(64).optional(), force: z.enum(["true", "false"]).optional() }),
         async handler({ services, access, params, query, actor }) {
             return json(

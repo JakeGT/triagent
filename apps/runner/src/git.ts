@@ -109,6 +109,8 @@ export function fetchEnv(ctx: GitContext, cloneUrl: string, username: string, to
 }
 
 const SHA = /^[0-9a-f]{40}$/;
+/** What git says when the other end doesn't have (or won't give) a commit asked for by itself. */
+const GONE = /not our ref|unadvertised object|couldn't find remote ref|no such remote ref|not a valid object|bad object/i;
 
 /**
  * Whether `name` is a branch name git accepts (`git check-ref-format --branch`): no control characters,
@@ -226,7 +228,9 @@ export class Git {
      * The commits a job was told to review (`head`, and `base` where its changes start), once what it
      * reviews has been fetched: they're usually there already, as the pull request's or branch's history.
      * One that isn't (the branch was rewritten since) is asked for by itself; if GitHub no longer has it,
-     * this fails saying so.
+     * this fails saying so. It's fetched without a ref to keep it by: the job's worktree holds it while
+     * it's reviewed, and afterwards git is free to clear it out of the mirror with whatever else nothing
+     * points at, so the mirror doesn't grow by a ref for every such commit.
      */
     async pin(
         mirror: string,
@@ -243,22 +247,19 @@ export class Git {
                     () => false,
                 );
             if (await has()) continue;
-            await this.git(
-                [
-                    "--git-dir",
-                    mirror,
-                    "fetch",
-                    "--quiet",
-                    "--no-tags",
-                    "--no-write-fetch-head",
-                    "--",
-                    job.cloneUrl,
-                    `+${sha}:refs/triagent/commit/${sha}`,
-                ],
-                fetchEnv(this.ctx, job.cloneUrl, job.username, job.token),
-                15 * 60_000,
-                signal,
-            ).catch(() => {});
+            try {
+                await this.git(
+                    ["--git-dir", mirror, "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--", job.cloneUrl, sha],
+                    fetchEnv(this.ctx, job.cloneUrl, job.username, job.token),
+                    15 * 60_000,
+                    signal,
+                );
+            } catch (err) {
+                // Only GitHub saying it hasn't got the commit means it's gone: a cancel, a refused token or a
+                // network that's down is its own error, as it is for the fetch before this.
+                if (signal?.aborted || !GONE.test((err as Error).message)) throw err;
+            }
+            if (signal?.aborted) throw new Error("git fetch was stopped");
             if (!(await has()))
                 throw new Error(`Commit ${sha.slice(0, 7)}, which this review was of, can't be fetched from GitHub any more.`);
         }

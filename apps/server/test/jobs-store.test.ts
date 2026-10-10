@@ -118,6 +118,15 @@ for (const kind of kinds) {
             assert.deepEqual((await store.jobs.get("j1"))?.requestedBy, { name: "admin", userId: "u1", tokenId: null });
             await store.jobs.put({ ...asked, options: null });
             assert.equal((await store.jobs.get("j1"))?.options ?? null, null);
+            // "No options" (null or left out, which every reader takes alike) is never confused with options that
+            // are all off: those are a review that said it wants none, whatever the project's are.
+            const off = { retryFailed: false, agreement: { failAt: null, markSingles: false }, judge: null, bakeOff: false };
+            const rerunOf = { jobId: "j0", index: 1, label: "fake/b", attempt: 1, auto: false, reportId: null };
+            await store.jobs.put({ ...asked, options: off, rerunOf });
+            assert.deepEqual((await store.jobs.get("j1"))?.options, off);
+            assert.deepEqual((await store.jobs.get("j1"))?.rerunOf, rerunOf);
+            await store.jobs.put({ ...asked, options: off, rerunOf: null });
+            assert.equal((await store.jobs.get("j1"))?.rerunOf ?? null, null);
         });
 
         test("a job's log keeps its newest lines under the cap, with seq as a stable cursor", async () => {

@@ -185,6 +185,20 @@ describe("asking a model which findings are the same problem", () => {
             (await judgeFindings({ ...m, protocol: "anthropic-bedrock", url: "" }, twoReviews())).error ?? "",
             /Amazon Bedrock can't be asked/,
         );
+        // A protocol this runner doesn't know (a newer server's) says so, rather than failing somewhere inside.
+        assert.match(
+            (await judgeFindings({ ...m, protocol: "gemini" as RunnerModel["protocol"] }, twoReviews())).error ?? "",
+            /this runner can't ask a model that speaks gemini/,
+        );
+        // Nor does anything going wrong before a model is asked: it's an answer like the others, never a throw.
+        const broken = {
+            status: "done",
+            get report(): never {
+                throw new Error("this report can't be read");
+            },
+        } as FinishPart;
+        const unread = await judgeFindings(m, [broken, ...twoReviews()]);
+        assert.deepEqual([unread.pairs, unread.total, unread.tokens, unread.error], [[], 0, null, "this report can't be read"]);
         // One request of several failing loses all of them: all the pairs answered, or none.
         provider.mode = "answer";
         let n = 0;

@@ -26,6 +26,7 @@
 // model-setup.ts): a URL and key, or for Amazon Bedrock a region and an AWS access key.
 
 import { JUDGE_FIRST } from "@triagent/shared";
+import { canBeAsked } from "@triagent/shared/model";
 import { MAX_MODELS, modelLabels } from "../domain/merge.ts";
 import type { Job, JobKind, Project, Repos, ReviewRecord, Workspace } from "../store/types.ts";
 import { type Allowances, nextMonthStart, resetDay } from "./allowances.ts";
@@ -283,20 +284,29 @@ export class Models {
         which: string,
         repos: Repos = this.core.store,
     ): Promise<{ model: RunModel } | { error: string }> {
-        const can = (m: RunModel) => m.keySource === "workspace" && m.protocol !== "anthropic-bedrock";
+        const can = (m: RunModel) => m.keySource === "workspace" && canBeAsked(m.protocol);
         if (which === JUDGE_FIRST) {
             const first = models.find(can);
             return first
                 ? { model: first }
-                : { error: "none of this review's models can be asked: they're on Amazon Bedrock, or the instance's" };
+                : { error: "none of this review's models can be asked: each is on Amazon Bedrock, or is the instance's model" };
         }
+        // Refused when it's chosen (settings.judgeProblem); said here too, whether or not it's one of the review's.
+        if (which === INSTANCE_MODEL) return { error: "the instance's model can't be asked" };
         const own = models.find((m) => m.id === which);
-        if (own) return can(own) ? { model: own } : { error: `${own.label} is on Amazon Bedrock, where a model can't be asked` };
+        if (own) {
+            if (can(own)) return { model: own };
+            return {
+                error: canBeAsked(own.protocol)
+                    ? `${own.label} runs on the instance's key, and such a model can't be asked`
+                    : `${own.label} is on Amazon Bedrock, where a model can't be asked`,
+            };
+        }
         const r = await this.setup.resolveFavourite(repos, workspace, which);
         if (!r) return { error: "the favourite model chosen to be asked has been removed" };
         const name = r.favourite.name ?? r.favourite.model;
         if (!r.ready) return { error: `${name} needs ${r.missing} in Settings → Models first` };
-        if (r.model.protocol === "anthropic-bedrock") return { error: `${name} is on Amazon Bedrock, where a model can't be asked` };
+        if (!canBeAsked(r.model.protocol)) return { error: `${name} is on Amazon Bedrock, where a model can't be asked` };
         return { model: { ...r.model, ready: true, id: r.favourite.id, label: name, keySource: "workspace" } };
     }
 

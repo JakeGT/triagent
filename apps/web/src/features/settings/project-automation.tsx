@@ -230,7 +230,7 @@ export function ProjectAutomation() {
                         <ReviewOptions
                             legend="When a review has several models"
                             value={d.options}
-                            models={MAX_MODELS}
+                            models={choices.data?.max ?? MAX_MODELS}
                             choices={choices.data}
                             project
                             disabled={!editable}
