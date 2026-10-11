@@ -44,10 +44,11 @@ export function RunModelsTable({ ws, project, runId, branch }: { ws: string; pro
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {data.models.map((m) => {
+                        {data.models.map((m, i) => {
                             const severities = SEVERITIES.filter((s) => m.bySeverity?.[s]);
                             return (
-                                <TableRow key={m.label}>
+                                // biome-ignore lint/suspicious/noArrayIndexKey: a review's models are in a fixed order
+                                <TableRow key={`${i}:${m.label}`}>
                                     <TableCell className="min-w-32 whitespace-normal">
                                         {m.findings ? (
                                             // Its findings, in the issues list.
@@ -86,6 +87,7 @@ export function RunModelsTable({ ws, project, runId, branch }: { ws: string; pro
                                     <TableCell className="text-end tabular-nums">
                                         {m.rejected === null ? dash : count(m.rejected)}
                                     </TableCell>
+                                    {/* Nothing to price without its tokens; with them, usd() says "No price" when the model has none. */}
                                     <TableCell className="text-end tabular-nums">{m.tokens === null ? dash : usd(m.cost)}</TableCell>
                                 </TableRow>
                             );

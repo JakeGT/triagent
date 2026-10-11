@@ -937,7 +937,13 @@ export class PostgresStore implements Store {
                         outcome: r.outcome,
                         decided_at: r.decidedAt,
                     }));
-                    await sql`insert into finding_sources ${sql(batch)} on conflict do nothing`;
+                    // Already there: its first sighting stays, and its outcome is brought up to what triage says now (rows
+                    // outlive a deleted branch, and a new branch of the same name starts its triage afresh).
+                    await sql`
+                        insert into finding_sources ${sql(batch)}
+                        on conflict (project_id, branch, finding_id, model, provider)
+                        do update set outcome = excluded.outcome, decided_at = excluded.decided_at
+                        where finding_sources.outcome is distinct from excluded.outcome`;
                 }
             }),
         setOutcome: (projectId, branch, findingId, outcome, at) =>
@@ -961,7 +967,14 @@ export class PostgresStore implements Store {
             ).map(toSource),
         renameBranch: (projectId, from, to) =>
             this.write(async (sql) => {
-                // Rows the new name already has (it was reviewed under both) stay as they are.
+                // Rows the new name already has (left by a branch of that name since deleted) keep their first sighting and
+                // take the outcome of the branch being renamed: its triage is what moves with it.
+                await sql`
+                    update finding_sources t set outcome = s.outcome, decided_at = s.decided_at
+                    from finding_sources s
+                    where s.project_id = ${projectId} and s.branch = ${from}
+                      and t.project_id = s.project_id and t.branch = ${to} and t.finding_id = s.finding_id
+                      and t.model = s.model and t.provider = s.provider`;
                 await sql`
                     update finding_sources s set branch = ${to}
                     where project_id = ${projectId} and branch = ${from}

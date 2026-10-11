@@ -60,7 +60,33 @@ describe("the store", () => {
         await store.transaction((tx) => tx.findingSources.setOutcome("p1", "main", "ocr-1", null, at));
         assert.ok((await list("p1")).every((s) => s.outcome === null && s.decidedAt === null));
 
+        // Reported again once triage has moved on (a branch of the same name, say): the first sighting stays, the outcome is now's.
+        await store.transaction((tx) =>
+            tx.findingSources.add([source({ findingId: "ocr-2", outcome: "rejected", decidedAt: at, scanId: "scan-9" })]),
+        );
+        assert.deepEqual(
+            (await list("p1")).filter((s) => s.findingId === "ocr-2").map((s) => [s.scanId, s.outcome]),
+            [["scan-1", "rejected"]],
+        );
+        await store.transaction((tx) => tx.findingSources.setOutcome("p1", "main", "ocr-2", null, at));
+
+        // A rename onto a name that has rows left from a deleted branch: theirs keep their first sighting, with this branch's outcome.
+        await store.transaction(async (tx) => {
+            await tx.findingSources.add([
+                source({
+                    branch: "trunk",
+                    findingId: "ocr-2",
+                    firstSeenAt: "2026-01-01T00:00:00.000Z",
+                    outcome: "accepted",
+                    decidedAt: at,
+                }),
+            ]);
+        });
         await store.transaction((tx) => tx.findingSources.renameBranch("p1", "main", "trunk"));
+        assert.deepEqual(
+            (await list("p1")).filter((s) => s.findingId === "ocr-2").map((s) => [s.branch, s.firstSeenAt, s.outcome]),
+            [["trunk", "2026-01-01T00:00:00.000Z", null]],
+        );
         assert.deepEqual([...new Set((await list("p1")).map((s) => s.branch))], ["trunk"]);
         assert.equal((await store.findingSources.list({ workspaceId: "w1", projectId: "p1", branch: "trunk" }, 100)).length, 3);
 
@@ -195,6 +221,25 @@ describe("each model's figures", () => {
         assert.deepEqual(m.rows.find((r) => r.key === "c/three")?.findings, 0);
     });
 
+    test("a model that found the same thing in a later review didn't agree with the first", () => {
+        const history = [review("a/one", {}, scan("scan-1", ["One", "Two"])), review("b/two", {}, scan("scan-1", ["One", "Two"]))];
+        const m = models(history, [
+            source({ findingId: "h1" }),
+            // Two reported it too, but a day later, in a review of its own.
+            source({
+                findingId: "h1",
+                model: "b/two",
+                label: "Two",
+                scanId: "later",
+                scanModels: 1,
+                firstSeenAt: "2026-10-08T10:00:00.000Z",
+            }),
+        ]);
+        assert.equal(m.rows.find((r) => r.key === "a/one")?.unique, 1);
+        assert.deepEqual([m.agreement.findings, m.agreement.all, m.agreement.one], [1, 0, 1]);
+        assert.deepEqual(m.agreement.overlap, [{ a: "a/one", b: "b/two", of: 1, shared: 0, share: 0 }]);
+    });
+
     test("one branch: only its reviews and its findings", () => {
         const m = models(
             [review("a/one"), review("a/one", { branch: "other" })],
@@ -298,6 +343,8 @@ describe("through real reviews", () => {
             [2, 3, 1],
         );
         assert.deepEqual([await count("model=fake/model&onlyModel=true"), await count("model=nobody"), await count("")], [0, 0, 3]);
+        // "Only it" without saying which model is a mistake, not everything.
+        assert.equal((await env.t.request(`/api/v1/w/${ws}/p/app/issues?branch=main&onlyModel=true`, { session: env.admin })).status, 400);
     });
 
     test("triage decides each model's accuracy, and it outlives the branch's report", async () => {

@@ -460,7 +460,13 @@ export class MemoryStore implements Store {
     findingSources: Repos["findingSources"] = {
         add: (rows) =>
             this.write(() => {
-                for (const r of rows) if (!this.t.findingSources.get(sourceKey(r))) this.t.findingSources.set(sourceKey(r), r);
+                for (const r of rows) {
+                    // Already there: its first sighting stays, and its outcome is brought up to what triage says now.
+                    const have = this.t.findingSources.get(sourceKey(r));
+                    if (!have) this.t.findingSources.set(sourceKey(r), r);
+                    else if (have.outcome !== r.outcome)
+                        this.t.findingSources.set(sourceKey(r), { ...have, outcome: r.outcome, decidedAt: r.decidedAt });
+                }
             }),
         setOutcome: (projectId, branch, findingId, outcome, at) =>
             this.write(() => {
@@ -485,7 +491,9 @@ export class MemoryStore implements Store {
                     if (s.projectId !== projectId || s.branch !== from) continue;
                     this.t.findingSources.delete(sourceKey(s));
                     const moved = { ...s, branch: to };
-                    if (!this.t.findingSources.get(sourceKey(moved))) this.t.findingSources.set(sourceKey(moved), moved);
+                    // One the new name already has keeps its first sighting, and takes this branch's outcome.
+                    const have = this.t.findingSources.get(sourceKey(moved));
+                    this.t.findingSources.set(sourceKey(moved), have ? { ...have, outcome: s.outcome, decidedAt: s.decidedAt } : moved);
                 }
             }),
         removeProject: (workspaceId, projectId) =>

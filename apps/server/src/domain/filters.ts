@@ -95,6 +95,8 @@ export function parseFilters(input: Input, { maxLimit = 500, defaultLimit = 50 }
     const get = (...keys: string[]) => keys.map((k) => read(input, k)).find((v) => v !== undefined && v !== "");
     const sort = String(get("sort") || "priority");
     const foundBy = get("foundBy", "found_by");
+    if (flag(get("onlyModel", "only_model"), "onlyModel") === true && !text(get("model"), 200, "model"))
+        throw badRequest('"onlyModel" needs "model": the model whose findings no other model found.');
     return {
         severity: oneOf(list(get("severity")), SEVERITIES, "severity"),
         category: oneOf(list(get("category")), CATEGORIES, "category"),

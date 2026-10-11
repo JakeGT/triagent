@@ -43,7 +43,7 @@ function FoundBy({ models, search, onChange }: { models: string[]; search: Issue
     // A model named in the address that this review didn't run finds nothing: shown, so it can be taken off.
     const model = search.model;
     const chosen = [
-        search.foundBy ? label(Math.min(search.foundBy, n)) : null,
+        search.foundBy && n > 1 ? label(Math.min(search.foundBy, n)) : null,
         model ? (search.onlyModel ? `Only ${model}` : model) : null,
     ].filter(Boolean);
     return (

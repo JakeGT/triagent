@@ -59,7 +59,7 @@ export class AnalyticsService {
         const branch = scope.branch || null;
 
         const sections = scope.sections?.length ? new Set(scope.sections) : null;
-        const wants = (...any: AnalyticsSection[]) => !sections || any.some((s) => sections.has(s));
+        const wants = (...parts: AnalyticsSection[]) => !sections || parts.some((s) => sections.has(s));
 
         const history = await store.reviewHistory.list({ workspaceId: workspace.id, ...(projectId ? { projectId } : {}) }, LIMITS.history);
 
@@ -122,9 +122,12 @@ export class AnalyticsService {
             }
         }
 
-        // Who found what: every one for the scope, since a finding's other finders may be from before the range.
+        // Who found what, for the scope.
         const sources = wants("models")
-            ? await store.findingSources.list({ workspaceId: workspace.id, ...(projectId ? { projectId } : {}) }, LIMITS.sources)
+            ? await store.findingSources.list(
+                  { workspaceId: workspace.id, ...(projectId ? { projectId } : {}), ...(branch ? { branch } : {}) },
+                  LIMITS.sources,
+              )
             : [];
 
         const slugs = new Map(all.map((p) => [p.id, p.slug]));

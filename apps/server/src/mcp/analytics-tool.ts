@@ -26,7 +26,12 @@ export function analyticsText(a: Analytics): string {
             `- Run time: median ${dur(r.runSeconds.median)}, 90th percentile ${dur(r.runSeconds.p90)}; queue time: median ${dur(r.queueSeconds.median)}`,
             `- Tokens: ${n(r.tokens.total)} (${n(r.tokens.input)} input, ${n(r.tokens.output)} output, ${n(r.tokens.cacheRead)} cache reads)${r.tokens.estimated ? `, including an estimate of ${n(r.tokens.estimatedTotal)} for ${n(r.tokens.estimated)} review(s) that stopped without saying (counted at their token budget)` : ""}`,
             `- Cost: ${usd(r.cost.total)}; per review ${usd(r.cost.perReview)}, per pull request ${usd(r.cost.perPr)}, per finding ${usd(r.cost.perFinding)}`,
-            ...(a.unpriced.length ? [`- No price for: ${a.unpriced.map((u) => `${u.model} (${n(u.tokens)} tokens)`).join(", ")}`] : []),
+        );
+    // Whichever parts were asked for: a cost above (a review's, a model's) leaves these out.
+    if (a.unpriced.length)
+        lines.push(
+            "",
+            `No price for: ${a.unpriced.map((u) => `${u.model} (${n(u.tokens)} tokens)`).join(", ")}. Their tokens are left out of the costs.`,
         );
     if (m) {
         lines.push("", "## Models");

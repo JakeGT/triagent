@@ -224,7 +224,7 @@ export function analyse(input: AnalyticsInput) {
     const severityOf = (k: string) => currentSeverity.get(k) ?? reportedSeverity.get(k) ?? null;
 
     const wanted = (s: AnalyticsSection) => !input.sections || input.sections.has(s);
-    // Costs and unpriced models come from the reviews, whichever parts are asked for.
+    // Worked out whichever parts are asked for: which models have no price comes from it, and every part says so.
     const { section: reviewSection, unpriced } = reviewsSection(reviews, range, input);
     return {
         range: { days: range.days, from: range.from, to: range.to, unit: range.unit, buckets: range.buckets },
@@ -939,10 +939,12 @@ function modelsSection(
         if (!id || !r.model || r.details.merging) continue;
         ran.set(id, (ran.get(id) ?? new Set()).add(r.model));
     }
-    // Every model that reported each finding, whenever it did.
+    // The models that reported each finding in the same review. One that found it in a later review didn't
+    // agree with the first: it wasn't looking at the same thing at the same time.
     const finders = new Map<string, Set<string>>();
     const findingKey = (s: FindingSource) => `${s.projectId}\0${s.branch}\0${s.findingId}`;
-    for (const s of sources) finders.set(findingKey(s), (finders.get(findingKey(s)) ?? new Set()).add(s.model));
+    const inScan = (s: FindingSource) => `${findingKey(s)}\0${s.scanId ?? ""}`;
+    for (const s of sources) finders.set(inScan(s), (finders.get(inScan(s)) ?? new Set()).add(s.model));
 
     const agreement = { findings: 0, all: 0, several: 0, one: 0 };
     const counted = new Set<string>();
@@ -957,7 +959,7 @@ function modelsSection(
         const p = s.outcome ? point(s.firstSeenAt, s.model) : null;
         if (p && s.outcome) p[s.outcome]++;
         if (s.scanModels < 2) continue;
-        const found = finders.get(findingKey(s)) ?? new Set([s.model]);
+        const found = finders.get(inScan(s)) ?? new Set([s.model]);
         if (found.size === 1) m.unique++;
         // Against each other model of the same review: did it find this one too?
         for (const other of (s.scanId ? ran.get(s.scanId) : null) ?? found) {
@@ -969,8 +971,8 @@ function modelsSection(
             pairs.set(k, pair);
         }
         // The finding itself, once, however many models reported it.
-        if (counted.has(findingKey(s))) continue;
-        counted.add(findingKey(s));
+        if (counted.has(inScan(s))) continue;
+        counted.add(inScan(s));
         agreement.findings++;
         if (found.size === 1) agreement.one++;
         else if (found.size >= s.scanModels) agreement.all++;
