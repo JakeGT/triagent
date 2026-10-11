@@ -90,7 +90,9 @@ test("migration 0008 forgets removed examples and old default time limits, and n
         assert.equal(before["activity:gone-1"], 6);
         assert.equal(before["history:gone-1"], 2);
 
-        assert.deepEqual(await migrate(sql, { schema }), ["0008_example_analytics_and_time_limits.sql"]);
+        // Only it: later migrations have their own tests.
+        const upTo0008 = readMigrations().filter((m) => m.version <= "0008");
+        assert.deepEqual(await migrate(sql, { schema, migrations: upTo0008 }), ["0008_example_analytics_and_time_limits.sql"]);
 
         const expected = { ...before };
         for (const id of ["gone-1", "gone-2"]) {
