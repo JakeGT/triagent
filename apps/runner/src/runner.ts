@@ -495,6 +495,8 @@ export class Runner {
     readonly id = `runner-${randomBytes(9).toString("base64url")}`;
     private readonly active = new Map<string, JobRun>();
     private stopping = false;
+    /** Stopping, but letting the reviews in hand finish first. */
+    private draining = false;
     /** Aborted by stop(), to end the poll loop's wait. */
     private readonly wake = new AbortController();
     private loop: Promise<void> | null = null;
@@ -522,8 +524,10 @@ export class Runner {
             id: this.id,
             name: this.config.name,
             version: VERSION,
-            slots: Math.max(0, this.config.concurrency - this.active.size),
+            // None while it's on its way out: the server hands it nothing more.
+            slots: this.stopping ? 0 : Math.max(0, this.config.concurrency - this.active.size),
             capacity: this.config.concurrency,
+            ...(this.draining ? { draining: true } : {}),
         };
     }
 
@@ -533,6 +537,23 @@ export class Runner {
 
     start(): void {
         this.loop ??= this.poll();
+    }
+
+    /**
+     * Stop asking for work and let the reviews in hand finish, however long they take; resolves once they
+     * have and the server has been told. What a deploy does to the runner it replaces: the new one, started
+     * beside it, takes whatever is queued meanwhile. `stop()` during it cancels what's left, as it always did.
+     */
+    async drain(): Promise<void> {
+        if (!this.stopping) log.info("Draining: finishing the reviews in hand, taking no more", { running: this.active.size });
+        this.draining = true;
+        this.stopping = true;
+        this.wake.abort();
+        while (this.active.size) await sleep(50);
+        await this.loop;
+        await this.relaySink?.flush(3000);
+        this.relay?.();
+        this.relay = null;
     }
 
     /** Stop asking for work; stop running reviews and tell the server why. */
@@ -782,7 +803,8 @@ export class Runner {
                 // own code is an error; the rest (git, the network, the repository) happens.
                 const ours = err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError;
                 if (ours) log.error("A review failed in the runner", { run: job.id, err: run.redactError(err) });
-                else log.warn("A review failed in the runner", { run: job.id, reason: message });
+                // Stopped on purpose (cancelled, or taken away) isn't a failure worth a warning.
+                else if (!run.cancelled && !run.lost) log.warn("A review failed in the runner", { run: job.id, reason: message });
                 run.say(message);
                 outcome = { status: run.cancelled ? "cancelled" : "failed", error: message };
             }

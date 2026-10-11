@@ -335,6 +335,7 @@ exec git "$@"
                 warnings: [],
                 log: { level: "info", format: "text" },
                 relayLogs: false,
+                stopMode: "drain",
             },
             locks,
         );

@@ -106,6 +106,64 @@ jobs:
           docker exec server-ci wget -qO- http://127.0.0.1:8080/api/v1/skill.md | grep -q '^name: triagent$'
           docker rm -f server-ci
 
+  overlap:
+    # For the moments a deploy overlaps, the version being replaced runs on the new version's schema. So a
+    # migration must leave it working: add first, remove in a later release. Checked by running the base
+    # branch's server tests against this branch's migrations, whenever a pull request changes them.
+    name: Previous release on the new schema
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: public.ecr.aws/docker/library/postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Did the migrations change?
+        id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --quiet "$BASE" HEAD -- apps/server/db/migrations; then
+            echo "The migrations are the base branch's: nothing to check."
+          elif ! git show "$BASE:apps/server/src/db/migrate.ts" | grep -q TRIAGENT_MIGRATIONS_DIR; then
+            echo "The base branch is from before its tests could be pointed at other migrations: nothing to check this once."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check out the base branch beside this one
+        if: steps.changed.outputs.run == 'true'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: git worktree add ../previous "$BASE"
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.changed.outputs.run == 'true'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.changed.outputs.run == 'true'
+        with:
+          node-version: 24
+      - name: The base branch's server tests, on this branch's schema
+        if: steps.changed.outputs.run == 'true'
+        working-directory: ../previous
+        env:
+          TRIAGENT_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres
+        run: |
+          export TRIAGENT_MIGRATIONS_DIR="$GITHUB_WORKSPACE/apps/server/db/migrations"
+          pnpm install --frozen-lockfile
+          # Not the tests of the migrations themselves: those are about the base branch's own files.
+          node --test --test-reporter=spec $(ls apps/server/test/*.test.ts | grep -v 'migration')
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest

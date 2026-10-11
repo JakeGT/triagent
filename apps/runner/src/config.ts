@@ -25,6 +25,11 @@ export interface RunnerConfig {
     llmTimeout: string | null;
     /** The PATH OCR and git get (they get nothing else from the runner's own environment). */
     path: string;
+    /**
+     * What the first stop signal does to reviews in hand: let them finish, then stop ("drain"), or stop them
+     * at once and report them as stopped ("cancel"). A second signal always cancels.
+     */
+    stopMode: "drain" | "cancel";
     log: { level: LogLevel; format: LogFormat };
     /** Pass this runner's own log lines (never a review's) on to the server, for its error tracker. */
     relayLogs: boolean;
@@ -92,6 +97,8 @@ export function loadConfig(env: Env = process.env): RunnerConfig {
     } catch (err) {
         throw new ConfigError((err as Error).message);
     }
+    const stopMode = env.RUNNER_STOP || "drain";
+    if (stopMode !== "drain" && stopMode !== "cancel") throw new ConfigError(`RUNNER_STOP must be "drain" or "cancel", got "${stopMode}".`);
     const relay = env.RUNNER_RELAY_LOGS || "true";
     if (relay !== "true" && relay !== "false") throw new ConfigError(`RUNNER_RELAY_LOGS must be true or false, got "${relay}".`);
     return {
@@ -109,6 +116,7 @@ export function loadConfig(env: Env = process.env): RunnerConfig {
         gitBin: env.GIT_BIN || "git",
         llmTimeout,
         path: env.PATH || "/usr/local/bin:/usr/bin:/bin",
+        stopMode,
         log: logOptions,
         relayLogs: relay === "true",
         warnings: [secretFileWarning(env.TRIAGENT_RUNNER_SECRET_FILE)].filter((w): w is string => w !== null),

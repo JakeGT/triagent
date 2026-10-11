@@ -53,7 +53,8 @@ export async function reviewEnv(options: { store?: Store; env?: Record<string, s
             const dir = mkdtempSync(path.join(tmpdir(), "runner-"));
             env.dirs.push(dir);
             const r = new Runner({
-                serverUrl: url,
+                // Read when the runner is made, so a test can put something in front of the server first.
+                serverUrl: env.url,
                 secret,
                 name: `test-runner-${env.runners.length + 1}`,
                 concurrency: extra.concurrency ?? 1,
@@ -71,6 +72,7 @@ export async function reviewEnv(options: { store?: Store; env?: Record<string, s
                 warnings: [],
                 log: { level: "info", format: "text" },
                 relayLogs: false,
+                stopMode: "drain",
             });
             env.runners.push(r);
             r.start();

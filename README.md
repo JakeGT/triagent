@@ -105,6 +105,10 @@ Custom and Azure addresses must use https and resolve only to public addresses, 
 
 One `Dockerfile` builds both images: `--target server` (the API and the web app) and `--target runner` (git and a pinned Open Code Review). [deploy/compose.example.yml](deploy/compose.example.yml) runs the server, a runner and Postgres, with secrets as files and the runner on a private network with outbound access only. Whatever proxy is in front must not pass `/internal/` (the runner API) through.
 
+### Deploying a new version
+
+A runner asked to stop finishes the reviews it has first (a second signal, or `RUNNER_STOP=cancel`, stops them at once), and a new server can run beside the old one while traffic moves over, so a deploy needn't wait for a quiet moment or cancel anyone's review: [docs/deploying.md](docs/deploying.md).
+
 ### Logs and error reporting
 
 The server and the runner log one line per event, with a level and named fields (`LOG_LEVEL`, `LOG_FORMAT=text|json`); every request has an id that's sent back as `X-Request-Id`. Set `SENTRY_DSN` on the server to have errors, log lines and (optionally) traces reported to Sentry, from the server, the runners (through the server) and the web app (through the server too, so the Content Security Policy is unchanged). Without it nothing leaves the instance. What is and isn't logged or sent is in [docs/logging.md](docs/logging.md).

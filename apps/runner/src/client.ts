@@ -81,6 +81,8 @@ export interface RunnerIdentity {
     slots: number;
     /** How many it works on at once in all (a server older than this ignores it). */
     capacity: number;
+    /** Finishing the reviews it has before it stops, and taking no more (a server older than this ignores it). */
+    draining?: boolean;
 }
 
 export class ServerError extends Error {

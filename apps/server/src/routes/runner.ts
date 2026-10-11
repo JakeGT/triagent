@@ -22,6 +22,8 @@ const Runner = z.object({
     slots: z.number().int().min(0).max(100),
     // How many jobs it works on at once in all (`slots` is how many more it can take). Older runners don't say.
     capacity: z.number().int().min(1).max(100).nullable().optional(),
+    // Finishing what it has before stopping, and taking no more. Older runners never do, so never say.
+    draining: z.boolean().optional(),
 });
 
 /** The runner as the services know it. */
@@ -31,6 +33,7 @@ const hello = (r: z.infer<typeof Runner>): RunnerHello => ({
     version: r.version ?? null,
     slots: r.slots,
     ...(typeof r.capacity === "number" ? { capacity: r.capacity } : {}),
+    ...(r.draining ? { draining: true } : {}),
 });
 
 const digest = (s: string) => createHash("sha256").update(s).digest();

@@ -97,6 +97,8 @@ export async function testApp(store?: Store, options: ServiceOptions & { env?: R
         ...env,
     });
     const services = createServices(config, store ?? (await testStore()), serviceOptions);
+    // A server just started gives runners a minute to be heard from before giving their reviews up: not in tests.
+    services.runs.startupGraceMs = 0;
     await services.accounts.bootstrap();
     const { app, routes } = createApp(services);
 

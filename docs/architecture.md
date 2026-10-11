@@ -227,6 +227,10 @@ Creating an organisation or a project opens its guided setup, a popup (`features
 
 `GET /api/v1/w/{workspace}/events` is a Server-Sent Events stream of "something changed" notices for that workspace only. Notices about settings, members, tokens and secrets only reach people who manage them. Clients fetch details with their own permissions.
 
+## Deploys
+
+Nothing in a deploy needs a review to stop ([deploying.md](deploying.md)). A runner drains on its first stop signal (`Runner.drain`): it reports no free slots and `draining`, which the server stores (`runners.draining`) and leaves out of the room it counts. Two servers can share a database for the moments one replaces the other: background work is behind a database lock (`holdLock`), a server waits one lease period after starting before it gives up reviews it hasn't heard about (`Runs.startupGraceMs`), and migrations only ever add (checked in CI by running the base branch's tests on the new schema). The runner's messages stay understood for one release (`test/deploy.test.ts` replays the previous shapes).
+
 ## Logs and error reporting
 
 One logger (`packages/shared/src/log.ts`, no dependencies) for the server and the runner: `log.warn("message", { fields })`, with a fixed message and what varies in the fields. It cleans every line of credentials, prints it (as text or JSON) and hands it to its sinks. Nothing else in either app writes to the console.

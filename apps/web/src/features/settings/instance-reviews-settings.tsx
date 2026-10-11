@@ -37,9 +37,12 @@ const reviews = (n: number) => `${n} review${n === 1 ? "" : "s"}`;
  * What the limits and the runners add up to: how many reviews can really run at once, and what holds
  * that down. The limits can be set above what the runners can do; then reviews wait for a runner slot.
  */
-export function capacityNote(instanceLimit: number, runners: Pick<InstanceRunner, "slots">[]): string {
+export function capacityNote(instanceLimit: number, runners: Pick<InstanceRunner, "slots" | "draining">[]): string {
     if (!runners.length) return "No runner is connected, so no review can start. Start a runner (see the README).";
-    const slots = runners.reduce((n, r) => n + r.slots, 0);
+    if (runners.every((r) => r.draining))
+        return `The connected runner${runners.length === 1 ? " is" : "s are"} finishing ${runners.length === 1 ? "its" : "their"} reviews before stopping, and take${runners.length === 1 ? "s" : ""} no more: new reviews wait until another runner connects.`;
+    // One on its way out doesn't count: it takes nothing more.
+    const slots = runners.reduce((n, r) => n + (r.draining ? 0 : r.slots), 0);
     const these = `The connected runner${runners.length === 1 ? "" : "s"} can work on ${reviews(slots)} at once`;
     if (instanceLimit > slots)
         return `${these}, fewer than this instance's limit of ${instanceLimit}: reviews past ${slots} wait for a free runner slot.`;
@@ -201,7 +204,14 @@ function RunnersSection({ data }: { data: InstanceReviews }) {
                                 // Two runners can share a name (a host name, by default).
                                 // biome-ignore lint/suspicious/noArrayIndexKey: the list is replaced whole, and names needn't be unique
                                 <TableRow key={`${r.name}:${i}`} data-testid={`runner-${r.name}`}>
-                                    <TableCell className="font-medium break-all whitespace-normal">{r.name}</TableCell>
+                                    <TableCell className="font-medium break-all whitespace-normal">
+                                        {r.name}
+                                        {r.draining && (
+                                            <span className="block text-xs font-normal text-muted-foreground">
+                                                Finishing its reviews before it stops; takes no more
+                                            </span>
+                                        )}
+                                    </TableCell>
                                     <TableCell className="hidden sm:table-cell">{r.version ?? "Not reported"}</TableCell>
                                     <TableCell className="text-end tabular-nums">
                                         {r.busy} of {r.slots}

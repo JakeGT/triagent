@@ -446,6 +446,8 @@ export interface RunnerRecord {
     /** How many reviews it works on at once. */
     slots: number;
     lastSeenAt: string;
+    /** Finishing the reviews it has and taking no more: it's about to stop (absent from before runners said). */
+    draining?: boolean;
 }
 
 /** Everything a request can read or change. Writes inside `Store.transaction` happen all together or not at all. */

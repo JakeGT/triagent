@@ -332,6 +332,7 @@ const toRunner = (r: Row): RunnerRecord => ({
     version: r.version,
     slots: r.slots,
     lastSeenAt: iso(r.last_seen_at),
+    draining: Boolean(r.draining),
 });
 
 const toGrant = (r: Row): ModelGrant => ({
@@ -1077,7 +1078,11 @@ export class PostgresStore implements Store {
 
     runners: Repos["runners"] = {
         seen: (r) =>
-            this.upsert("runners", { id: r.id, name: r.name, version: r.version, slots: r.slots, last_seen_at: r.lastSeenAt }, ["id"]),
+            this.upsert(
+                "runners",
+                { id: r.id, name: r.name, version: r.version, slots: r.slots, last_seen_at: r.lastSeenAt, draining: Boolean(r.draining) },
+                ["id"],
+            ),
         list: async () => (await this.rows((sql) => sql`select * from runners order by last_seen_at desc`)).map(toRunner),
     };
     instanceSettings: Repos["instanceSettings"] = {

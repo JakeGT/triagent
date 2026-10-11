@@ -762,6 +762,7 @@ describe("a job's life", () => {
                 warnings: [],
                 log: { level: "info", format: "text" },
                 relayLogs: false,
+                stopMode: "drain",
             });
             // The work directory has gone, so not even the job's own directory can be made.
             rmSync(path.join(dir, "work"), { recursive: true, force: true });
@@ -841,6 +842,7 @@ describe("time limits and stalled reviews", () => {
             warnings: [],
             log: { level: "info", format: "text" },
             relayLogs: false,
+            stopMode: "drain",
         });
     });
     after(async () => {
@@ -1053,6 +1055,7 @@ describe("several models at once", () => {
             warnings: [],
             log: { level: "info", format: "text" },
             relayLogs: false,
+            stopMode: "drain",
             ...extra,
         });
     const model = (name: string) => ({

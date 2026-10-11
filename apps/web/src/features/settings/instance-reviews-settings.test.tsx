@@ -78,6 +78,15 @@ describe("capacityNote", () => {
             "The connected runner can work on 1 review at once, the same as this instance's limit.",
         );
     });
+
+    it("leaves out a runner that's finishing up before it stops", () => {
+        expect(capacityNote(2, [{ slots: 2, draining: true }, { slots: 2 }])).toBe(
+            "The connected runners can work on 2 reviews at once, the same as this instance's limit.",
+        );
+        expect(capacityNote(2, [{ slots: 2, draining: true }])).toBe(
+            "The connected runner is finishing its reviews before stopping, and takes no more: new reviews wait until another runner connects.",
+        );
+    });
 });
 
 describe("the Runs page's line about limits", () => {

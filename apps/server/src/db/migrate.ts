@@ -11,7 +11,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ISql, Sql } from "postgres";
 
-export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../db/migrations");
+/**
+ * This version's migrations. TRIAGENT_MIGRATIONS_DIR points somewhere else for one purpose: running an older
+ * version's tests on a newer version's schema, to check the two can run side by side for the moments a deploy
+ * overlaps (CI's "previous release on the new schema"). Never set it on a real instance.
+ */
+export const MIGRATIONS_DIR = process.env.TRIAGENT_MIGRATIONS_DIR
+    ? path.resolve(process.env.TRIAGENT_MIGRATIONS_DIR)
+    : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../db/migrations");
 const FILE = /^(\d{4})_[a-z0-9_]+\.sql$/;
 
 export interface Migration {

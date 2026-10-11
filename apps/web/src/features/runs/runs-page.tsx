@@ -263,7 +263,7 @@ export function RunsPage() {
                     </section>
                     <p className="text-xs text-muted-foreground">
                         {data.runners.length
-                            ? `Runners connected: ${data.runners.map((r) => (r.version ? `${r.name} (${r.version})` : r.name)).join(", ")}.`
+                            ? `Runners connected: ${data.runners.map((r) => `${r.version ? `${r.name} (${r.version})` : r.name}${r.draining ? ", finishing its reviews before it stops" : ""}`).join("; ")}.`
                             : data.runnersConnected
                               ? `${data.runnersConnected} runner${data.runnersConnected === 1 ? "" : "s"} connected.`
                               : "No runner is connected."}{" "}

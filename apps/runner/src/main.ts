@@ -66,11 +66,25 @@ if (config.healthPort) {
         .listen(config.healthPort, "127.0.0.1");
 }
 
+// The first signal lets the reviews in hand finish (unless RUNNER_STOP=cancel); a second stops them now. Whatever
+// stops the runner must give it the time: `docker stop` kills after ten seconds unless told to wait longer
+// (stop_grace_period in Compose).
+let signals = 0;
+const cancel = () => {
+    log.info("Stopping: reviews in progress are stopped and reported as such", { running: runner.running });
+    setTimeout(() => process.exit(0), 20_000).unref();
+    // stop() sends the runner's last lines to the server itself, once the reviews have been stopped.
+    void runner.stop().finally(() => process.exit(0));
+};
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
-        log.info("Stopping: reviews in progress are stopped and reported as such", { signal, running: runner.running });
-        setTimeout(() => process.exit(0), 20_000).unref();
-        // stop() sends the runner's last lines to the server itself, once the reviews have been stopped.
-        void runner.stop().finally(() => process.exit(0));
+        signals++;
+        if (signals > 1 || config.stopMode === "cancel" || !runner.running) return cancel();
+        log.info("Asked to stop: finishing the reviews in hand first. A second signal stops them now.", {
+            signal,
+            running: runner.running,
+        });
+        // drain() sends the runner's last lines to the server itself, once its reviews have finished.
+        void runner.drain().finally(() => process.exit(0));
     });
 }

@@ -235,6 +235,8 @@ export interface InstanceRunner {
     slots: number;
     busy: number;
     lastSeenAt: string;
+    /** Finishing the reviews it has before it stops (it's being replaced), and taking no more. */
+    draining?: boolean;
 }
 
 /** Settings → Instance → Reviews. */

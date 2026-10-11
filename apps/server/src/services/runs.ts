@@ -86,6 +86,8 @@ export interface RunnerHello {
     slots: number;
     /** How many it works on at once in all. A runner older than this doesn't say: it's worked out from the jobs it holds. */
     capacity?: number | null;
+    /** It's finishing the reviews it has before it stops, and takes no more. */
+    draining?: boolean;
 }
 
 /** How one model's review went, in a run with several (in the order the job gave them). */
@@ -585,6 +587,16 @@ export class Runs {
     private readonly progressSent = new Map<string, { at: number; timer: ReturnType<typeof setTimeout> | null }>();
     /** Runners heard from recently, so their record isn't written on every poll. */
     private readonly runnerSeen = new Map<string, number>();
+    /** The runners known to be draining, so the change is written down at once rather than at the next 15 seconds. */
+    private readonly runnerDraining = new Set<string>();
+    /**
+     * When this server process started. For one lease period after, a review whose lease has run out isn't
+     * given up: its runner may only have been unable to reach the server while it restarted (or was swapped
+     * for a new one in a deploy), and renews the lease as soon as it can.
+     */
+    private readonly startedAt = Date.now();
+    /** How long that is (tests of abandoned reviews don't wait a minute for it). */
+    startupGraceMs = LEASE_SECONDS * 1000;
     /** Background work (GitHub statuses and comments) still going, so tests and shutdown can wait for it. */
     private readonly pending = new Set<Promise<unknown>>();
     /** Called once a run has finished and its report is saved (automation refreshes the branch's status). */
@@ -694,6 +706,7 @@ export class Runs {
                     slots: r.slots,
                     busy: running.filter((j) => j.runnerId === r.id).length,
                     lastSeenAt: r.lastSeenAt,
+                    draining: Boolean(r.draining),
                 }))
                 .sort((a, b) => a.name.localeCompare(b.name)),
             running: running.length,
@@ -716,7 +729,13 @@ export class Runs {
         if (!model.ready) return { ready: false, reason: model.reason };
         if (!this.core.config.runnerSecret)
             return { ready: false, reason: "No runner can connect: the server has no TRIAGENT_RUNNER_SECRET set." };
-        if (!(await this.connectedRunners()).length) return { ready: false, reason: "No runner is connected. Start one (see the README)." };
+        const runners = await this.connectedRunners();
+        if (!runners.length) return { ready: false, reason: "No runner is connected. Start one (see the README)." };
+        if (runners.every((r) => r.draining))
+            return {
+                ready: false,
+                reason: "The runner is finishing its reviews before it stops, and takes no more. Reviews start once another connects.",
+            };
         return { ready: true, reason: null };
     }
 
@@ -748,7 +767,7 @@ export class Runs {
         const runners = await this.connectedRunners();
         const busyOn = (r: RunnerRecord) => everyRunning.filter((j) => j.runnerId === r.id).length;
         // The limits can allow more than the runners can do: then reviews wait for a runner with room.
-        const freeSlots = runners.reduce((n, r) => n + Math.max(0, r.slots - busyOn(r)), 0);
+        const freeSlots = runners.reduce((n, r) => n + (r.draining ? 0 : Math.max(0, r.slots - busyOn(r))), 0);
         const busy =
             wsRunning >= wsLimit
                 ? wsLimit === 1
@@ -777,7 +796,14 @@ export class Runs {
             concurrency: { instance: limits.instance, workspace: wsLimit },
             runnersConnected: runners.length,
             runners: filter.runnerDetails
-                ? runners.map((r) => ({ name: r.name, slots: r.slots, busy: busyOn(r), version: r.version, lastSeenAt: r.lastSeenAt }))
+                ? runners.map((r) => ({
+                      name: r.name,
+                      slots: r.slots,
+                      busy: busyOn(r),
+                      version: r.version,
+                      lastSeenAt: r.lastSeenAt,
+                      draining: Boolean(r.draining),
+                  }))
                 : [],
             running: active.filter((j) => j.status === "running" && mine(j)).map((j) => this.view(j, projects.get(j.projectId) ?? null)),
             queued: active
@@ -1222,7 +1248,13 @@ export class Runs {
 
     private async noteRunner(r: RunnerHello): Promise<void> {
         const last = this.runnerSeen.get(r.id) ?? 0;
-        if (Date.now() - last < 15_000) return;
+        const draining = Boolean(r.draining);
+        const changed = draining !== this.runnerDraining.has(r.id);
+        if (Date.now() - last < 15_000 && !changed) return;
+        if (draining && changed) log.info("A runner is finishing its reviews before it stops", { runner: CLEAN_ONLY(r.name), id: r.id });
+        if (draining) this.runnerDraining.add(r.id);
+        else this.runnerDraining.delete(r.id);
+        if (this.runnerDraining.size > 1000) this.runnerDraining.clear();
         // New to this server process, at least: a runner that restarts comes back under a new id.
         if (!last)
             log.info("A runner connected", { runner: CLEAN_ONLY(r.name), id: r.id, version: r.version, capacity: r.capacity ?? r.slots });
@@ -1238,6 +1270,7 @@ export class Runs {
             version: r.version === null ? null : CLEAN_ONLY(r.version),
             slots: Math.min(capacity, 100),
             lastSeenAt: now(),
+            draining,
         });
     }
 
@@ -1643,6 +1676,7 @@ export class Runs {
     /** Fail running jobs whose runner stopped renewing the lease (a runner that crashed or was restarted). */
     async sweep(): Promise<number> {
         const t = Date.now();
+        if (t - this.startedAt < this.startupGraceMs) return 0;
         const lost = (await this.store.jobs.active()).filter(
             (j) => j.status === "running" && j.leaseExpiresAt && Date.parse(j.leaseExpiresAt) < t,
         );

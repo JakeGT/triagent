@@ -98,6 +98,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     mem_limit: 4g
     pids_limit: 512
+    # Asked to stop, the runner finishes the reviews it has first (docs/deploying.md): give it the time.
+    stop_grace_period: 2h
 
 networks:
   data:
