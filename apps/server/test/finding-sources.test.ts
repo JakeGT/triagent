@@ -30,8 +30,8 @@ describe("the store", () => {
         const store = await testStore();
         const at = "2026-10-08T00:00:00.000Z";
         await store.transaction(async (tx) => {
-            await tx.workspaces.put({ id: "w1", slug: "acme", name: "Acme", kind: "team", createdAt: at } as never);
-            await tx.workspaces.put({ id: "w2", slug: "other", name: "Other", kind: "team", createdAt: at } as never);
+            await tx.workspaces.put({ id: "w1", slug: "acme", name: "Acme", kind: "org", createdAt: at });
+            await tx.workspaces.put({ id: "w2", slug: "other", name: "Other", kind: "org", createdAt: at });
             await tx.findingSources.add([
                 source({}),
                 source({ model: "b/two", label: "Two" }),
