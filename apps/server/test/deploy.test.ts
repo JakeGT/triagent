@@ -88,7 +88,9 @@ describe("a runner that's asked to stop", () => {
         const job = await start(env, ws, { kind: "full", branch: "long" });
         await running(env, job.id);
         const draining = runner.drain();
-        await eventually(async () => (await runnersOf(env)).some((r) => r.draining), "the runner to be draining");
+        // This runner, not the one the last test left draining.
+        const name = `test-runner-${env.runners.length}`;
+        await eventually(async () => (await runnersOf(env)).some((r) => r.draining && r.name === name), "the runner to be draining");
         await runner.stop();
         await draining;
         const run = await finished(env, ws, job.id);

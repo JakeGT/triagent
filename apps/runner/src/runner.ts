@@ -549,8 +549,9 @@ export class Runner {
         this.draining = true;
         this.stopping = true;
         this.wake.abort();
-        while (this.active.size) await sleep(50);
+        // The loop first: a review the server handed over just as this began is this runner's too, and is finished like the rest.
         await this.loop;
+        while (this.active.size) await sleep(50);
         await this.relaySink?.flush(3000);
         this.relay?.();
         this.relay = null;
@@ -561,8 +562,10 @@ export class Runner {
         this.stopping = true;
         this.wake.abort();
         for (const run of this.active.values()) run.cancel();
-        while (this.active.size) await sleep(50);
+        // The loop may have been handed one more review as this began: it's stopped with the others.
         await this.loop;
+        for (const run of this.active.values()) run.cancel();
+        while (this.active.size) await sleep(50);
         // The lines written while stopping (how each review ended) go to the server before it stops hearing them.
         await this.relaySink?.flush(3000);
         this.relay?.();
