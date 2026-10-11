@@ -6,7 +6,7 @@
 // as zero, so a missing measurement never looks like a good one.
 
 import { DONE_STATUSES, SEVERITIES, type Severity, type Status, type Via } from "@triagent/shared";
-import type { ActivityRow, ReviewRecord } from "../store/types.ts";
+import type { ActivityRow, FindingSource, ReviewRecord } from "../store/types.ts";
 
 export const ANALYTICS_DAYS = [7, 30, 90, 365, 0] as const;
 export type AnalyticsDays = (typeof ANALYTICS_DAYS)[number];
@@ -52,9 +52,16 @@ export interface AnalyticsInput {
     activity: readonly ActivityRow[];
     /** Findings in the current reports of the branches in scope. */
     current: readonly CurrentFinding[];
+    /** Which model reported which finding, and what became of it (every one for the projects in scope). */
+    sources?: readonly FindingSource[];
+    /** Only these parts of the answer are worked out (all of them, when absent). */
+    sections?: ReadonlySet<AnalyticsSection>;
     price(model: string): PricedModel | null;
     projectSlug(projectId: string | null): string | null;
 }
+
+export const ANALYTICS_SECTIONS = ["reviews", "findings", "triage", "performance", "models"] as const;
+export type AnalyticsSection = (typeof ANALYTICS_SECTIONS)[number];
 
 // ---- small helpers ------------------------------------------------------------------------
 
@@ -216,14 +223,27 @@ export function analyse(input: AnalyticsInput) {
     for (const x of input.current) currentSeverity.set(`${x.projectId}:${x.id}`, x.severity);
     const severityOf = (k: string) => currentSeverity.get(k) ?? reportedSeverity.get(k) ?? null;
 
+    const wanted = (s: AnalyticsSection) => !input.sections || input.sections.has(s);
+    // Costs and unpriced models come from the reviews, whichever parts are asked for.
     const { section: reviewSection, unpriced } = reviewsSection(reviews, range, input);
     return {
         range: { days: range.days, from: range.from, to: range.to, unit: range.unit, buckets: range.buckets },
-        reviews: reviewSection,
-        findings: findingsSection(events, input.current, range, firstSeen, now),
-        triage: triageSection(events, range, firstSeen, severityOf, now),
+        ...(wanted("reviews") ? { reviews: reviewSection } : {}),
+        ...(wanted("findings") ? { findings: findingsSection(events, input.current, range, firstSeen, now) } : {}),
+        ...(wanted("triage") ? { triage: triageSection(events, range, firstSeen, severityOf, now) } : {}),
         // How reviews went: not the model a review asked about its findings afterwards.
-        performance: performanceSection(reviews.filter((r) => !r.details.merging)),
+        ...(wanted("performance") ? { performance: performanceSection(reviews.filter((r) => !r.details.merging)) } : {}),
+        ...(wanted("models")
+            ? {
+                  models: modelsSection(
+                      reviews.filter((r) => !r.details.merging),
+                      input.history,
+                      (input.sources ?? []).filter((s) => inBranch(s.branch)),
+                      range,
+                      input,
+                  ),
+              }
+            : {}),
         unpriced,
     };
 }
@@ -431,6 +451,8 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             tokensEstimated: Boolean(r.details.estimatedTokens),
             cost: costs.get(r.id) ?? null,
             findings: r.details.findings?.total ?? null,
+            /** The run it was, for one run on the server since runs said (its page has each model side by side). */
+            runId: r.source === "run" ? (r.details.scan?.id ?? r.details.jobId ?? null) : null,
         }));
 
     return {
@@ -791,5 +813,193 @@ function performanceSection(recs: readonly ReviewRecord[]) {
         },
         byModel: rows(byModel),
         ocrVersions: rows(byVersion),
+    };
+}
+
+// ---- models --------------------------------------------------------------------------------
+
+/** Fewer decided findings than this, and a rate is a guess: shown with its sample size, greyed out. */
+export const SMALL_SAMPLE = 10;
+
+export interface ModelRow {
+    /** The provider's model id. */
+    key: string;
+    provider: string | null;
+    /** What reviews called it, most used first (a nickname, when it has one). */
+    labels: string[];
+    reviews: number;
+    failed: number;
+    /** Stopped for going quiet. */
+    stalled: number;
+    failureRate: number | null;
+    medianRunSeconds: number | null;
+    tokens: number;
+    /** Null when it has no price. */
+    cost: number | null;
+    /** Findings it reported for the first time in the range. */
+    findings: number;
+    /** Of those, from reviews with other models, the ones no other model found. */
+    unique: number;
+    /** Resolved, and dismissed as won't fix (not as duplicates). */
+    accepted: number;
+    rejected: number;
+    /** accepted ÷ (accepted + rejected); null with none decided. */
+    acceptanceRate: number | null;
+    costPerFinding: number | null;
+    costPerAccepted: number | null;
+}
+
+/**
+ * Each model's reviews and findings side by side, how far the models of a review agree, and both over
+ * time. `recs` are the reviews in the range; `history` every review (to know which models a review ran,
+ * even one that found nothing); `sources` who found what, for the branches in scope.
+ */
+function modelsSection(
+    recs: readonly ReviewRecord[],
+    history: readonly ReviewRecord[],
+    sources: readonly FindingSource[],
+    range: ReturnType<typeof rangeOf>,
+    input: AnalyticsInput,
+) {
+    const now = Date.parse(range.to);
+    const inRange = (at: string) => {
+        const t = Date.parse(at);
+        return Number.isFinite(t) && t >= range.start && t <= now;
+    };
+    interface Acc extends ModelRow {
+        runTimes: number[];
+        labelCounts: Map<string, number>;
+    }
+    const rows = new Map<string, Acc>();
+    const row = (key: string, provider: string | null): Acc => {
+        let r = rows.get(key);
+        if (!r) {
+            r = {
+                key,
+                provider: provider || null,
+                labels: [],
+                reviews: 0,
+                failed: 0,
+                stalled: 0,
+                failureRate: null,
+                medianRunSeconds: null,
+                tokens: 0,
+                cost: null,
+                findings: 0,
+                unique: 0,
+                accepted: 0,
+                rejected: 0,
+                acceptanceRate: null,
+                costPerFinding: null,
+                costPerAccepted: null,
+                runTimes: [],
+                labelCounts: new Map(),
+            };
+            rows.set(key, r);
+        }
+        if (!r.provider && provider) r.provider = provider;
+        return r;
+    };
+    const series = range.buckets.map((date) => ({
+        date,
+        models: {} as Record<string, { cost: number; accepted: number; rejected: number }>,
+    }));
+    const byDate = new Map(series.map((d) => [d.date, d]));
+    const point = (at: string, key: string) => {
+        const bucket = byDate.get(range.key(at) ?? "");
+        if (!bucket) return null;
+        bucket.models[key] ??= { cost: 0, accepted: 0, rejected: 0 };
+        return bucket.models[key];
+    };
+
+    let withoutModel = 0;
+    for (const r of recs) {
+        if (!r.model) {
+            withoutModel++;
+            continue;
+        }
+        const m = row(r.model, r.provider);
+        m.reviews++;
+        if (r.status === "failed") m.failed++;
+        if (r.details.stopped === "stalled" || /^Stalled:/.test(r.details.error ?? "")) m.stalled++;
+        m.tokens += r.tokens?.total ?? 0;
+        const c = costOf(r.tokens, input.price(r.model));
+        if (c !== null) {
+            m.cost = (m.cost ?? 0) + c;
+            const p = point(r.at, r.model);
+            if (p) p.cost += c;
+        }
+        if ((r.status === "done" || r.status === "partial") && r.details.runSeconds !== undefined) m.runTimes.push(r.details.runSeconds);
+    }
+
+    // Which models each review ran (by the provider's ids), including any that found nothing.
+    const ran = new Map<string, Set<string>>();
+    for (const r of history) {
+        const id = r.details.scan?.id;
+        if (!id || !r.model || r.details.merging) continue;
+        ran.set(id, (ran.get(id) ?? new Set()).add(r.model));
+    }
+    // Every model that reported each finding, whenever it did.
+    const finders = new Map<string, Set<string>>();
+    const findingKey = (s: FindingSource) => `${s.projectId}\0${s.branch}\0${s.findingId}`;
+    for (const s of sources) finders.set(findingKey(s), (finders.get(findingKey(s)) ?? new Set()).add(s.model));
+
+    const agreement = { findings: 0, all: 0, several: 0, one: 0 };
+    const counted = new Set<string>();
+    const pairs = new Map<string, { a: string; b: string; of: number; shared: number }>();
+    for (const s of sources) {
+        if (!inRange(s.firstSeenAt)) continue;
+        const m = row(s.model, s.provider);
+        m.labelCounts.set(s.label, (m.labelCounts.get(s.label) ?? 0) + 1);
+        m.findings++;
+        if (s.outcome === "accepted") m.accepted++;
+        if (s.outcome === "rejected") m.rejected++;
+        const p = s.outcome ? point(s.firstSeenAt, s.model) : null;
+        if (p && s.outcome) p[s.outcome]++;
+        if (s.scanModels < 2) continue;
+        const found = finders.get(findingKey(s)) ?? new Set([s.model]);
+        if (found.size === 1) m.unique++;
+        // Against each other model of the same review: did it find this one too?
+        for (const other of (s.scanId ? ran.get(s.scanId) : null) ?? found) {
+            if (other === s.model) continue;
+            const k = `${s.model}\0${other}`;
+            const pair = pairs.get(k) ?? { a: s.model, b: other, of: 0, shared: 0 };
+            pair.of++;
+            if (found.has(other)) pair.shared++;
+            pairs.set(k, pair);
+        }
+        // The finding itself, once, however many models reported it.
+        if (counted.has(findingKey(s))) continue;
+        counted.add(findingKey(s));
+        agreement.findings++;
+        if (found.size === 1) agreement.one++;
+        else if (found.size >= s.scanModels) agreement.all++;
+        else agreement.several++;
+    }
+
+    const out: ModelRow[] = [...rows.values()]
+        .map(({ runTimes, labelCounts, ...m }) => ({
+            ...m,
+            labels: [...labelCounts].sort((a, b) => b[1] - a[1]).map(([label]) => label),
+            failureRate: ratio(m.failed, m.reviews),
+            medianRunSeconds: median(runTimes),
+            acceptanceRate: ratio(m.accepted, m.accepted + m.rejected),
+            costPerFinding: m.cost !== null ? ratio(m.cost, m.findings) : null,
+            costPerAccepted: m.cost !== null ? ratio(m.cost, m.accepted) : null,
+        }))
+        .sort((a, b) => b.reviews - a.reviews || b.findings - a.findings || a.key.localeCompare(b.key));
+    return {
+        rows: out,
+        /** Reviews in the range that didn't say which model they used (uploads, mostly): not in the rows. */
+        withoutModel,
+        agreement: {
+            ...agreement,
+            /** Of `a`'s findings in reviews it shared with `b`, the share `b` found too. */
+            overlap: [...pairs.values()]
+                .map((p) => ({ ...p, share: ratio(p.shared, p.of) }))
+                .sort((x, y) => x.a.localeCompare(y.a) || x.b.localeCompare(y.b)),
+        },
+        series,
+        smallSample: SMALL_SAMPLE,
     };
 }

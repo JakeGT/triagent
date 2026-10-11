@@ -11,6 +11,18 @@ export const RANGES: { days: Days; label: string }[] = [
     { days: 0, label: "All time" },
 ];
 
+/** The page's tabs, in order; the first is where /analytics goes. Each is its own address: /analytics/models. */
+export const ANALYTICS_TABS = [
+    { id: "overview", label: "Overview" },
+    { id: "reviews", label: "Reviews & cost" },
+    { id: "models", label: "Models" },
+    { id: "findings", label: "Findings" },
+    { id: "triage", label: "Triage & people" },
+] as const;
+export type AnalyticsTab = (typeof ANALYTICS_TABS)[number]["id"];
+
+export const analyticsTab = (v: unknown): AnalyticsTab => ANALYTICS_TABS.find((t) => t.id === v)?.id ?? "overview";
+
 export interface AnalyticsSearch {
     project?: string;
     branch?: string;

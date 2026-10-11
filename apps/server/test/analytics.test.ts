@@ -162,7 +162,8 @@ function run(over: Partial<AnalyticsInput> = {}) {
         price: priced,
         projectSlug: (id) => (id === "p1" ? "app" : null),
         ...over,
-    });
+        // Every part, unless a test asks for some: so each is there to read.
+    }) as Required<ReturnType<typeof analyse>>;
 }
 
 const close = (actual: number | null | undefined, expected: number) =>
@@ -479,7 +480,7 @@ describe("analytics API and MCP", () => {
         assert.equal(a.findings.added, 4);
         // The resolved finding was first reported by the upload, so its time to resolve is known.
         assert.equal(a.triage.timeToResolve.bySeverity.find((s: { severity: string }) => s.severity === "high").resolved, 1);
-        assert.deepEqual(a.truncated, { history: false, activity: false, current: false });
+        assert.deepEqual(a.truncated, { history: false, activity: false, current: false, sources: false });
     });
 
     test("more current findings than one request reads: the answer stops there and says so", async () => {

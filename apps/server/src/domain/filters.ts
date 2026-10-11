@@ -30,6 +30,10 @@ export interface IssueFilters {
     adjusted: boolean | null;
     /** Only findings at least this many models found (reviews run with several), or null for any. */
     foundBy: number | null;
+    /** Only findings this model found (its name in the review: see the list's `models`), or null for any. */
+    model: string | null;
+    /** With `model`: only findings no other model found. */
+    onlyModel: boolean;
     /** Only findings marked as lower confidence (one model found them, and the review asked), or only the others. */
     lowerConfidence: boolean | null;
     ids: string[];
@@ -104,6 +108,8 @@ export function parseFilters(input: Input, { maxLimit = 500, defaultLimit = 50 }
         duplicates: flag(get("duplicates"), "duplicates"),
         adjusted: flag(get("adjusted"), "adjusted"),
         foundBy: foundBy == null ? null : whole(foundBy, 1, 1, 10, "foundBy"),
+        model: text(get("model"), 200, "model") || null,
+        onlyModel: flag(get("onlyModel", "only_model"), "onlyModel") === true,
         lowerConfidence: flag(get("lowerConfidence", "lower_confidence"), "lowerConfidence"),
         ids: list(get("ids")),
         sort: oneOf([sort], ISSUE_SORTS, "sort")[0] as IssueSort,
@@ -120,5 +126,6 @@ export function describeFilters(f: IssueFilters): string {
         if (f[k] !== null) parts.push(`${k}=${f[k]}`);
     if (f.ids.length) parts.push(`${f.ids.length} chosen id(s)`);
     if (f.foundBy) parts.push(`found by at least ${f.foundBy} models`);
+    if (f.model) parts.push(f.onlyModel ? `found only by ${f.model}` : `found by ${f.model}`);
     return parts.length ? ` for ${parts.join(", ")}` : "";
 }

@@ -80,7 +80,11 @@ export function MobileNav() {
                 ) : (
                     // A workspace with no project yet: the places that don't need one.
                     <>
-                        <Item label="Analytics" icon={<BarChart3 aria-hidden="true" />} current={pathname === `/w/${ws}/analytics`}>
+                        <Item
+                            label="Analytics"
+                            icon={<BarChart3 aria-hidden="true" />}
+                            current={pathname === `/w/${ws}/analytics` || pathname.startsWith(`/w/${ws}/analytics/`)}
+                        >
                             {(p) => <Link to="/w/$ws/analytics" params={{ ws }} {...p} />}
                         </Item>
                         <Item label="Agents & API" icon={<Bot aria-hidden="true" />} current={pathname.startsWith(`/w/${ws}/agents`)}>

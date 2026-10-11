@@ -232,6 +232,8 @@ export class BranchView {
             if (f.needsDiscussion !== null && Boolean(r?.needsDiscussion) !== f.needsDiscussion) return false;
             if (f.duplicates !== null && Boolean(r?.duplicateOf) !== f.duplicates) return false;
             if (f.foundBy !== null && (x.foundBy?.length ?? 1) < f.foundBy) return false;
+            // By its name in the review. A report from one model doesn't say who found each finding: they all are its.
+            if (f.model !== null && x.foundBy && (!x.foundBy.includes(f.model) || (f.onlyModel && x.foundBy.length > 1))) return false;
             if (f.lowerConfidence !== null && x.lowerConfidence !== f.lowerConfidence) return false;
             if (f.assignee) {
                 const a = r?.assignee ?? null;

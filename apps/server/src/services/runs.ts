@@ -832,6 +832,89 @@ export class Runs {
         return job;
     }
 
+    /**
+     * A finished review's models side by side: how each did, what it found, what only it found, and what
+     * became of its findings. From the run itself, the review history (each model's tokens) and who found
+     * what; figures a review from before those were kept doesn't have are null, not zero.
+     */
+    async breakdown(workspace: Workspace, id: string) {
+        const job = await this.jobIn(workspace, id);
+        if (job.status === "queued" || job.status === "running") throw conflict("That review hasn't finished yet.");
+        const result = (job.result ?? {}) as {
+            total?: number | null;
+            tokens?: Tokens | null;
+            seconds?: number | null;
+            models?: {
+                label: string;
+                provider: string;
+                model: string;
+                status: string;
+                total: number | null;
+                tokens: number | null;
+                seconds: number | null;
+                error: string | null;
+                reason: string | null;
+            }[];
+        };
+        const several = Boolean(result.models?.length);
+        const models =
+            result.models ??
+            (job.model
+                ? [
+                      {
+                          label: job.model.label ?? job.model.model,
+                          provider: job.model.provider,
+                          model: job.model.model,
+                          status: job.status,
+                          total: result.total ?? null,
+                          tokens: result.tokens?.total ?? null,
+                          seconds: result.seconds ?? null,
+                          error: job.error,
+                          reason: null,
+                      },
+                  ]
+                : []);
+        // Each model's own record of the review, oldest first (they're written in the review's order).
+        const records = several
+            ? (await this.store.reviewHistory.list({ workspaceId: workspace.id, projectId: job.projectId, branch: job.branch }, 2000))
+                  .filter((r) => r.details.scan?.id === job.id && !r.details.merging && !r.details.attempt)
+                  .reverse()
+            : [];
+        const found = (
+            await this.store.findingSources.list({ workspaceId: workspace.id, projectId: job.projectId, branch: job.branch }, 50_000)
+        ).filter((s) => s.scanId === job.id);
+        const finders = new Map<string, Set<string>>();
+        for (const s of found) finders.set(s.findingId, (finders.get(s.findingId) ?? new Set()).add(s.label));
+        return {
+            run: this.view(job, await this.store.projects.get(job.projectId)),
+            /** Whether who found what was kept for this review (not for ones from before it was, or a comparison). */
+            recorded: found.length > 0,
+            models: models.map((m, i) => {
+                const mine = found.filter((s) => s.label === m.label);
+                const record = records.filter((r) => r.model === m.model && r.provider === m.provider)[
+                    models.slice(0, i).filter((o) => o.model === m.model && o.provider === m.provider).length
+                ];
+                const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
+                for (const s of mine) bySeverity[s.severity]++;
+                return {
+                    label: m.label,
+                    provider: m.provider,
+                    model: m.model,
+                    status: m.status,
+                    reason: m.reason,
+                    findings: m.total,
+                    unique: found.length && several ? mine.filter((s) => finders.get(s.findingId)?.size === 1).length : null,
+                    bySeverity: found.length ? bySeverity : null,
+                    accepted: found.length ? mine.filter((s) => s.outcome === "accepted").length : null,
+                    rejected: found.length ? mine.filter((s) => s.outcome === "rejected").length : null,
+                    tokens: several ? (record?.tokens ?? null) : (result.tokens ?? null),
+                    tokensTotal: m.tokens,
+                    seconds: m.seconds,
+                };
+            }),
+        };
+    }
+
     /** One run, with its log after line `after`. */
     async get(workspace: Workspace, id: string, after = 0) {
         const job = await this.jobIn(workspace, id);
@@ -1877,20 +1960,41 @@ export class Runs {
                 } else if (upload && project && report) {
                     // Findings this review reported first (for analytics' finding ages): those not on the branch before it.
                     const before = await this.reports.view(w.tx, project, held.branch).catch(() => null);
-                    const out = await this.reports.upload(REVIEWER, project, {
-                        branch: held.branch,
-                        commit: headSha,
-                        fileName:
-                            held.kind === "pr"
-                                ? `PR #${held.pr?.number}`
-                                : held.kind === "changes"
-                                  ? `Changes since ${held.baseRef}`
-                                  : `Full scan ${finishedAt.slice(0, 10)}`,
-                        report,
-                        confirm: true,
-                        reopen: true,
-                        scope: held.kind === "full" ? "full" : "diff",
-                    });
+                    const out = await this.reports.upload(
+                        REVIEWER,
+                        project,
+                        {
+                            branch: held.branch,
+                            commit: headSha,
+                            fileName:
+                                held.kind === "pr"
+                                    ? `PR #${held.pr?.number}`
+                                    : held.kind === "changes"
+                                      ? `Changes since ${held.baseRef}`
+                                      : `Full scan ${finishedAt.slice(0, 10)}`,
+                            report,
+                            confirm: true,
+                            reopen: true,
+                            scope: held.kind === "full" ? "full" : "diff",
+                        },
+                        {
+                            // Which model found what, by the names the providers know them by.
+                            sources: {
+                                scanId: held.id,
+                                models: parts
+                                    ? parts.filter((p) => p.report).map((p) => ({ label: p.label, model: p.model, provider: p.provider }))
+                                    : held.model
+                                      ? [
+                                            {
+                                                label: held.model.label ?? held.model.model,
+                                                model: held.model.model,
+                                                provider: held.model.provider,
+                                            },
+                                        ]
+                                      : [],
+                            },
+                        },
+                    );
                     reportId = (out.current as { upload?: { id?: string } | null }).upload?.id ?? null;
                     counts = {
                         added: out.added,
@@ -1914,6 +2018,7 @@ export class Runs {
                             : (error ?? "Cancelled.")
                         : error;
                 const common = {
+                    jobId: held.id,
                     ...(held.pr ? { prNumber: held.pr.number } : {}),
                     commit: headSha,
                     requestedBy: held.source === "automation" ? "automation" : held.requestedBy.name,
@@ -2053,6 +2158,7 @@ export class Runs {
                                 ...(p.metrics?.llm ? { llm: p.metrics.llm } : {}),
                                 ...(i === 0 && addedIds ? { addedIds } : {}),
                                 error: p.error ?? (i === 0 ? errorText : null),
+                                ...(p.reason ? { stopped: p.reason } : {}),
                                 ...(held.options?.bakeOff ? { bakeOff: true } : {}),
                                 scan: { ...scan, lead: i === 0 },
                             },
@@ -2150,6 +2256,14 @@ export class Runs {
                   uploadId: of.reportId,
                   label: of.label,
                   report,
+                  ...(held.model
+                      ? {
+                            source: {
+                                scanId: of.jobId,
+                                model: { label: of.label, model: held.model.model, provider: held.model.provider },
+                            },
+                        }
+                      : {}),
               })
             : null;
         if (!out)

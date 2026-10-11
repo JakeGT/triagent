@@ -53,6 +53,16 @@ function blank(project: Project, branch: string, kind: ItemKind, itemId: string)
  * Apply one change to one issue or task's triage. Returns what changed, or null if nothing did.
  * Throws StaleError (409) if `expect` doesn't match the saved record.
  */
+/**
+ * What a finding's triage says about the finding itself: accepted once it's resolved, rejected when it's
+ * dismissed as not worth fixing. A duplicate is neither: it says nothing about whether the finding was right.
+ */
+export function outcomeOf(record: Pick<TriageRecord, "status" | "duplicateOf"> | null): "accepted" | "rejected" | null {
+    if (record?.status === "resolved") return "accepted";
+    if (record?.status === "wont_fix" && !record.duplicateOf) return "rejected";
+    return null;
+}
+
 export async function applyChange(
     w: Write,
     project: Project,
@@ -95,6 +105,9 @@ export async function applyChange(
     }
     if (!Object.keys(changes).length) return null;
     await w.tx.triage.put({ ...next, rev: prev.rev + 1, updatedAt: now(), updatedBy: actor.name });
+    // What became of the finding is kept with who found it (for each model's figures), and stays when the branch goes.
+    if (kind === "issue" && ("status" in changes || "duplicateOf" in changes))
+        await w.tx.findingSources.setOutcome(project.id, branch, itemId, outcomeOf(next), now());
     await w.activity({ workspaceId: project.workspaceId, projectId: project.id, branch, kind, itemId, changes }, project.slug);
     return changes;
 }

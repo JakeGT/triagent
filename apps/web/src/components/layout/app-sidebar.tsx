@@ -224,7 +224,11 @@ export function AppSidebar() {
                                 </NavItem>
                             </Group>
                             <Group title="Insights">
-                                <NavItem label="Analytics" icon={<BarChart3 />} active={pathname === `/w/${ws}/analytics`}>
+                                <NavItem
+                                    label="Analytics"
+                                    icon={<BarChart3 />}
+                                    active={pathname === `/w/${ws}/analytics` || pathname.startsWith(`/w/${ws}/analytics/`)}
+                                >
                                     {(c) => (
                                         <Link to="/w/$ws/analytics" params={{ ws }}>
                                             {c}

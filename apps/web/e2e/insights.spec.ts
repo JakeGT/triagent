@@ -106,7 +106,10 @@ async function seedInsights(admin: Api) {
 }
 
 for (const theme of ["light", "dark"] as const) {
-    test(`the Analytics page shows every section, keeps its scope in the URL, and passes axe (${theme})`, async ({ page, admin }) => {
+    test(`Analytics has a tab for each subject, keeps its scope from tab to tab and in the URL, and passes axe (${theme})`, async ({
+        page,
+        admin,
+    }) => {
         const { ws, project } = await seedInsights(admin);
         await page.addInitScript((t) => localStorage.setItem("triagent-theme", t), theme);
         await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
@@ -114,15 +117,27 @@ for (const theme of ["light", "dark"] as const) {
         await page.getByRole("link", { name: "Analytics" }).click();
         await expect(page).toHaveURL(new RegExp(`/w/${ws}/analytics$`));
         await expect(page.getByRole("heading", { level: 1, name: "Analytics" })).toBeVisible();
-        for (const name of ["Reviews", "Findings and backlog", "Triage", "Model and OCR performance"])
-            await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
+        const tabs = page.getByRole("navigation", { name: "Analytics" });
+        const open = async (name: string, heading: string, address: string) => {
+            await tabs.getByRole("link", { name, exact: true }).click();
+            await expect(page).toHaveURL(new RegExp(`/w/${ws}/analytics/${address}(\\?|$)`));
+            await expect(tabs.getByRole("link", { name, exact: true })).toHaveAttribute("aria-current", "page");
+            await expect(page.getByRole("heading", { level: 2, name: heading })).toBeVisible();
+            await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+        };
 
+        // The overview: a few figures, and what needs attention (only one of the two models has a price).
+        await expect(tabs.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+        await expect(page.getByRole("heading", { level: 2, name: "Overview" })).toBeVisible();
+        const overview = page.locator("#overview");
+        await expect(overview.getByRole("term")).toHaveText(["Reviews", "Spend", "Open findings", "Time to resolve (median)"]);
+        await expect(page.getByTestId("needs-attention").getByTestId("unpriced")).toContainText("openai/gpt-5");
+        await axe(page, `analytics overview (${theme})`);
+        await shot(page, `analytics-overview-${theme}`);
+
+        await open("Reviews & cost", "Reviews and cost", "reviews");
         const reviews = page.locator("#reviews");
         await expect(reviews.getByText("0 run here, 4 uploaded")).toBeVisible();
-        // Only one of the two models has a price.
-        await expect(page.getByTestId("unpriced")).toContainText("openai/gpt-5");
-        await expect(page.locator("#triage")).toContainText("claude-agent");
-
         // A chart's figures as a table.
         const chart = page.getByRole("figure", { name: /^Reviews a day/ });
         await expect(chart.getByRole("img")).toHaveAttribute("aria-label", /Reviews a day, by outcome/);
@@ -130,15 +145,45 @@ for (const theme of ["light", "dark"] as const) {
         await expect(chart.getByRole("table")).toBeVisible();
         await expect(chart.getByRole("columnheader", { name: "Partial" })).toBeVisible();
         await chart.getByRole("button", { name: "Chart" }).click();
-
         // Hovering a column shows its values.
         await chart.getByRole("img").hover({ position: { x: 400, y: 80 } });
         await expect(chart.getByTestId("chart-tooltip")).toBeVisible();
+        // What Open Code Review recorded about itself is there, folded away until it's wanted.
+        const ocr = page.getByTestId("ocr-figures");
+        await expect(ocr.getByText("Tools the model used")).toBeHidden();
+        await ocr.locator("summary").click();
+        await expect(ocr.getByText("Tools the model used")).toBeVisible();
+        await expect(ocr.getByRole("cell", { name: "read_file" })).toBeVisible();
+        await axe(page, `analytics reviews (${theme})`);
+        await shot(page, `analytics-reviews-${theme}`);
 
-        await axe(page, `analytics (${theme})`);
-        await shot(page, `analytics-${theme}`);
+        // Each model side by side: its reviews and cost, then what it found and what became of that.
+        await open("Models", "Models", "models");
+        const models = page.locator("#models");
+        const row = (table: string, model: string) =>
+            models.getByRole("table", { name: new RegExp(table) }).getByRole("row", { name: new RegExp(model) });
+        await expect(row("Each model's reviews", "claude-sonnet-4.5").getByRole("cell").nth(1)).toHaveText("1");
+        await expect(row("Each model's reviews", "gpt-5").getByRole("cell").nth(1)).toHaveText("2");
+        await expect(row("Each model's reviews", "gpt-5").getByRole("cell").last()).toHaveText("No price");
+        // Sonnet found the eight on main: two were resolved and one dismissed. Too few to rely on, and it says so.
+        const sonnet = row("Each model's findings", "claude-sonnet-4.5").getByRole("cell");
+        await expect(sonnet.nth(1)).toHaveText("8");
+        await expect(sonnet.nth(3)).toHaveText("2");
+        await expect(sonnet.nth(4)).toHaveText("1");
+        await expect(sonnet.nth(5)).toHaveText("67% of 3");
+        await expect(sonnet.nth(5).locator("span").first()).toHaveAttribute("title", /too few to rely on/);
+        await axe(page, `analytics models (${theme})`);
+        await shot(page, `analytics-models-${theme}`);
 
-        // The scope lives in the URL and survives a reload.
+        await open("Findings", "Findings and backlog", "findings");
+        await expect(page.locator("#findings").getByRole("term")).toHaveText(["Open now", "New", "Closed", "Won't-fix rate"]);
+        await axe(page, `analytics findings (${theme})`);
+
+        await open("Triage & people", "Triage and people", "triage");
+        await expect(page.locator("#triage")).toContainText("claude-agent");
+        await axe(page, `analytics triage (${theme})`);
+
+        // The scope lives in the URL, goes with you from tab to tab, and survives a reload.
         const scope = page.getByRole("form", { name: "What to show" });
         await scope.getByLabel("Project").selectOption(project);
         await expect(page).toHaveURL(new RegExp(`project=${project}`));
@@ -146,11 +191,16 @@ for (const theme of ["light", "dark"] as const) {
         await scope.getByLabel("Range").selectOption("90");
         await expect(page).toHaveURL(/branch=feature%2Flogin/);
         await expect(page).toHaveURL(/days=90/);
+        await open("Reviews & cost", "Reviews and cost", "reviews");
+        await expect(page).toHaveURL(/branch=feature%2Flogin/);
         await page.reload();
         await expect(scope.getByLabel("Branch")).toHaveValue("feature/login");
         await expect(scope.getByLabel("Range")).toHaveValue("90");
         await expect(reviews.getByText("0 run here, 2 uploaded")).toBeVisible();
         await expect(page.getByRole("figure", { name: /^Reviews a week/ })).toBeVisible();
+        // An address that names no tab there is shows the overview.
+        await page.goto(`/w/${ws}/analytics/nonsense`);
+        await expect(page.getByRole("heading", { level: 2, name: "Overview" })).toBeVisible();
     });
 }
 

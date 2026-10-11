@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { parseAnalyticsSearch } from "./search";
+import { analyticsTab, parseAnalyticsSearch } from "./search";
+
+describe("analyticsTab", () => {
+    it("is the tab an address names, or the overview for one it doesn't know", () => {
+        expect(analyticsTab("models")).toBe("models");
+        expect(analyticsTab("triage")).toBe("triage");
+        for (const odd of [undefined, "", "nonsense", "Models", 3]) expect(analyticsTab(odd)).toBe("overview");
+    });
+});
 
 describe("parseAnalyticsSearch", () => {
     it("keeps a range from the list, as a number or a string", () => {

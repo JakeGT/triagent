@@ -29,6 +29,12 @@ describe("issue filters in the URL", () => {
         expect(activeFilters(s)).toBe(1);
         expect(parseIssueSearch(parseSearch("?foundBy=1"))).toEqual({});
         expect(parseIssueSearch(parseSearch("?foundBy=two"))).toEqual({});
+        // One model's findings, and only those no other model found: the second means nothing without the first.
+        const one = parseIssueSearch(parseSearch("?model=Careful&onlyModel=true"));
+        expect(one).toEqual({ model: "Careful", onlyModel: true });
+        expect(issueApiQuery(one)).toMatchObject({ model: "Careful", onlyModel: "true" });
+        expect(parseIssueSearch(parseSearch("?onlyModel=true"))).toEqual({});
+        expect(issueApiQuery(parseIssueSearch(parseSearch("?model=Careful"))).onlyModel).toBeUndefined();
     });
 
     it("drops values the server wouldn't accept", () => {

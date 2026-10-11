@@ -250,6 +250,10 @@ export interface ReviewDetails {
      * record (the first model's) carries what the merged report did to the branch (counts, addedIds).
      */
     scan?: { id: string; models: string[]; lead: boolean; status: "done" | "partial" | "failed" | "cancelled"; findings: number | null };
+    /** The run it was (a review run on the server). */
+    jobId?: string;
+    /** Why it was stopped, if it was: it went quiet, or passed the time limit or its token budget. */
+    stopped?: "stalled" | "timeLimit" | "overBudget";
     /** A review run only to compare its models: it counts for the models, and did nothing to its branch. */
     bakeOff?: boolean;
     /** Not a review: the model a review asked which findings are the same problem, with the tokens that took. */
@@ -438,6 +442,27 @@ export interface GithubDelivery {
     detail: string;
 }
 
+/** One model's report of one finding on a branch (see migration 0010). */
+export interface FindingSource {
+    workspaceId: string;
+    projectId: string;
+    branch: string;
+    findingId: string;
+    /** The provider's model id, and the provider ("" when a report didn't say). */
+    model: string;
+    provider: string;
+    /** What people called it in that review. */
+    label: string;
+    /** The review that first reported it with this model, and how many models that review ran. */
+    scanId: string | null;
+    scanModels: number;
+    severity: Severity;
+    firstSeenAt: string;
+    /** What triage made of the finding: fixed, dismissed, or (null) neither yet. */
+    outcome: "accepted" | "rejected" | null;
+    decidedAt: string | null;
+}
+
 /** A runner process, as last seen by the server. */
 export interface RunnerRecord {
     id: string;
@@ -553,6 +578,17 @@ export interface Repos {
         /** The same, for every workspace with any: workspace id → tokens. */
         tokensByWorkspace(since: string, keySource?: ReviewRecord["keySource"]): Promise<Record<string, number>>;
         /** Forget a project's reviews (deleting a project otherwise keeps them for analytics). */
+        removeProject(workspaceId: string, projectId: string): Promise<void>;
+    };
+    findingSources: {
+        /** Add those not there yet: a model's first report of a finding is the one that's kept. */
+        add(rows: readonly FindingSource[]): Promise<void>;
+        /** What triage made of a finding, for every model that reported it. */
+        setOutcome(projectId: string, branch: string, findingId: string, outcome: FindingSource["outcome"], at: string): Promise<void>;
+        /** Newest first. */
+        list(filter: { workspaceId: string; projectId?: string; branch?: string }, limit: number): Promise<FindingSource[]>;
+        renameBranch(projectId: string, from: string, to: string): Promise<void>;
+        /** Forget a project's (deleting a project otherwise keeps them for analytics). */
         removeProject(workspaceId: string, projectId: string): Promise<void>;
     };
     settings: {

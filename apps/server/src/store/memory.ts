@@ -13,6 +13,7 @@ import type {
     ApiToken,
     ArchivedReport,
     AuditRow,
+    FindingSource,
     GithubDelivery,
     GithubInstallation,
     Invite,
@@ -63,6 +64,8 @@ function runHooks(hooks: (() => void)[]): void {
     }
 }
 const key = (...parts: string[]) => parts.join("\0");
+const sourceKey = (s: Pick<FindingSource, "projectId" | "branch" | "findingId" | "model" | "provider">) =>
+    key(s.projectId, s.branch, s.findingId, s.model, s.provider);
 
 /** A keyed table whose changes can be undone. */
 class Table<V> {
@@ -177,6 +180,7 @@ export class MemoryStore implements Store {
         githubState: this.table<{ state: unknown }>(),
         githubDeliveries: this.table<GithubDelivery[]>(),
         runners: this.table<RunnerRecord>(),
+        findingSources: this.table<FindingSource>(),
         instanceSettings: this.table<{ value: unknown }>(),
         modelGrants: this.table<ModelGrant>(),
         invites: this.table<Invite>(),
@@ -269,6 +273,7 @@ export class MemoryStore implements Store {
                 for (const i of this.t.invites.values()) if (i.workspaceId === id) this.t.invites.delete(i.id);
                 this.t.activity.remove((r) => r.workspaceId === id);
                 this.t.reviewHistory.remove((r) => r.workspaceId === id);
+                for (const s of this.t.findingSources.values()) if (s.workspaceId === id) this.t.findingSources.delete(sourceKey(s));
                 for (const i of this.t.githubInstallations.values())
                     if (i.workspaceId === id) this.t.githubInstallations.delete(String(i.id));
                 this.t.modelGrants.delete(id);
@@ -450,6 +455,44 @@ export class MemoryStore implements Store {
             this.t.secrets.values().filter((s) => s.workspaceId === workspaceId && s.projectId === projectId),
         put: (s) => this.write(() => this.t.secrets.set(key(s.workspaceId ?? "", s.projectId ?? "", s.name), s)),
         delete: (workspaceId, projectId, name) => this.write(() => this.t.secrets.delete(key(workspaceId ?? "", projectId ?? "", name))),
+    };
+
+    findingSources: Repos["findingSources"] = {
+        add: (rows) =>
+            this.write(() => {
+                for (const r of rows) if (!this.t.findingSources.get(sourceKey(r))) this.t.findingSources.set(sourceKey(r), r);
+            }),
+        setOutcome: (projectId, branch, findingId, outcome, at) =>
+            this.write(() => {
+                for (const s of this.t.findingSources.values())
+                    if (s.projectId === projectId && s.branch === branch && s.findingId === findingId && s.outcome !== outcome)
+                        this.t.findingSources.set(sourceKey(s), { ...s, outcome, decidedAt: outcome ? at : null });
+            }),
+        list: async (f, limit) =>
+            this.t.findingSources
+                .values()
+                .filter(
+                    (s) =>
+                        s.workspaceId === f.workspaceId &&
+                        (!f.projectId || s.projectId === f.projectId) &&
+                        (!f.branch || s.branch === f.branch),
+                )
+                .sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt))
+                .slice(0, limit),
+        renameBranch: (projectId, from, to) =>
+            this.write(() => {
+                for (const s of this.t.findingSources.values()) {
+                    if (s.projectId !== projectId || s.branch !== from) continue;
+                    this.t.findingSources.delete(sourceKey(s));
+                    const moved = { ...s, branch: to };
+                    if (!this.t.findingSources.get(sourceKey(moved))) this.t.findingSources.set(sourceKey(moved), moved);
+                }
+            }),
+        removeProject: (workspaceId, projectId) =>
+            this.write(() => {
+                for (const s of this.t.findingSources.values())
+                    if (s.workspaceId === workspaceId && s.projectId === projectId) this.t.findingSources.delete(sourceKey(s));
+            }),
     };
 
     settings: Repos["settings"] = {

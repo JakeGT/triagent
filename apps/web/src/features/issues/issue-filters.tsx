@@ -9,10 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
     DropdownMenu,
+    DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuLabel,
     DropdownMenuRadioGroup,
     DropdownMenuRadioItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -31,38 +33,69 @@ const SORT_LABEL: Record<IssueSort, string> = {
     agreement: "Most models agree",
 };
 
-/** Found by at least n of the review's models: shown when it ran with several. */
+/**
+ * Who found it, for a review that ran with several models: at least so many of them, or one in particular
+ * (and then, if wanted, only what no other model found).
+ */
 function FoundBy({ models, search, onChange }: { models: string[]; search: IssueSearch; onChange(next: IssueSearch): void }) {
     const n = models.length;
     const label = (k: number) => (k === n ? `All ${n} models` : `At least ${k} of ${n}`);
+    // A model named in the address that this review didn't run finds nothing: shown, so it can be taken off.
+    const model = search.model;
+    const chosen = [
+        search.foundBy ? label(Math.min(search.foundBy, n)) : null,
+        model ? (search.onlyModel ? `Only ${model}` : model) : null,
+    ].filter(Boolean);
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="border-dashed">
                     Found by
-                    {search.foundBy && (
-                        <Badge variant="secondary" className="rounded-sm px-1 font-normal">
-                            {label(Math.min(search.foundBy, n))}
+                    {chosen.length > 0 && (
+                        <Badge variant="secondary" className="max-w-48 truncate rounded-sm px-1 font-normal">
+                            {chosen.join(", ")}
                         </Badge>
                     )}
                     <ChevronDown className="text-muted-foreground" aria-hidden="true" />
                 </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64">
-                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                    This review ran with {models.join(", ")}.
-                </DropdownMenuLabel>
+            <DropdownMenuContent align="start" className="w-72">
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">How many models found it</DropdownMenuLabel>
                 <DropdownMenuRadioGroup
                     value={String(search.foundBy ?? "")}
                     onValueChange={(v) => onChange(withFilter(search, { foundBy: v ? Number(v) : undefined }))}
                 >
-                    <DropdownMenuRadioItem value="">Any model</DropdownMenuRadioItem>
-                    {Array.from({ length: n - 1 }, (_, i) => i + 2).map((k) => (
+                    <DropdownMenuRadioItem value="">Any number</DropdownMenuRadioItem>
+                    {Array.from({ length: Math.max(0, n - 1) }, (_, i) => i + 2).map((k) => (
                         <DropdownMenuRadioItem key={k} value={String(k)}>
                             {label(k)}
                         </DropdownMenuRadioItem>
                     ))}
                 </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Which model found it</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                    value={model ?? ""}
+                    onValueChange={(v) =>
+                        onChange(withFilter(search, { model: v || undefined, onlyModel: v ? search.onlyModel : undefined }))
+                    }
+                >
+                    <DropdownMenuRadioItem value="">Any model</DropdownMenuRadioItem>
+                    {[...models, ...(model && !models.includes(model) ? [model] : [])].map((m) => (
+                        <DropdownMenuRadioItem key={m} value={m}>
+                            <span className="truncate">{m}</span>
+                        </DropdownMenuRadioItem>
+                    ))}
+                </DropdownMenuRadioGroup>
+                <DropdownMenuCheckboxItem
+                    checked={Boolean(model && search.onlyModel)}
+                    disabled={!model}
+                    onCheckedChange={(on) => onChange(withFilter(search, { onlyModel: on ? true : undefined }))}
+                    // Stays open, so the choice above and this can be made in one go.
+                    onSelect={(e) => e.preventDefault()}
+                >
+                    Only what no other model found
+                </DropdownMenuCheckboxItem>
             </DropdownMenuContent>
         </DropdownMenu>
     );
@@ -275,7 +308,8 @@ export function IssueFilters({
                 counts={counts?.category}
                 onToggle={(v) => onChange(withFilter(search, { category: toggle(search.category, v) }))}
             />
-            {models && models.length > 1 && <FoundBy models={models} search={search} onChange={onChange} />}
+            {/* Also when a model is asked for in the address but this report isn't from several: so it can be taken off. */}
+            {((models && models.length > 1) || search.model) && <FoundBy models={models ?? []} search={search} onChange={onChange} />}
             <OtherFilters search={search} markSingles={Boolean(markSingles)} onChange={onChange} />
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>

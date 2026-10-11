@@ -2,7 +2,7 @@
 // allowance. Instance-wide prices, the instance key and allowances are under /api/v1/instance (routes/instance-models.ts).
 
 import { z } from "zod";
-import { ANALYTICS_DAYS, type AnalyticsDays } from "../domain/analytics.ts";
+import { ANALYTICS_DAYS, ANALYTICS_SECTIONS, type AnalyticsDays, type AnalyticsSection } from "../domain/analytics.ts";
 import { json, type Route, route } from "../http/route.ts";
 import type { Access } from "../services/accounts.ts";
 import type { Services } from "../services/index.ts";
@@ -20,6 +20,12 @@ export const AnalyticsQuery = z.object({
         .enum(ANALYTICS_DAYS.map(String) as [string, ...string[]])
         .optional()
         .describe("The range in days: 7, 30 (default), 90, 365, or 0 for all time"),
+    sections: z
+        .string()
+        .max(80)
+        .regex(new RegExp(`^(${ANALYTICS_SECTIONS.join("|")})(,(${ANALYTICS_SECTIONS.join("|")}))*$`))
+        .optional()
+        .describe(`Only these parts, separated by commas: ${ANALYTICS_SECTIONS.join(", ")}. Default: all of them.`),
 });
 
 export const PriceBody = z.object({
@@ -64,6 +70,7 @@ export const insightRoutes: Route[] = [
                     project: query.project || undefined,
                     branch: query.branch || undefined,
                     days: daysOf(query.days),
+                    sections: query.sections ? (query.sections.split(",") as AnalyticsSection[]) : undefined,
                 }),
             );
         },

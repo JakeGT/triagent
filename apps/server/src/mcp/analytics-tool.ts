@@ -3,7 +3,7 @@
 
 import { SEVERITIES } from "@triagent/shared";
 import { z } from "zod";
-import { ANALYTICS_DAYS } from "../domain/analytics.ts";
+import { ANALYTICS_DAYS, ANALYTICS_SECTIONS, type AnalyticsSection } from "../domain/analytics.ts";
 import type { Analytics } from "../services/analytics.ts";
 import type { Tool } from "./tools.ts";
 
@@ -14,52 +14,75 @@ const dur = (s: number | null) => (s === null ? "not recorded" : s < 90 ? `${Mat
 const hrs = (h: number | null) => (h === null ? "not recorded" : h < 48 ? `${h.toFixed(1)} h` : `${(h / 24).toFixed(1)} days`);
 
 export function analyticsText(a: Analytics): string {
-    const r = a.reviews;
-    const f = a.findings;
-    const t = a.triage;
-    const p = a.performance;
+    const { reviews: r, findings: f, triage: t, performance: p, models: m } = a;
     const scope = `${a.scope.project ?? "all projects"}, ${a.scope.branch ? `branch ${a.scope.branch}` : "all branches"}`;
     const range = a.range.days ? `the last ${a.range.days} days` : "all time";
-    const lines = [
-        `# Analytics: ${scope}, ${range}`,
-        "",
-        "## Reviews",
-        `- ${n(r.total)} reviews (${n(r.runs)} run on the server, ${n(r.uploads)} uploaded): ${n(r.byStatus.done)} done, ${n(r.byStatus.partial)} partial, ${n(r.byStatus.failed)} failed, ${n(r.byStatus.cancelled)} cancelled`,
-        `- Run time: median ${dur(r.runSeconds.median)}, 90th percentile ${dur(r.runSeconds.p90)}; queue time: median ${dur(r.queueSeconds.median)}`,
-        `- Tokens: ${n(r.tokens.total)} (${n(r.tokens.input)} input, ${n(r.tokens.output)} output, ${n(r.tokens.cacheRead)} cache reads)${r.tokens.estimated ? `, including an estimate of ${n(r.tokens.estimatedTotal)} for ${n(r.tokens.estimated)} review(s) that stopped without saying (counted at their token budget)` : ""}`,
-        `- Cost: ${usd(r.cost.total)}; per review ${usd(r.cost.perReview)}, per pull request ${usd(r.cost.perPr)}, per finding ${usd(r.cost.perFinding)}`,
-        ...(a.unpriced.length ? [`- No price for: ${a.unpriced.map((u) => `${u.model} (${n(u.tokens)} tokens)`).join(", ")}`] : []),
-        "",
-        "## Findings and backlog",
-        `- Open now: ${n(f.open)} (${SEVERITIES.map((s) => `${f.openBySeverity[s]} ${s}`).join(", ")}); ${n(f.unassigned)} unassigned, ${n(f.needsDiscussion)} need discussion`,
-        `- In range: ${n(f.added)} new, ${n(f.closed)} closed (${n(f.resolved)} resolved, ${n(f.wontFix)} won't fix, won't-fix rate ${pct(f.wontFixRate)}), ${n(f.removed)} no longer reported, ${n(f.reopenedByReview + f.reopenedByPeople)} reopened`,
-        `- Rating corrections: ${n(f.corrections.severity)} severity, ${n(f.corrections.category)} category`,
-        ...(f.hotspots.files.length
-            ? [
-                  `- Hotspots: ${f.hotspots.files
-                      .slice(0, 5)
-                      .map((h) => `${h.key} (${h.open} open)`)
-                      .join(", ")}`,
-              ]
-            : []),
-        "",
-        "## Triage",
-        `- ${n(t.closed)} closed (${t.closedPerWeek.toFixed(1)} a week); ${pct(t.agentShare)} by agents`,
-        `- Time to resolve: median ${hrs(t.timeToResolve.medianHours)}, 90th percentile ${hrs(t.timeToResolve.p90Hours)}`,
-        ...t.people
-            .slice(0, 10)
-            .map(
-                (x) =>
-                    `- ${x.actor}${x.agent ? " (agent)" : ""}: ${x.resolved} resolved, ${x.wontFix} won't fix, ${x.reopened} reopened, ${x.notes} notes, ${x.claims} claimed`,
-            ),
-        "",
-        "## Model and OCR performance",
-        `- Partial reviews: ${n(p.partial)} (${pct(p.partialRate)}); failed file groups: ${p.groups.recorded ? n(p.groups.failed) : "not recorded"}`,
-        `- Model requests: ${p.llm.recorded ? `${n(p.llm.requests)}, ${n(p.llm.retries)} retried, ${n(p.llm.failures)} failed` : "not recorded"}`,
-        `- Tokens a minute: ${p.tokensPerMinute.value === null ? "not recorded" : n(Math.round(p.tokensPerMinute.value))}; per file: ${p.tokensPerFile.value === null ? "not recorded" : n(Math.round(p.tokensPerFile.value))}`,
-        `- Tool calls: ${p.tools.recorded ? `${n(p.tools.calls)}, ${pct(p.tools.failureRate)} failed` : "not recorded"}`,
-    ];
-    if (a.truncated.history || a.truncated.activity) lines.push("", "_Only the most recent rows were read, so older ones are left out._");
+    const lines = [`# Analytics: ${scope}, ${range}`];
+    if (r)
+        lines.push(
+            "",
+            "## Reviews",
+            `- ${n(r.total)} reviews (${n(r.runs)} run on the server, ${n(r.uploads)} uploaded): ${n(r.byStatus.done)} done, ${n(r.byStatus.partial)} partial, ${n(r.byStatus.failed)} failed, ${n(r.byStatus.cancelled)} cancelled`,
+            `- Run time: median ${dur(r.runSeconds.median)}, 90th percentile ${dur(r.runSeconds.p90)}; queue time: median ${dur(r.queueSeconds.median)}`,
+            `- Tokens: ${n(r.tokens.total)} (${n(r.tokens.input)} input, ${n(r.tokens.output)} output, ${n(r.tokens.cacheRead)} cache reads)${r.tokens.estimated ? `, including an estimate of ${n(r.tokens.estimatedTotal)} for ${n(r.tokens.estimated)} review(s) that stopped without saying (counted at their token budget)` : ""}`,
+            `- Cost: ${usd(r.cost.total)}; per review ${usd(r.cost.perReview)}, per pull request ${usd(r.cost.perPr)}, per finding ${usd(r.cost.perFinding)}`,
+            ...(a.unpriced.length ? [`- No price for: ${a.unpriced.map((u) => `${u.model} (${n(u.tokens)} tokens)`).join(", ")}`] : []),
+        );
+    if (m) {
+        lines.push("", "## Models");
+        if (!m.rows.length) lines.push("- No review in the range said which model it used.");
+        for (const x of m.rows)
+            lines.push(
+                `- ${x.key}: ${n(x.reviews)} reviews (${pct(x.failureRate)} failed, ${n(x.stalled)} stalled), median ${dur(x.medianRunSeconds)}, ${n(x.tokens)} tokens, ${usd(x.cost)}; ${n(x.findings)} findings, ${n(x.unique)} only it found, ${n(x.accepted)} accepted and ${n(x.rejected)} rejected (${pct(x.acceptanceRate)} accepted${x.accepted + x.rejected < m.smallSample ? ", too few to rely on" : ""}); per finding ${usd(x.costPerFinding)}, per accepted finding ${usd(x.costPerAccepted)}`,
+            );
+        if (m.agreement.findings)
+            lines.push(
+                `- Agreement, over ${n(m.agreement.findings)} findings from reviews with several models: ${n(m.agreement.all)} found by all, ${n(m.agreement.several)} by several, ${n(m.agreement.one)} by one`,
+                ...m.agreement.overlap.map(
+                    (o) => `- Of ${o.a}'s ${n(o.of)} findings in reviews with ${o.b}, ${o.b} also found ${pct(o.share)}`,
+                ),
+            );
+    }
+    if (f)
+        lines.push(
+            "",
+            "## Findings and backlog",
+            `- Open now: ${n(f.open)} (${SEVERITIES.map((s) => `${f.openBySeverity[s]} ${s}`).join(", ")}); ${n(f.unassigned)} unassigned, ${n(f.needsDiscussion)} need discussion`,
+            `- In range: ${n(f.added)} new, ${n(f.closed)} closed (${n(f.resolved)} resolved, ${n(f.wontFix)} won't fix, won't-fix rate ${pct(f.wontFixRate)}), ${n(f.removed)} no longer reported, ${n(f.reopenedByReview + f.reopenedByPeople)} reopened`,
+            `- Rating corrections: ${n(f.corrections.severity)} severity, ${n(f.corrections.category)} category`,
+            ...(f.hotspots.files.length
+                ? [
+                      `- Hotspots: ${f.hotspots.files
+                          .slice(0, 5)
+                          .map((h) => `${h.key} (${h.open} open)`)
+                          .join(", ")}`,
+                  ]
+                : []),
+        );
+    if (t)
+        lines.push(
+            "",
+            "## Triage",
+            `- ${n(t.closed)} closed (${t.closedPerWeek.toFixed(1)} a week); ${pct(t.agentShare)} by agents`,
+            `- Time to resolve: median ${hrs(t.timeToResolve.medianHours)}, 90th percentile ${hrs(t.timeToResolve.p90Hours)}`,
+            ...t.people
+                .slice(0, 10)
+                .map(
+                    (x) =>
+                        `- ${x.actor}${x.agent ? " (agent)" : ""}: ${x.resolved} resolved, ${x.wontFix} won't fix, ${x.reopened} reopened, ${x.notes} notes, ${x.claims} claimed`,
+                ),
+        );
+    if (p)
+        lines.push(
+            "",
+            "## Model and OCR performance",
+            `- Partial reviews: ${n(p.partial)} (${pct(p.partialRate)}); failed file groups: ${p.groups.recorded ? n(p.groups.failed) : "not recorded"}`,
+            `- Model requests: ${p.llm.recorded ? `${n(p.llm.requests)}, ${n(p.llm.retries)} retried, ${n(p.llm.failures)} failed` : "not recorded"}`,
+            `- Tokens a minute: ${p.tokensPerMinute.value === null ? "not recorded" : n(Math.round(p.tokensPerMinute.value))}; per file: ${p.tokensPerFile.value === null ? "not recorded" : n(Math.round(p.tokensPerFile.value))}`,
+            `- Tool calls: ${p.tools.recorded ? `${n(p.tools.calls)}, ${pct(p.tools.failureRate)} failed` : "not recorded"}`,
+        );
+    if (a.truncated.history || a.truncated.activity || a.truncated.sources)
+        lines.push("", "_Only the most recent rows were read, so older ones are left out._");
     if (a.truncated.current)
         lines.push("", "_There are too many current findings to count them all, so the findings figures cover only some branches._");
     return lines.join("\n");
@@ -69,7 +92,7 @@ export const analyticsTool: Tool = {
     name: "get_analytics",
     title: "Get analytics",
     description:
-        "Reviews (outcomes, time, tokens, cost), findings and backlog, triage throughput (by people and agents) and model performance, over a range. Leave project out for every project in the workspace.",
+        "Reviews (outcomes, time, tokens, cost), each model side by side (failures, cost, findings only it found, how many were accepted or rejected, agreement between models), findings and backlog, triage throughput (by people and agents) and model performance, over a range. Leave project out for every project in the workspace; name `sections` to get only some parts.",
     permission: "read",
     readOnly: true,
     input: z.object({
@@ -81,12 +104,18 @@ export const analyticsTool: Tool = {
             .refine((d) => (ANALYTICS_DAYS as readonly number[]).includes(d), "Use 7, 30, 90, 365 or 0 (all time).")
             .optional()
             .describe("7, 30 (default), 90, 365, or 0 for all time"),
+        sections: z
+            .array(z.enum(ANALYTICS_SECTIONS))
+            .max(ANALYTICS_SECTIONS.length)
+            .optional()
+            .describe("Only these parts: reviews, models, findings, triage, performance (default: all)"),
     }),
     async run(ctx, args) {
         const data = await ctx.services.analytics.compute(ctx.access.workspace, {
             project: typeof args.project === "string" ? args.project : undefined,
             branch: typeof args.branch === "string" ? args.branch : undefined,
             days: (args.days as Analytics["range"]["days"] | undefined) ?? 30,
+            ...(Array.isArray(args.sections) && args.sections.length ? { sections: args.sections as AnalyticsSection[] } : {}),
         });
         return { text: analyticsText(data), data };
     },

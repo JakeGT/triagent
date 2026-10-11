@@ -61,6 +61,12 @@ const filterProps = {
         .max(10)
         .optional()
         .describe("Only findings at least this many models found (for reviews run with several models)"),
+    model: z
+        .string()
+        .max(200)
+        .optional()
+        .describe("Only findings this model found, by its name in the review (list_issues says which models a review used)"),
+    onlyModel: z.boolean().optional().describe("With `model`: only findings no other model found"),
     lowerConfidence: z
         .boolean()
         .optional()

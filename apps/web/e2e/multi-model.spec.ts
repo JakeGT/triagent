@@ -84,6 +84,27 @@ test("triage shows which models found each finding, and filters and sorts by agr
     await expect(page.getByText("Found by 1 of 2")).toHaveCount(0);
     await expect(rows.filter({ hasText: "The total is computed" })).toHaveCount(1);
 
+    // Filter: one model's findings, and then only what no other model found.
+    await page.getByRole("button", { name: "Found by" }).click();
+    await page.getByRole("menuitemradio", { name: "Any number" }).click();
+    await page.getByRole("button", { name: "Found by" }).click();
+    await expect(page.getByRole("menuitemcheckbox", { name: "Only what no other model found" })).toBeDisabled();
+    await page.getByRole("menuitemradio", { name: "model-b" }).click();
+    await expect(page).toHaveURL(/model=model-b/);
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^2 issues/);
+    await page.getByRole("button", { name: "Found by" }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Only what no other model found" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page).toHaveURL(/onlyModel=true/);
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^1 issue/);
+    await expect(rows.filter({ hasText: "Only model B noticed" })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Found by" })).toContainText("Only model-b");
+    await axe(page, "issues filtered to one model");
+    await page.getByRole("button", { name: "Found by" }).click();
+    await page.getByRole("menuitemradio", { name: "Any model" }).click();
+    await expect(page).not.toHaveURL(/model=/);
+    await expect(page.getByTestId("issues-summary")).toHaveText(/^2 issues/);
+
     // The issue says who found it, and what the other model said.
     await rows.filter({ hasText: "The total is computed" }).getByRole("link").first().click();
     const found = page.getByTestId("found-by");
@@ -164,6 +185,13 @@ for (const theme of ["light", "dark"] as const) {
         await expect(done).toHaveCount(3);
         await expect(done.nth(1)).toContainText(/^Careful 2 findings, [\d,]+ tokens, \ds$/);
         await expect(panel.getByTestId("run-model-row")).toHaveCount(0);
+        // And side by side: what each found, what only it did, and a way to its findings.
+        const side = panel.getByTestId("run-models-table");
+        await expect(side.getByRole("row")).toHaveCount(4);
+        const careful = side.getByRole("row", { name: /Careful/ }).getByRole("cell");
+        await expect(careful.nth(1)).toHaveText("2");
+        await expect(careful.nth(2)).toHaveText("0");
+        await expect(side.getByRole("link", { name: "Careful" })).toHaveAttribute("href", /\/issues\?branch=main&model=Careful$/);
         await filter.getByRole("button", { name: "fake/sleep-6" }).click();
         await expect(log).toContainText("[fake/sleep-6] [triagent] Finished.");
         await expect(log).not.toContainText("[Careful]");

@@ -20,6 +20,7 @@ import type {
     ApiToken,
     ArchivedReport,
     AuditRow,
+    FindingSource,
     GithubDelivery,
     GithubInstallation,
     Invite,
@@ -324,6 +325,22 @@ const toDelivery = (r: Row): GithubDelivery => ({
     what: r.what,
     outcome: r.outcome,
     detail: r.detail,
+});
+
+const toSource = (r: Row): FindingSource => ({
+    workspaceId: r.workspace_id,
+    projectId: r.project_id,
+    branch: r.branch,
+    findingId: r.finding_id,
+    model: r.model,
+    provider: r.provider,
+    label: r.label,
+    scanId: r.scan_id,
+    scanModels: Number(r.scan_models),
+    severity: r.severity,
+    firstSeenAt: iso(r.first_seen_at),
+    outcome: r.outcome,
+    decidedAt: isoOrNull(r.decided_at),
 });
 
 const toRunner = (r: Row): RunnerRecord => ({
@@ -898,6 +915,66 @@ export class PostgresStore implements Store {
             );
             return Object.fromEntries(rows.map((r) => [r.workspace_id as string, Number(r.total)]));
         },
+    };
+
+    findingSources: Repos["findingSources"] = {
+        add: (rows) =>
+            this.write(async (sql) => {
+                // In batches: a full scan can report thousands at once.
+                for (let i = 0; i < rows.length; i += 500) {
+                    const batch = rows.slice(i, i + 500).map((r) => ({
+                        workspace_id: r.workspaceId,
+                        project_id: r.projectId,
+                        branch: r.branch,
+                        finding_id: r.findingId,
+                        model: r.model,
+                        provider: r.provider,
+                        label: r.label,
+                        scan_id: r.scanId,
+                        scan_models: r.scanModels,
+                        severity: r.severity,
+                        first_seen_at: r.firstSeenAt,
+                        outcome: r.outcome,
+                        decided_at: r.decidedAt,
+                    }));
+                    await sql`insert into finding_sources ${sql(batch)} on conflict do nothing`;
+                }
+            }),
+        setOutcome: (projectId, branch, findingId, outcome, at) =>
+            this.write(async (sql) => {
+                await sql`
+                    update finding_sources set outcome = ${outcome}, decided_at = ${outcome ? at : null}
+                    where project_id = ${projectId} and branch = ${branch} and finding_id = ${findingId}
+                      and outcome is distinct from ${outcome}`;
+            }),
+        list: async (f, limit) =>
+            (
+                await this.rows(
+                    (sql) => sql`
+                        select * from finding_sources
+                        where workspace_id = ${f.workspaceId}
+                        ${f.projectId ? sql`and project_id = ${f.projectId}` : sql``}
+                        ${f.branch ? sql`and branch = ${f.branch}` : sql``}
+                        order by first_seen_at desc
+                        limit ${limit}`,
+                )
+            ).map(toSource),
+        renameBranch: (projectId, from, to) =>
+            this.write(async (sql) => {
+                // Rows the new name already has (it was reviewed under both) stay as they are.
+                await sql`
+                    update finding_sources s set branch = ${to}
+                    where project_id = ${projectId} and branch = ${from}
+                      and not exists (
+                          select 1 from finding_sources t
+                          where t.project_id = s.project_id and t.branch = ${to} and t.finding_id = s.finding_id
+                            and t.model = s.model and t.provider = s.provider)`;
+                await sql`delete from finding_sources where project_id = ${projectId} and branch = ${from}`;
+            }),
+        removeProject: (workspaceId, projectId) =>
+            this.write(async (sql) => {
+                await sql`delete from finding_sources where workspace_id = ${workspaceId} and project_id = ${projectId}`;
+            }),
     };
 
     settings: Repos["settings"] = {

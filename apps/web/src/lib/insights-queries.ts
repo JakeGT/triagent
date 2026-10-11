@@ -6,18 +6,22 @@ import { api, paths } from "./api";
 import type {
     Allowance,
     Analytics,
+    AnalyticsSection,
     Catalogue,
     Days,
     InstanceModel,
     InstanceReviews,
     InstanceWorkspaces,
     PriceEntry,
+    RunBreakdown,
     WorkspacePrices,
 } from "./insights-types";
 import { keys } from "./queries";
 
 export const insightKeys = {
-    analytics: (ws: string, scope: { project?: string; branch?: string; days: Days }) => ["ws", ws, "analytics", scope] as const,
+    analytics: (ws: string, scope: { project?: string; branch?: string; days: Days; sections?: readonly AnalyticsSection[] }) =>
+        ["ws", ws, "analytics", scope] as const,
+    runModels: (ws: string, runId: string) => ["ws", ws, "runs", runId, "models"] as const,
     catalogue: (ws: string) => ["ws", ws, "catalogue"] as const,
     prices: (ws: string) => keys.wsSettings(ws, "model-prices"),
     allowance: (ws: string) => keys.wsSettings(ws, "model-allowance"),
@@ -34,13 +38,26 @@ export const instancePaths = {
     reviews: "/api/v1/instance/reviews",
 };
 
-export const analyticsQuery = (ws: string, scope: { project?: string; branch?: string; days: Days }) =>
+/** A finished review's models side by side. */
+export const runModelsQuery = (ws: string, runId: string) =>
+    queryOptions({
+        queryKey: insightKeys.runModels(ws, runId),
+        queryFn: ({ signal }) =>
+            api.get<RunBreakdown>(`${paths.workspace(ws)}/runs/${encodeURIComponent(runId)}/models`, undefined, { signal }),
+        staleTime: 30_000,
+    });
+
+/** Analytics for a scope: `sections` are the parts wanted (a tab's own), so the rest isn't worked out. */
+export const analyticsQuery = (
+    ws: string,
+    scope: { project?: string; branch?: string; days: Days; sections?: readonly AnalyticsSection[] },
+) =>
     queryOptions({
         queryKey: insightKeys.analytics(ws, scope),
         queryFn: ({ signal }) =>
             api.get<Analytics>(
                 `${paths.workspace(ws)}/analytics`,
-                { project: scope.project, branch: scope.branch, days: scope.days },
+                { project: scope.project, branch: scope.branch, days: scope.days, sections: scope.sections?.join(",") },
                 { signal },
             ),
         placeholderData: (previous) => previous,

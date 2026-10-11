@@ -12,9 +12,9 @@ import { reportMetrics } from "../domain/review-metrics.ts";
 import { ApiError, badRequest, conflict, notFound } from "../errors.ts";
 import { now, sha256 } from "../security.ts";
 import type { Project, Repos, StoredReport, UploadLink } from "../store/types.ts";
-import type { Actor, Core } from "./core.ts";
+import type { Actor, Core, Write } from "./core.ts";
 import type { History } from "./history.ts";
-import { applyChange, type BranchRef } from "./triage.ts";
+import { applyChange, type BranchRef, outcomeOf } from "./triage.ts";
 
 const KEEP_ARCHIVED = 10;
 const LINK_TTL_MS = 15 * 60_000;
@@ -30,6 +30,13 @@ export interface UploadInput {
     confirm?: unknown;
     reopen?: unknown;
     scope?: unknown;
+}
+
+/** A model as a review knew it (its label) and as the provider does (analytics counts by the latter). */
+export interface SourceModel {
+    label: string;
+    model: string;
+    provider: string;
 }
 
 function checkBranch(value: unknown, fallback: string): string {
@@ -190,6 +197,7 @@ export class Reports {
             await w.tx.reports.put({ projectId: project.id, branch: to, report: stored.report, upload: { ...stored.upload, branch: to } });
             await w.tx.reports.delete(project.id, from);
             await w.tx.triage.renameBranch(project.id, from, to);
+            await w.tx.findingSources.renameBranch(project.id, from, to);
             await w.tx.reports.renameArchive(project.id, from, to);
             // Moving the default branch's report keeps it the default unless told otherwise.
             // The project as it is now: another change may have saved it since this request loaded it.
@@ -300,7 +308,59 @@ export class Reports {
      * Upload a report to a branch, or with `preview` only say what it would do. A branch whose current
      * report has unresolved issues is only replaced with `confirm: true` (409 otherwise).
      */
-    async upload(actor: Actor, project: Project, input: UploadInput, { preview = false } = {}) {
+    /**
+     * Write down which model reported each finding of a report just saved (finding_sources), for those not
+     * written down already. `models` are the review's; `only` keeps it to one of them (a model run again).
+     */
+    private async noteSources(
+        w: Write,
+        project: Project,
+        branch: string,
+        review: Review,
+        from: { models: readonly SourceModel[]; scanId: string | null; at: string; only?: string },
+    ): Promise<void> {
+        if (!from.models.length) return;
+        const byLabel = new Map(from.models.map((m) => [m.label, m]));
+        const single = from.models.length === 1 ? (from.models[0] as SourceModel) : null;
+        const scanModels = Math.max(review.meta.models?.length ?? 0, from.models.length);
+        const triage = new Map(
+            (await w.tx.triage.forBranch(project.id, branch)).filter((t) => t.kind === "issue").map((t) => [t.itemId, t]),
+        );
+        const rows = [];
+        for (const x of review.issues) {
+            // One a person added isn't any model's.
+            if (x.addedBy) continue;
+            const labels = x.foundBy ?? (single ? [single.label] : []);
+            for (const label of labels) {
+                const m = byLabel.get(label);
+                if (!m || (from.only !== undefined && label !== from.only)) continue;
+                const outcome = outcomeOf(triage.get(x.id) ?? null);
+                rows.push({
+                    workspaceId: project.workspaceId,
+                    projectId: project.id,
+                    branch,
+                    findingId: x.id,
+                    model: m.model,
+                    provider: m.provider,
+                    label: m.label,
+                    scanId: from.scanId,
+                    scanModels,
+                    severity: x.severity,
+                    firstSeenAt: from.at,
+                    outcome,
+                    decidedAt: outcome ? from.at : null,
+                });
+            }
+        }
+        await w.tx.findingSources.add(rows);
+    }
+
+    async upload(
+        actor: Actor,
+        project: Project,
+        input: UploadInput,
+        { preview = false, sources }: { preview?: boolean; sources?: { models: readonly SourceModel[]; scanId: string } } = {},
+    ) {
         const branch = this.branchOf(project, input.branch);
         const commit = checkCommit(input.commit);
         const fileName = checkFileName(input.fileName);
@@ -402,9 +462,22 @@ export class Reports {
                 },
                 project.slug,
             );
+            // Who found what, after any reopening above so each finding's outcome is as it stands now. A review run here
+            // says which models it used; an uploaded report says so itself, as far as it does.
+            const said = reportMetrics(merged);
+            const named = next.meta.models?.length
+                ? next.meta.models.map((label) => ({ label, model: label, provider: "" }))
+                : said.model
+                  ? [{ label: said.model, model: said.model, provider: said.provider ?? "" }]
+                  : [];
+            await this.noteSources(w, project, branch, next, {
+                models: sources?.models ?? named,
+                scanId: sources?.scanId ?? upload.id,
+                at: upload.uploadedAt,
+            });
             // Reviews run on the server upload through GitHub automation and record themselves, with their timings.
             if (this.reviews && actor.via !== "github") {
-                const m = reportMetrics(merged);
+                const m = said;
                 const addedIds: Partial<Record<Severity, string[]>> = {};
                 let kept = 0;
                 for (const x of next.issues) {
@@ -449,7 +522,11 @@ export class Reports {
      * nothing changes and the answer is null. The report keeps its place in the branch's history, and
      * every finding already there keeps its id, so triage is as it was; nothing is reopened.
      */
-    async addModelFindings(actor: Actor, project: Project, input: { branch: string; uploadId: string; label: string; report: RawReport }) {
+    async addModelFindings(
+        actor: Actor,
+        project: Project,
+        input: { branch: string; uploadId: string; label: string; report: RawReport; source?: { model: SourceModel; scanId: string } },
+    ) {
         const { branch, label } = input;
         return this.core.write(actor, async (w) => {
             const stored = await w.tx.reports.get(project.id, branch);
@@ -466,6 +543,17 @@ export class Reports {
             }
             const before = this.review(stored);
             await w.tx.reports.put({ projectId: project.id, branch, report: merged.report, upload });
+            // What it found, new or already there: its own, alongside the models that found them first.
+            if (input.source)
+                await this.noteSources(w, project, branch, next, {
+                    models: [
+                        ...(next.meta.models ?? []).filter((l) => l !== label).map((l) => ({ label: l, model: l, provider: "" })),
+                        input.source.model,
+                    ],
+                    scanId: input.source.scanId,
+                    at: now(),
+                    only: label,
+                });
             await w.activity(
                 {
                     workspaceId: project.workspaceId,

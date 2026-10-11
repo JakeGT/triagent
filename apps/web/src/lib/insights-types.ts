@@ -43,12 +43,79 @@ export interface PerfRow {
     llmFailures: number;
 }
 
+/** The parts of the answer: each tab of the page asks for its own. */
+export type AnalyticsSection = "reviews" | "findings" | "triage" | "performance" | "models";
+
+/** One model, over the range: how its reviews went, what it found and what became of that. */
+export interface ModelRow {
+    /** The provider's model id. */
+    key: string;
+    provider: string | null;
+    /** What reviews called it (a nickname, if it has one), most used first. */
+    labels: string[];
+    reviews: number;
+    failed: number;
+    stalled: number;
+    failureRate: number | null;
+    medianRunSeconds: number | null;
+    tokens: number;
+    cost: number | null;
+    findings: number;
+    /** Of its findings from reviews with other models, those no other model found. */
+    unique: number;
+    accepted: number;
+    rejected: number;
+    acceptanceRate: number | null;
+    costPerFinding: number | null;
+    costPerAccepted: number | null;
+}
+
+export interface ModelsSection {
+    rows: ModelRow[];
+    /** Reviews that didn't say which model they used. */
+    withoutModel: number;
+    agreement: {
+        findings: number;
+        all: number;
+        several: number;
+        one: number;
+        /** Of `a`'s findings in reviews it shared with `b`, the share `b` found too. */
+        overlap: { a: string; b: string; of: number; shared: number; share: number | null }[];
+    };
+    series: { date: string; models: Record<string, { cost: number; accepted: number; rejected: number }> }[];
+    /** Fewer decided findings than this and a rate is shown as a guess. */
+    smallSample: number;
+}
+
+/** A review's models side by side (GET …/runs/{id}/models). */
+export interface RunBreakdown {
+    /** Whether who found what was kept for this review. */
+    recorded: boolean;
+    models: {
+        label: string;
+        provider: string;
+        model: string;
+        status: string;
+        reason: string | null;
+        findings: number | null;
+        unique: number | null;
+        bySeverity: Record<Severity, number> | null;
+        accepted: number | null;
+        rejected: number | null;
+        tokens: { input: number; output: number; cacheRead: number; total: number } | null;
+        tokensTotal: number | null;
+        seconds: number | null;
+        cost: number | null;
+    }[];
+}
+
 export interface Analytics {
     range: { days: Days; from: string; to: string; unit: "day" | "week"; buckets: string[] };
     scope: { project: string | null; branch: string | null; projects: { slug: string; name: string }[] };
-    truncated: { history: boolean; activity: boolean; current: boolean };
+    truncated: { history: boolean; activity: boolean; current: boolean; sources: boolean };
+    models?: ModelsSection;
     unpriced: { model: string; reviews: number; tokens: number }[];
-    reviews: {
+    reviews?: {
         total: number;
         byStatus: Record<ReviewStatus, number>;
         runs: number;
@@ -93,9 +160,11 @@ export interface Analytics {
             tokensEstimated: boolean;
             cost: number | null;
             findings: number | null;
+            /** The run it was, when it was run here: its page has each model side by side. */
+            runId: string | null;
         }[];
     };
-    findings: {
+    findings?: {
         open: number;
         inProgress: number;
         unassigned: number;
@@ -116,7 +185,7 @@ export interface Analytics {
         series: { date: string; added: number; closed: number; reopened: number }[];
         hotspots: { folders: HotspotRow[]; files: HotspotRow[]; categories: HotspotRow[] };
     };
-    triage: {
+    triage?: {
         closed: number;
         byAgents: number;
         agentShare: number | null;
@@ -143,7 +212,7 @@ export interface Analytics {
             lastAt: string;
         }[];
     };
-    performance: {
+    performance?: {
         reviews: number;
         partial: number;
         partialRate: number | null;

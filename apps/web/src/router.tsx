@@ -170,6 +170,14 @@ const analyticsRoute = createRoute({
     component: lazyRouteComponent(() => import("@/features/analytics/analytics-page"), "AnalyticsPage"),
 });
 
+/** One tab of it: /analytics/models. An unknown one shows the overview. */
+const analyticsTabRoute = createRoute({
+    getParentRoute: () => wsRoute,
+    path: "/analytics/$tab",
+    validateSearch: parseAnalyticsSearch,
+    component: lazyRouteComponent(() => import("@/features/analytics/analytics-page"), "AnalyticsPage"),
+});
+
 // ---- settings: workspace, instance and account ---------------------------------------------------
 
 const wsSettingsRoute = createRoute({
@@ -439,6 +447,7 @@ const routeTree = rootRoute.addChildren([
             wsIndexRoute,
             agentsRoute,
             analyticsRoute,
+            analyticsTabRoute,
             wsSettingsRoute.addChildren([wsSettingsIndexRoute, ...wsSettingsRoutes]),
             projectRoute.addChildren([
                 projectIndexRoute,

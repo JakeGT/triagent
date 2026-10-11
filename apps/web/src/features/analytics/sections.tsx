@@ -1,6 +1,8 @@
-// The Analytics page's four sections. Each leads with headline figures, then charts (each with a table
-// view), then tables. Figures a review didn't record say so instead of showing zero.
+// What the Analytics page's tabs are made of (the Overview and Models tabs have files of their own). Each
+// leads with a few headline figures, then charts (each with a table view), then tables. Figures a review
+// didn't record say so instead of showing zero.
 
+import { Link } from "@tanstack/react-router";
 import { SEVERITIES, type Severity } from "@triagent/shared";
 import type { ReactNode } from "react";
 import { BarList, ChartFrame, ColumnChart, LineChart, type Point, type Series, Stat, Stats } from "@/components/charts";
@@ -22,6 +24,7 @@ import {
     VIA_LABEL,
 } from "@/lib/insights-format";
 import type { Analytics, HotspotRow, PerfRow, ReviewGroup } from "@/lib/insights-types";
+import { useWorkspace } from "@/lib/session";
 
 const SEV_BG: Record<Severity, string> = { critical: "bg-sev-critical", high: "bg-sev-high", medium: "bg-sev-medium", low: "bg-sev-low" };
 
@@ -39,7 +42,7 @@ export function Section({ id, title, description, children }: { id: string; titl
     );
 }
 
-function Card({ title, children }: { title: string; children: ReactNode }) {
+export function Card({ title, children }: { title: string; children: ReactNode }) {
     return (
         <div className="grid min-w-0 content-start gap-3 rounded-lg border bg-card p-4">
             <h3 className="section-title">{title}</h3>
@@ -92,7 +95,7 @@ export function DataTable({
 }
 
 /** The series' values per bucket, as a table. */
-function SeriesTable({
+export function SeriesTable({
     caption,
     points,
     series,
@@ -112,15 +115,15 @@ function SeriesTable({
     );
 }
 
-function pointsOf<T extends { date: string }>(a: Analytics, rows: T[], values: (row: T) => Record<string, number>): Point[] {
+export function pointsOf<T extends { date: string }>(a: Analytics, rows: T[], values: (row: T) => Record<string, number>): Point[] {
     return rows.map((r) => ({ label: bucketLabel(r.date, a.range.unit), long: bucketLong(r.date, a.range.unit), values: values(r) }));
 }
 
-const per = (a: Analytics) => (a.range.unit === "week" ? "week" : "day");
+export const per = (a: Analytics) => (a.range.unit === "week" ? "week" : "day");
 
 // ---- reviews -----------------------------------------------------------------------------------
 
-const OUTCOMES: Series[] = [
+export const OUTCOMES: Series[] = [
     { key: "done", label: "Done", colour: "chart-1" },
     { key: "partial", label: "Partial", colour: "chart-2" },
     { key: "failed", label: "Failed or cancelled", colour: "chart-3" },
@@ -155,7 +158,9 @@ const GROUP_COLUMNS = [
 ];
 
 export function ReviewsSection({ a }: { a: Analytics }) {
+    const { ws } = useWorkspace();
     const r = a.reviews;
+    if (!r) return null;
     const outcomes = pointsOf(a, r.series, (d) => ({ done: d.done, partial: d.partial, failed: d.failed + d.cancelled }));
     const tokens = pointsOf(a, r.series, (d) => ({ tokens: d.tokens }));
     const tokenSeries: Series[] = [{ key: "tokens", label: "Tokens", colour: "chart-1" }];
@@ -163,8 +168,8 @@ export function ReviewsSection({ a }: { a: Analytics }) {
     return (
         <Section
             id="reviews"
-            title="Reviews"
-            description="Every review that finished: run on the server, or uploaded by people, agents or CI."
+            title="Reviews and cost"
+            description="Every review that finished: run on the server, or uploaded by people, agents or CI. Each model's own figures are under Models."
         >
             <Stats>
                 <Stat label="Reviews" value={count(r.total)} note={`${count(r.runs)} run here, ${count(r.uploads)} uploaded`} />
@@ -234,13 +239,6 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                     <ColumnChart points={tokens} series={tokenSeries} format={compactCount} />
                 </ChartFrame>
             </div>
-            <Card title="By model">
-                <DataTable
-                    caption="Reviews by model"
-                    columns={[{ label: "Model" }, ...GROUP_COLUMNS]}
-                    rows={groupRows(r.byModel, (k) => <span className="font-mono text-xs">{k}</span>)}
-                />
-            </Card>
             <Card title="By kind">
                 <DataTable
                     caption="Reviews by kind"
@@ -265,18 +263,39 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                     rows={r.latest.map((x) => ({
                         key: x.id,
                         cells: [
-                            <time key="t" dateTime={x.at} title={formatDateTime(x.at)}>
-                                {timeAgo(x.at)}
-                            </time>,
+                            // A review run here opens its own page, where its models are side by side.
+                            x.runId && x.project ? (
+                                <Link
+                                    key="t"
+                                    to="/w/$ws/p/$project/runs/$runId"
+                                    params={{ ws, project: x.project, runId: x.runId }}
+                                    className="link"
+                                >
+                                    <time dateTime={x.at} title={formatDateTime(x.at)}>
+                                        {timeAgo(x.at)}
+                                    </time>
+                                </Link>
+                            ) : (
+                                <time key="t" dateTime={x.at} title={formatDateTime(x.at)}>
+                                    {timeAgo(x.at)}
+                                </time>
+                            ),
                             <span key="w">
                                 {x.project ?? "(deleted project)"}{" "}
                                 <span className="font-mono text-xs text-muted-foreground">{x.branch}</span>
                             </span>,
                             `${KIND_LABEL[x.kind] ?? x.kind}${x.prNumber ? ` #${x.prNumber}` : ""}${x.requestedBy ? `, by ${x.requestedBy}` : ""}`,
                             STATUS_LABEL[x.status] ?? x.status,
-                            <span key="m" className="font-mono text-xs">
-                                {x.model ?? NOT_RECORDED}
-                            </span>,
+                            // A review with several: how many, with their names a hover (or its own page) away.
+                            x.model?.includes(" + ") ? (
+                                <span key="m" title={x.model}>
+                                    {x.model.split(" + ").length} models
+                                </span>
+                            ) : (
+                                <span key="m" className="font-mono text-xs">
+                                    {x.model ?? NOT_RECORDED}
+                                </span>
+                            ),
                             seconds(x.runSeconds),
                             x.tokens === null
                                 ? NOT_RECORDED
@@ -296,7 +315,7 @@ export function ReviewsSection({ a }: { a: Analytics }) {
 
 // ---- findings and backlog ----------------------------------------------------------------------
 
-const FLOW: Series[] = [
+export const FLOW: Series[] = [
     { key: "added", label: "New", colour: "chart-1" },
     { key: "closed", label: "Closed", colour: "chart-2" },
     { key: "reopened", label: "Reopened", colour: "chart-3" },
@@ -319,6 +338,7 @@ function HotspotTable({ caption, rows, label }: { caption: string; rows: Hotspot
 
 export function FindingsSection({ a }: { a: Analytics }) {
     const f = a.findings;
+    if (!f) return null;
     const flow = pointsOf(a, f.series, (d) => ({ added: d.added, closed: d.closed, reopened: d.reopened }));
     const ages: [string, number][] = [
         ["Under a week", f.age.under7],
@@ -339,22 +359,16 @@ export function FindingsSection({ a }: { a: Analytics }) {
                     value={count(f.open)}
                     note={`${count(f.inProgress)} in progress, ${count(f.unassigned)} unassigned`}
                 />
-                <Stat label="New" value={count(f.added)} note={`${count(f.removed)} no longer reported`} />
+                <Stat
+                    label="New"
+                    value={count(f.added)}
+                    note={`${count(f.removed)} no longer reported, ${count(f.reopenedByReview + f.reopenedByPeople)} reopened`}
+                />
                 <Stat label="Closed" value={count(f.closed)} note={`${count(f.resolved)} resolved, ${count(f.wontFix)} won't fix`} />
                 <Stat
                     label="Won't-fix rate"
                     value={percent(f.wontFixRate)}
                     note={`${count(f.duplicates)} marked as ${f.duplicates === 1 ? "a duplicate" : "duplicates"}`}
-                />
-                <Stat
-                    label="Reopened"
-                    value={count(f.reopenedByReview + f.reopenedByPeople)}
-                    note={`${count(f.reopenedByReview)} by a later review`}
-                />
-                <Stat
-                    label="Rating corrections"
-                    value={count(f.corrections.severity + f.corrections.category)}
-                    note={`${count(f.corrections.severity)} severity, ${count(f.corrections.category)} category`}
                 />
             </Stats>
             <div className="grid gap-4 lg:grid-cols-2">
@@ -412,7 +426,9 @@ export function FindingsSection({ a }: { a: Analytics }) {
                 />
             </Card>
             {f.corrections.severityChanges.length > 0 && (
-                <Card title="Severity corrections">
+                <Card
+                    title={`Severity corrections (${count(f.corrections.severity)}${f.corrections.category ? `, and ${plural(f.corrections.category, "category correction")}` : ""})`}
+                >
                     <DataTable
                         caption="How people corrected the reviewer's severity"
                         columns={[{ label: "From" }, { label: "To" }, { label: "Times", numeric: true }]}
@@ -440,11 +456,12 @@ const CLOSERS: Series[] = [
 
 export function TriageSection({ a }: { a: Analytics }) {
     const t = a.triage;
+    if (!t) return null;
     const closed = pointsOf(a, t.series, (d) => ({ people: d.closed - d.byAgents, agents: d.byAgents }));
     return (
         <Section
             id="triage"
-            title="Triage"
+            title="Triage and people"
             description="Findings closed, by people and by agents (through MCP or API tokens), and how long they took."
         >
             <Stats>
@@ -572,75 +589,84 @@ const PERF_COLUMNS = [
 
 export function PerformanceSection({ a }: { a: Analytics }) {
     const p = a.performance;
+    if (!p) return null;
     const recorded = (n: number, text: string) => (n ? text : NOT_RECORDED);
     return (
-        <Section
-            id="performance"
-            title="Model and OCR performance"
-            description="How the model and Open Code Review behaved, from what each review recorded. Uploaded reports carry less than server runs."
-        >
-            <Stats>
-                <Stat label="Partial reviews" value={count(p.partial)} note={`${percent(p.partialRate)} of finished reviews`} />
-                <Stat
-                    label="Failed file groups"
-                    value={recorded(p.groups.recorded, count(p.groups.failed))}
-                    note={p.groups.recorded ? `of ${count(p.groups.total)} groups` : undefined}
-                />
-                <Stat
-                    label="Model requests"
-                    value={recorded(p.llm.recorded, compactCount(p.llm.requests))}
-                    note={p.llm.recorded ? `${count(p.llm.retries)} retried, ${count(p.llm.failures)} failed` : undefined}
-                />
-                <Stat
-                    label="Tokens a minute"
-                    value={p.tokensPerMinute.value === null ? NOT_RECORDED : compactCount(p.tokensPerMinute.value)}
-                />
-                <Stat label="Tokens a file" value={p.tokensPerFile.value === null ? NOT_RECORDED : compactCount(p.tokensPerFile.value)} />
-                <Stat
-                    label="Tool calls"
-                    value={recorded(p.tools.recorded, compactCount(p.tools.calls))}
-                    note={p.tools.recorded ? `${percent(p.tools.failureRate)} failed` : undefined}
-                />
-            </Stats>
-            <div className="grid gap-4">
-                <Card title="Tools the model used">
-                    <DataTable
-                        caption="Tool calls and failures"
-                        columns={[
-                            { label: "Tool" },
-                            { label: "Calls", numeric: true },
-                            { label: "Failed", numeric: true },
-                            { label: "Failure rate", numeric: true },
-                        ]}
-                        rows={p.tools.byTool.map((t) => ({
-                            key: t.tool,
-                            cells: [
-                                <span key="t" className="font-mono text-xs">
-                                    {t.tool}
-                                </span>,
-                                count(t.calls),
-                                count(t.failures),
-                                percent(t.failureRate),
-                            ],
-                        }))}
-                        empty="No review in this range recorded its tool calls."
+        // For looking into a problem, not for every visit: closed until asked for.
+        <details className="group rounded-lg border" data-testid="ocr-figures">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-medium select-none">
+                How Open Code Review behaved: partial reviews, model requests, tool calls, versions
+            </summary>
+            <div className="grid gap-4 border-t p-4">
+                <p className="text-sm text-muted-foreground">
+                    From what each review recorded. Uploaded reports carry less than server runs.
+                </p>
+                <Stats>
+                    <Stat label="Partial reviews" value={count(p.partial)} note={`${percent(p.partialRate)} of finished reviews`} />
+                    <Stat
+                        label="Failed file groups"
+                        value={recorded(p.groups.recorded, count(p.groups.failed))}
+                        note={p.groups.recorded ? `of ${count(p.groups.total)} groups` : undefined}
                     />
-                </Card>
-                <Card title="Open Code Review versions">
+                    <Stat
+                        label="Model requests"
+                        value={recorded(p.llm.recorded, compactCount(p.llm.requests))}
+                        note={p.llm.recorded ? `${count(p.llm.retries)} retried, ${count(p.llm.failures)} failed` : undefined}
+                    />
+                    <Stat
+                        label="Tokens a minute"
+                        value={p.tokensPerMinute.value === null ? NOT_RECORDED : compactCount(p.tokensPerMinute.value)}
+                    />
+                    <Stat
+                        label="Tokens a file"
+                        value={p.tokensPerFile.value === null ? NOT_RECORDED : compactCount(p.tokensPerFile.value)}
+                    />
+                    <Stat
+                        label="Tool calls"
+                        value={recorded(p.tools.recorded, compactCount(p.tools.calls))}
+                        note={p.tools.recorded ? `${percent(p.tools.failureRate)} failed` : undefined}
+                    />
+                </Stats>
+                <div className="grid gap-4">
+                    <Card title="Tools the model used">
+                        <DataTable
+                            caption="Tool calls and failures"
+                            columns={[
+                                { label: "Tool" },
+                                { label: "Calls", numeric: true },
+                                { label: "Failed", numeric: true },
+                                { label: "Failure rate", numeric: true },
+                            ]}
+                            rows={p.tools.byTool.map((t) => ({
+                                key: t.tool,
+                                cells: [
+                                    <span key="t" className="font-mono text-xs">
+                                        {t.tool}
+                                    </span>,
+                                    count(t.calls),
+                                    count(t.failures),
+                                    percent(t.failureRate),
+                                ],
+                            }))}
+                            empty="No review in this range recorded its tool calls."
+                        />
+                    </Card>
+                    <Card title="Open Code Review versions">
+                        <DataTable
+                            caption="Reviews by Open Code Review version"
+                            columns={[{ label: "Version" }, ...PERF_COLUMNS]}
+                            rows={perfRows(p.ocrVersions, (k) => k)}
+                        />
+                    </Card>
+                </div>
+                <Card title="By model">
                     <DataTable
-                        caption="Reviews by Open Code Review version"
-                        columns={[{ label: "Version" }, ...PERF_COLUMNS]}
-                        rows={perfRows(p.ocrVersions, (k) => k)}
+                        caption="Model performance"
+                        columns={[{ label: "Model" }, ...PERF_COLUMNS]}
+                        rows={perfRows(p.byModel, (k) => <span className="font-mono text-xs">{k}</span>)}
                     />
                 </Card>
             </div>
-            <Card title="By model">
-                <DataTable
-                    caption="Model performance"
-                    columns={[{ label: "Model" }, ...PERF_COLUMNS]}
-                    rows={perfRows(p.byModel, (k) => <span className="font-mono text-xs">{k}</span>)}
-                />
-            </Card>
-        </Section>
+        </details>
     );
 }

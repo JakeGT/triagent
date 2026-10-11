@@ -148,6 +148,7 @@ export class Projects {
             if (purge) {
                 await w.tx.reviewHistory.removeProject(project.workspaceId, project.id);
                 await w.tx.activity.removeProject(project.workspaceId, project.id);
+                await w.tx.findingSources.removeProject(project.workspaceId, project.id);
             }
             await w.audit({
                 workspaceId: project.workspaceId,

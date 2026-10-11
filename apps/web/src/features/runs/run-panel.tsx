@@ -32,6 +32,7 @@ import {
     retryText,
     runModelLabels,
 } from "./run-bits";
+import { RunModelsTable } from "./run-models-table";
 
 const KEEP_LINES = 5000;
 
@@ -347,6 +348,9 @@ function RunDetailView({ runId }: { runId: string }) {
                     </>
                 )}
             </dl>
+            {(r.status === "done" || r.status === "partial") && (r.result?.models?.length ?? 0) > 1 && !r.result?.bakeOff && (
+                <RunModelsTable ws={ws} project={slug} runId={r.id} branch={r.branch} />
+            )}
             <div className="grid gap-1">
                 <h3 className="text-sm font-medium" id="run-log-heading">
                     Log{r.log.dropped ? ` (the first ${plural(r.log.dropped, "line")} were dropped to save space)` : ""}

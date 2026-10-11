@@ -103,6 +103,22 @@ export const runRoutes: Route[] = [
     }),
     route({
         method: "GET",
+        path: `${W}/runs/{runId}/models`,
+        scope: "workspace",
+        permission: "read",
+        tag: "Runs",
+        summary: "A finished review's models side by side",
+        description:
+            "One row for each model the review ran (one, for a review with one): its outcome, `findings`, how many of them no other model found (`unique`), their severities, how many were since resolved (`accepted`) or marked won't fix (`rejected`), its tokens, time and cost in US$ (null without a price for it). `recorded` is false for a review from before who found what was kept, or one run only to compare models: then `unique`, `bySeverity`, `accepted` and `rejected` are null. 409 until it has finished.",
+        async handler({ services, access, params }) {
+            const workspace = (access as Access).workspace;
+            const out = await services.runs.breakdown(workspace, params.runId as string);
+            const price = await services.prices.resolver(workspace.id);
+            return json({ ...out, models: out.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model)) })) });
+        },
+    }),
+    route({
+        method: "GET",
         path: `${W}/runs/{runId}/comparison`,
         scope: "workspace",
         permission: "read",

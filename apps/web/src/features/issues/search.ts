@@ -46,6 +46,9 @@ export interface IssueSearch {
     lowerConfidence?: boolean;
     /** Only findings at least this many models found (reviews run with several). */
     foundBy?: number;
+    /** Only findings this model found (its name in the review), and with `onlyModel`, that no other did. */
+    model?: string;
+    onlyModel?: boolean;
     sort?: IssueSort;
     /** From 1. */
     page?: number;
@@ -92,6 +95,12 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
     }
     const foundBy = Number(raw.foundBy);
     if (Number.isInteger(foundBy) && foundBy >= 2 && foundBy <= 10) out.foundBy = foundBy;
+    const model = text(raw.model, 200);
+    if (model) {
+        out.model = model;
+        // Means nothing without a model to be the only one.
+        if (flag(raw.onlyModel) === true) out.onlyModel = true;
+    }
     const sort = text(raw.sort);
     if (sort && (ISSUE_SORTS as readonly string[]).includes(sort) && sort !== "priority") out.sort = sort as IssueSort;
     const page = Number(raw.page);
@@ -118,6 +127,8 @@ export function issueApiQuery(s: IssueSearch, pageSize = PAGE_SIZE): Record<stri
         adjusted: bool(s.adjusted),
         lowerConfidence: bool(s.lowerConfidence),
         foundBy: s.foundBy ? String(s.foundBy) : undefined,
+        model: s.model,
+        onlyModel: s.model && s.onlyModel ? "true" : undefined,
         sort: s.sort,
         limit: String(pageSize),
         offset: s.page && s.page > 1 ? String((s.page - 1) * pageSize) : undefined,
@@ -138,6 +149,7 @@ export function activeFilters(s: IssueSearch): number {
     for (const k of ["path", "q", "assignee", "task"] as const) if (s[k]) n++;
     for (const k of FLAGS) if (s[k] !== undefined) n++;
     if (s.foundBy) n++;
+    if (s.model) n++;
     return n;
 }
 

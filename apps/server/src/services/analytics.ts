@@ -1,7 +1,14 @@
 // Gathers what analytics needs (review history, the activity log and the current reports for the
 // projects and branch in scope) with bounded reads, and hands it to domain/analytics.ts.
 
-import { type AnalyticsDays, type AnalyticsResult, analyse, type CurrentFinding, rangeStart } from "../domain/analytics.ts";
+import {
+    type AnalyticsDays,
+    type AnalyticsResult,
+    type AnalyticsSection,
+    analyse,
+    type CurrentFinding,
+    rangeStart,
+} from "../domain/analytics.ts";
 import type { ActivityRow, Project, Workspace } from "../store/types.ts";
 import type { Core } from "./core.ts";
 import type { Prices } from "./prices.ts";
@@ -9,12 +16,14 @@ import type { Projects } from "./projects.ts";
 import type { Reports } from "./reports.ts";
 
 /** Upper bounds on what one request reads (`current`: findings in the current reports); past them the answer says it's partial. */
-export const LIMITS = { history: 20_000, activity: 50_000, current: 200_000, page: 1000 };
+export const LIMITS = { history: 20_000, activity: 50_000, current: 200_000, sources: 200_000, page: 1000 };
 
 export interface AnalyticsScope {
     project?: string | undefined;
     branch?: string | undefined;
     days: AnalyticsDays;
+    /** Only these parts (each tab of the page asks for its own): the rest isn't read or worked out. */
+    sections?: readonly AnalyticsSection[] | undefined;
 }
 
 export type Analytics = AnalyticsResult & {
@@ -23,7 +32,7 @@ export type Analytics = AnalyticsResult & {
      * Reads that hit their limit: the figures leave out the oldest history and activity rows, and
      * (`current`) the findings of the branches not reached.
      */
-    truncated: { history: boolean; activity: boolean; current: boolean };
+    truncated: { history: boolean; activity: boolean; current: boolean; sources: boolean };
 };
 
 export class AnalyticsService {
@@ -49,6 +58,9 @@ export class AnalyticsService {
         const projectId = scope.project ? inScope[0]?.id : undefined;
         const branch = scope.branch || null;
 
+        const sections = scope.sections?.length ? new Set(scope.sections) : null;
+        const wants = (...any: AnalyticsSection[]) => !sections || any.some((s) => sections.has(s));
+
         const history = await store.reviewHistory.list({ workspaceId: workspace.id, ...(projectId ? { projectId } : {}) }, LIMITS.history);
 
         // The activity log, newest first, back to the start of the range.
@@ -56,7 +68,8 @@ export class AnalyticsService {
         const activity: ActivityRow[] = [];
         let truncatedActivity = false;
         const filter = { workspaceId: workspace.id, ...(projectId ? { projectId } : {}), ...(branch ? { branch } : {}) };
-        for (let before: string | undefined; ; ) {
+        // Only the parts about findings and triage read the activity log, and only the findings part the reports.
+        for (let before: string | undefined; wants("findings", "triage"); ) {
             const page = await store.activity.list(filter, { limit: LIMITS.page, ...(before ? { before } : {}) });
             let reachedStart = false;
             for (const row of page) {
@@ -77,7 +90,7 @@ export class AnalyticsService {
         // What's open now, from the current reports of the branches in scope.
         const current: CurrentFinding[] = [];
         let truncatedCurrent = false;
-        gather: for (const project of inScope) {
+        gather: for (const project of wants("findings", "triage") ? inScope : []) {
             const stored = branch
                 ? [await store.reports.get(project.id, branch)].filter((s) => s !== null)
                 : await store.reports.branches(project.id);
@@ -109,6 +122,11 @@ export class AnalyticsService {
             }
         }
 
+        // Who found what: every one for the scope, since a finding's other finders may be from before the range.
+        const sources = wants("models")
+            ? await store.findingSources.list({ workspaceId: workspace.id, ...(projectId ? { projectId } : {}) }, LIMITS.sources)
+            : [];
+
         const slugs = new Map(all.map((p) => [p.id, p.slug]));
         const result = analyse({
             now,
@@ -117,6 +135,8 @@ export class AnalyticsService {
             history,
             activity,
             current,
+            sources,
+            ...(sections ? { sections } : {}),
             price: await this.prices.resolver(workspace.id),
             projectSlug: (id) => (id ? (slugs.get(id) ?? null) : null),
         });
@@ -127,7 +147,12 @@ export class AnalyticsService {
                 branch,
                 projects: all.map((p) => ({ slug: p.slug, name: p.name })),
             },
-            truncated: { history: history.length >= LIMITS.history, activity: truncatedActivity, current: truncatedCurrent },
+            truncated: {
+                history: history.length >= LIMITS.history,
+                activity: truncatedActivity,
+                current: truncatedCurrent,
+                sources: sources.length >= LIMITS.sources,
+            },
         };
     }
 }
