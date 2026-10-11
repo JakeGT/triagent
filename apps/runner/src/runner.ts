@@ -232,10 +232,15 @@ export class JobRun {
     }
 
     /** `err` with this job's secrets taken out of its message and stack, for the runner's own log. */
-    redactError(err: Error): Error {
-        const out = new Error(this.redact(err.message));
-        out.name = err.name;
-        out.stack = this.redact(err.stack ?? `${err.name}: ${err.message}`);
+    redactError(err: unknown, depth = 0): Error {
+        const e = err instanceof Error ? err : new Error(String(err));
+        // What caused it too, a few deep: that is often where the reason is (a refused connection, say).
+        const cause = e.cause !== undefined && depth < 3 ? { cause: this.redactError(e.cause, depth + 1) } : undefined;
+        const out = new Error(this.redact(e.message), cause);
+        out.name = e.name;
+        out.stack = this.redact(e.stack ?? `${e.name}: ${e.message}`);
+        const code = (e as { code?: unknown }).code;
+        if (typeof code === "string" || typeof code === "number") (out as { code?: unknown }).code = code;
         return out;
     }
 
@@ -497,12 +502,16 @@ export class Runner {
     onJobEnd: (jobId: string) => void = () => {};
     /** Stops this runner's log lines going to the server. */
     private relay: (() => void) | null = null;
+    private relaySink: LogRelay | null = null;
 
     constructor(config: RunnerConfig, locks: LockOptions = {}) {
         this.config = config;
         this.locks = new PathLocks(locks);
         this.server = new ServerClient(config.serverUrl, config.secret, () => this.identity());
-        if (config.relayLogs) this.relay = addLogSink(new LogRelay((records) => this.server.log(records)));
+        if (config.relayLogs) {
+            this.relaySink = new LogRelay((records) => this.server.log(records));
+            this.relay = addLogSink(this.relaySink);
+        }
         this.git = new Git({ gitBin: config.gitBin, path: config.path, home: path.join(config.workDir, "git-home") });
         mkdirSync(path.join(config.workDir, "git-home"), { recursive: true, mode: 0o700 });
         mkdirSync(config.cacheDir, { recursive: true, mode: 0o700 });
@@ -533,6 +542,8 @@ export class Runner {
         for (const run of this.active.values()) run.cancel();
         while (this.active.size) await sleep(50);
         await this.loop;
+        // The lines written while stopping (how each review ended) go to the server before it stops hearing them.
+        await this.relaySink?.flush(3000);
         this.relay?.();
         this.relay = null;
     }
@@ -548,7 +559,7 @@ export class Runner {
                     failures = 0;
                     if (job) {
                         claimed = true;
-                        void this.execute(job).catch((err: unknown) => log.error("Running a review failed", { run: job.id, err }));
+                        void this.execute(job);
                     }
                 } catch (err) {
                     failures++;
@@ -578,6 +589,9 @@ export class Runner {
         let status = "failed";
         try {
             status = await this.runJob(job, run);
+        } catch (err) {
+            // Whatever got this far, with the job's secrets taken out like everything else it says.
+            log.error("Running a review failed", { run: job.id, err: run.redactError(err) });
         } finally {
             this.active.delete(job.id);
             log.info("Review ended", { run: job.id, status, seconds: Math.round((Date.now() - started) / 1000) });
@@ -781,7 +795,7 @@ export class Runner {
                     log.warn("Couldn't remove a review's worktree record; it's cleared out later", {
                         run: job.id,
                         mirror,
-                        err: run.redactError(err as Error),
+                        err: run.redactError(err),
                     }),
                 );
                 try {

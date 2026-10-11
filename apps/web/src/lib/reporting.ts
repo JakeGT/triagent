@@ -80,7 +80,9 @@ export function worthReporting(err: unknown): boolean {
     return true;
 }
 
-const state: { sdk: Sdk | null; waiting: { err: unknown; where: string }[]; seen: WeakSet<object>; user: string | null } = {
+const state: { on: boolean; sdk: Sdk | null; waiting: { err: unknown; where: string }[]; seen: WeakSet<object>; user: string | null } = {
+    // Whether the instance asked for reports at all: until it has, nothing is kept.
+    on: false,
     sdk: null,
     waiting: [],
     seen: new WeakSet(),
@@ -96,7 +98,7 @@ function send(sdk: Sdk, err: unknown, where: string): void {
 
 /** Report a fault the app caught itself (a page that failed to render, a failed load). `where` says which kind. */
 export function reportError(err: unknown, where: string): void {
-    if (!worthReporting(err)) return;
+    if (!state.on || !worthReporting(err)) return;
     // The same error often arrives twice: from React, and from the page that then shows it.
     if (typeof err === "object" && err !== null) {
         if (state.seen.has(err)) return;
@@ -116,6 +118,7 @@ export function setReportingUser(id: string | null): void {
 /** Start reporting, if the instance asks for it. Returns once it's running (or straight away if it's off). */
 export async function startReporting(settings: Settings | null = reportingSettings()): Promise<boolean> {
     if (!settings || state.sdk) return Boolean(state.sdk);
+    state.on = true;
     // Until the SDK is in, what goes wrong is kept for it.
     const early = (e: ErrorEvent | PromiseRejectionEvent) => reportError("reason" in e ? e.reason : e.error, "window");
     window.addEventListener("error", early);
@@ -153,6 +156,7 @@ export async function startReporting(settings: Settings | null = reportingSettin
         return true;
     } catch {
         // The app works without it.
+        state.on = false;
         state.waiting = [];
         return false;
     } finally {

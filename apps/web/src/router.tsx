@@ -54,7 +54,10 @@ async function loadMe(queryClient: QueryClient, href: string): Promise<Me> {
         setReportingUser(me.user.id);
         return me;
     } catch (err) {
-        if (isApiError(err, 401)) throw redirect({ to: "/sign-in", search: { redirect: href } });
+        if (isApiError(err, 401)) {
+            setReportingUser(null);
+            throw redirect({ to: "/sign-in", search: { redirect: href } });
+        }
         throw err;
     }
 }

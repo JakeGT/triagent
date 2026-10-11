@@ -70,9 +70,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
         log.info("Stopping: reviews in progress are stopped and reported as such", { signal, running: runner.running });
         setTimeout(() => process.exit(0), 20_000).unref();
-        // The last lines go to the server before the runner stops sending them.
-        void flushLogs()
-            .then(() => runner.stop())
-            .finally(() => process.exit(0));
+        // stop() sends the runner's last lines to the server itself, once the reviews have been stopped.
+        void runner.stop().finally(() => process.exit(0));
     });
 }

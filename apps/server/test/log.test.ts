@@ -69,6 +69,27 @@ describe("the logger", () => {
         assert.equal(records[0]?.fields.password, "[redacted]");
     });
 
+    test("a credential inside an object, or under any name that says it is one, is taken out; figures are kept", () => {
+        log.info("Settings saved", {
+            change: { provider: "openai", apiKey: "sk-live-nested", nested: [{ refresh_tokens: ["rt-1"], maxTokens: 4000 }] },
+            sessionId: "sess-123",
+            auth_tokens: "at-1",
+            tokensUsed: 250,
+        });
+        const all = JSON.stringify([lines, records]);
+        for (const never of ["sk-live-nested", "rt-1", "sess-123", "at-1"]) assert.equal(all.includes(never), false, never);
+        assert.equal(records[0]?.fields.tokensUsed, 250);
+        assert.match(String(records[0]?.fields.change), /"provider":"openai".*"maxTokens":4000/);
+    });
+
+    test("a field can't pass itself off as part of a JSON line", () => {
+        configureLog({ format: "json" });
+        log.info("Real message", { msg: "forged", level: "error", time: "never" });
+        const line = JSON.parse(lines[0]?.line ?? "{}");
+        assert.deepEqual([line.msg, line.level, line._msg, line._level], ["Real message", "info", "forged", "error"]);
+        assert.notEqual(line.time, "never");
+    });
+
     test("an error's stack is printed for an error, and only its message for a warning", () => {
         const err = new TypeError("x is not a function");
         log.warn("Couldn't reach GitHub", { err });
@@ -86,10 +107,13 @@ describe("the logger", () => {
         const e = logError(Object.assign(new Error("outer", { cause: new Error("inner") }), { code: "ECONNRESET" }));
         assert.equal(e.code, "ECONNRESET");
         assert.equal(e.cause?.message, "inner");
+        // Something that can't be written as JSON, and something that never ends.
+        log.info("Odd value", { odd: { big: 1n } });
+        assert.equal(records.at(-1)?.fields.odd, "[unprintable]");
         const loop: Record<string, unknown> = {};
         loop.self = loop;
         log.info("Odd value", { loop });
-        assert.equal(records.at(-1)?.fields.loop, "[unprintable]");
+        assert.match(String(records.at(-1)?.fields.loop), /\[redacted\]/);
     });
 
     test("LOG_LEVEL decides what's printed; sinks get everything but debug lines", () => {

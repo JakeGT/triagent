@@ -71,10 +71,10 @@ describe("what is taken out before anything is sent", () => {
         const out = scrub({
             message: `clone https://x-access-token:${TOKEN}@github.com/a/b failed`,
             headers: { Authorization: "Bearer tri_secret", cookie: "sid=1" },
-            nested: [{ apiKey: "sk-1", password: "p", csrf: "c", tokens: 99, maxTokensBudget: 5, ok: "fine" }],
+            nested: [{ apiKey: "sk-1", password: "p", csrf: "c", tokens: 99, maxTokensBudget: 5, ok: "fine", auth_tokens: ["a-1"] }],
         });
         const text = JSON.stringify(out);
-        for (const never of [TOKEN, "tri_secret", "sid=1", "sk-1", '"p"', '"c"']) assert.equal(text.includes(never), false, never);
+        for (const never of [TOKEN, "tri_secret", "sid=1", "sk-1", '"p"', '"c"', "a-1"]) assert.equal(text.includes(never), false, never);
         assert.deepEqual(out.nested[0], {
             apiKey: "[redacted]",
             password: "[redacted]",
@@ -82,6 +82,7 @@ describe("what is taken out before anything is sent", () => {
             tokens: 99,
             maxTokensBudget: 5,
             ok: "fine",
+            auth_tokens: ["[redacted]"],
         });
     });
 
@@ -248,6 +249,17 @@ describe("what reaches Sentry", () => {
         assert.equal(all.split('"type":"event"').length - 1, 1);
     });
 
+    test("different faults that share a message are each reported: by where they were thrown and for which route", async () => {
+        now += 120_000;
+        const one = () => new TypeError("x is not a function");
+        const other = () => new TypeError("x is not a function");
+        log.error("Request failed", { route: "/api/v1/a", err: one() });
+        log.error("Request failed", { route: "/api/v1/a", err: other() });
+        log.error("Request failed", { route: "/api/v1/b", err: one() });
+        log.error("Request failed", { route: "/api/v1/b", err: one() });
+        assert.equal((await flushed()).split('"type":"event"').length - 1, 3);
+    });
+
     test("an error with nothing thrown is reported by its message", async () => {
         now += 120_000;
         log.error("Lost a lock: it was taken over as abandoned. Carrying on.", { target: "/cache/a.git" });
@@ -357,6 +369,10 @@ describe("requests", () => {
 
         assert.equal((await post(envelope(DSN), { origin: "https://elsewhere.example" })).status, 403);
         assert.equal((await post(envelope(DSN), { "sec-fetch-site": "cross-site" })).status, 403);
+        // Something that says nothing about where it's from isn't one of our pages.
+        assert.equal((await post(envelope(DSN), {})).status, 403);
+        assert.equal((await post(envelope(DSN), { "sec-fetch-site": "same-origin" })).status, 200);
+        calls.pop();
         assert.equal((await post(envelope("https://other@o9.ingest.sentry.io/1"))).status, 403);
         assert.equal((await post("{not json")).status, 400);
         assert.equal((await post("x".repeat(600 * 1024))).status, 413);

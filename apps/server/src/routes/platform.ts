@@ -32,12 +32,12 @@ Everything lives in a workspace. An API token belongs to one workspace; send it 
 `;
 }
 
-let unhealthyAt = 0;
-/** A page that keeps failing reports it a few times, not without end. */
-const reportLimiter = new RequestLimiter(30);
-
 export function platformRoutes(services: Services, all: () => Route[]): Route[] {
     const mcp = createMcp(services);
+    // When the health check last said it was failing: asked every few seconds, said once a minute.
+    let unhealthyAt = 0;
+    /** A page that keeps failing reports it a few times, not without end. */
+    const reportLimiter = new RequestLimiter(30);
     let document: ReturnType<typeof openapi> | null = null;
     return [
         route({
@@ -98,7 +98,8 @@ export function platformRoutes(services: Services, all: () => Route[]): Route[] 
                 // From our own pages: a browser says where a POST comes from, and another site's isn't taken.
                 const origin = c.req.header("origin");
                 const site = c.req.header("sec-fetch-site");
-                if (origin ? origin !== s.config.publicOrigin : site !== undefined && site !== "same-origin")
+                // A browser always says one or the other on a POST: with neither, it isn't one of our pages asking.
+                if (origin ? origin !== s.config.publicOrigin : site !== "same-origin")
                     throw forbidden("Reports are only taken from this site's own pages.");
                 if (!reportLimiter.allow(ip)) {
                     c.header("Retry-After", "60");

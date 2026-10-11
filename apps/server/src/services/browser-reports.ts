@@ -16,7 +16,9 @@ export class BrowserReports {
 
     constructor(dsn: string, fetcher: typeof fetch = fetch) {
         this.dsn = dsn;
-        this.url = (parseDsn(dsn) as { envelopeUrl: string }).envelopeUrl;
+        const parsed = parseDsn(dsn);
+        if (!parsed) throw new Error("The web app's reports need a Sentry DSN to be passed on to.");
+        this.url = parsed.envelopeUrl;
         this.fetch = fetcher;
     }
 

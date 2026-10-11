@@ -46,7 +46,11 @@ const server = createServer((req, res) => {
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
         const body = Buffer.concat(chunks);
-        take(m[1] as string, req.headers["content-encoding"] === "gzip" ? gunzipSync(body) : body);
+        try {
+            take(m[1] as string, req.headers["content-encoding"] === "gzip" ? gunzipSync(body) : body);
+        } catch {
+            return send(400, { error: "Not an envelope" });
+        }
         send(200, {});
     });
 });

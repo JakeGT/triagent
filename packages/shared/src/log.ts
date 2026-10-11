@@ -62,8 +62,11 @@ export interface LogOptions {
 }
 
 const REDACTED = "[redacted]";
-/** Fields that hold a credential whatever their value looks like. */
-const SECRET_FIELD = /(password|passphrase|secret|token|authori[sz]ation|cookie|api[-_]?key|credentials?|dsn)$/i;
+/**
+ * Names for something that holds a credential, wherever in a name they come ("apiKey", "refresh_tokens",
+ * "sessionId"). Under such a name only a figure is kept (a count of tokens is a number; a token is not).
+ */
+export const SECRET_NAME = /pass(word|phrase)|secret|token|authori[sz]ation|cookie|api[-_]?key|credential|csrf|session|signature|dsn/i;
 const MAX_VALUE = 2000;
 const MAX_STACK = 8000;
 
@@ -121,6 +124,24 @@ export function captureLog(print: (level: LogLevel, line: string) => void): () =
     };
 }
 
+/**
+ * A copy of `value` safe to write down or send on: credentials of known shapes taken out of every string,
+ * and under a name that says "credential" (at any depth, and for everything beneath it) nothing kept but
+ * figures. Errors, dates and other objects that aren't plain data are passed on as they are. Deeper than
+ * it's sensible to look is replaced, rather than kept unread.
+ */
+export function cleanDeep<T>(value: T, secret = false, depth = 0): T {
+    if (typeof value === "string") return (secret ? REDACTED : redact(value, [])) as T;
+    if (!value || typeof value !== "object") return value;
+    if (depth > 12) return REDACTED as T;
+    if (Array.isArray(value)) return value.map((v) => cleanDeep(v, secret, depth + 1)) as T;
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return (secret ? REDACTED : value) as T;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = cleanDeep(v, secret || SECRET_NAME.test(k), depth + 1);
+    return out as T;
+}
+
 /** Credentials of known shapes taken out, and cut to a length worth keeping. */
 const clean = (text: string, max = MAX_VALUE) => {
     const out = redact(text, []);
@@ -129,14 +150,16 @@ const clean = (text: string, max = MAX_VALUE) => {
 
 function value(key: string, v: unknown): LogValue | undefined {
     if (v === undefined) return undefined;
-    if (SECRET_FIELD.test(key)) return REDACTED;
     if (v === null || typeof v === "number" || typeof v === "boolean") return Number.isNaN(v) ? null : v;
+    const secret = SECRET_NAME.test(key);
+    if (secret && (typeof v !== "object" || v instanceof Error || v instanceof Date)) return REDACTED;
     if (typeof v === "string") return clean(v);
     if (typeof v === "bigint") return v.toString();
     if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString();
     if (v instanceof Error) return clean(v.message);
     try {
-        return clean(JSON.stringify(v) ?? String(v));
+        // Looked through before it's written out: a credential can be anywhere inside.
+        return clean(JSON.stringify(cleanDeep(v, secret)) ?? String(v));
     } catch {
         return "[unprintable]";
     }
@@ -171,13 +194,16 @@ export function formatText(record: LogRecord): string {
     return stack ? `${head}\n${stack}` : head;
 }
 
+const RESERVED = new Set(["time", "level", "msg", "error"]);
+
 export function formatJson(record: LogRecord, base: Record<string, LogValue> = {}): string {
+    // A field can't pass itself off as part of the line: one named like the line's own parts is set aside.
+    const fields = Object.fromEntries(Object.entries({ ...base, ...record.fields }).map(([k, v]) => [RESERVED.has(k) ? `_${k}` : k, v]));
     return JSON.stringify({
         time: record.time,
         level: record.level,
         msg: record.msg,
-        ...base,
-        ...record.fields,
+        ...fields,
         ...(record.error ? { error: record.error } : {}),
     });
 }

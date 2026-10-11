@@ -11,15 +11,8 @@
 // Everything Sentry-specific on the server is in this file: the rest of the code only logs.
 
 import * as Sentry from "@sentry/node";
-import { addLogSink, type LogError, type LogRecord, type LogSink } from "@triagent/shared/log";
-import { redact } from "@triagent/shared/redact";
+import { addLogSink, cleanDeep, type LogError, type LogRecord, type LogSink } from "@triagent/shared/log";
 import type { TelemetryConfig } from "./config.ts";
-
-const REDACTED = "[redacted]";
-/** Named for what they hold: taken out whatever the value looks like. */
-const SECRET_KEY = /(pass(word|phrase)|secret|token|authori[sz]ation|cookie|api[-_]?key|credential|csrf|session|signature|dsn)/i;
-/** Token counts and the like are named "tokens": figures, not credentials. */
-const SAFE_KEY = /tokens|^sentry\./i;
 
 /** The parts of the SDK that are used: the ones that read variables, console output or request data in full are left out. */
 const INTEGRATIONS = new Set([
@@ -40,22 +33,8 @@ const INTEGRATIONS = new Set([
 /** A URL without what follows "?" or "#", where search text, tokens and one-time codes travel. */
 export const withoutQuery = (url: string) => url.replace(/[?#].*$/s, "");
 
-/**
- * A copy of `value` with credentials taken out of every string, and anything under a key named for a
- * credential replaced whole. Deeper than it's sensible to look is replaced, rather than kept unread.
- */
-export function scrub<T>(value: T, depth = 0): T {
-    if (typeof value === "string") return redact(value, []) as T;
-    if (!value || typeof value !== "object") return value;
-    if (depth > 12) return REDACTED as T;
-    if (Array.isArray(value)) return value.map((v) => scrub(v, depth + 1)) as T;
-    // Errors, dates and the like are passed on as they are: the SDK reads them itself.
-    if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return value;
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value))
-        out[k] = SECRET_KEY.test(k) && !SAFE_KEY.test(k) && v !== null && typeof v !== "boolean" ? REDACTED : scrub(v, depth + 1);
-    return out as T;
-}
+/** Credentials taken out, wherever they are (the logger's own cleaning: packages/shared/src/log.ts). */
+export const scrub = <T>(value: T): T => cleanDeep(value);
 
 /** Who asked: their address and browser. Not needed to find a fault, so not sent. */
 const CALLER = /^(client\.|user_agent\.|http\.client_ip$|network\.peer\.|net\.peer\.|net\.sock\.peer\.)/;
@@ -123,7 +102,9 @@ export function sentrySink(config: Pick<TelemetryConfig, "logs">, now: () => num
                         : {}),
                 });
             if (level !== "error") return;
-            const key = `${msg}\n${error?.name ?? ""}\n${fields.service ?? ""}`;
+            // The same fault, not merely the same words: "Request failed" in one route isn't the one in another.
+            const where = error?.stack?.split("\n").find((l) => /^\s+at /.test(l)) ?? "";
+            const key = [msg, error?.name, error?.message, where, fields.service, fields.route, fields.runner].join("\n");
             const at = now();
             if (at - (last.get(key) ?? Number.NEGATIVE_INFINITY) < ISSUE_EVERY_MS) return;
             if (last.size > 500) last.clear();
