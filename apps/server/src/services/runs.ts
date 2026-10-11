@@ -1277,7 +1277,8 @@ export class Runs {
     /** Hand a runner the next job it may start, or null. */
     async claim(runner: RunnerHello): Promise<ClaimedJob | null> {
         await this.noteRunner(runner);
-        if (!runner.slots) return null;
+        // One on its way out gets nothing, whatever room it says it has.
+        if (!runner.slots || runner.draining) return null;
         await this.sweep();
         const picked = await this.store.transaction(async (tx) => {
             // Read here, with the queue, so a limit an admin just saved applies to this very claim. Lowering one

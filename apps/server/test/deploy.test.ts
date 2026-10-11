@@ -113,6 +113,8 @@ describe("a server that has just started", () => {
             const { runs, store } = env.t.services;
             const job = await start(env, "acme", { kind: "full" });
             const hello = { id: "runner-abcdefgh", name: "r1", version: "0.1.0", slots: 1, capacity: 1 };
+            // A runner that says it's draining is handed nothing, even if it also says it has room.
+            assert.equal(await runs.claim({ ...hello, id: "runner-draining1", draining: true }), null);
             assert.equal((await runs.claim(hello))?.id, job.id);
             // The server was away for longer than a lease: what it finds when it comes back.
             const held = await store.jobs.get(job.id);
