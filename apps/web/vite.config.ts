@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 import path from "node:path";
+import { sentryVitePlugin } from "@sentry/bundler-plugins/vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
@@ -25,8 +26,33 @@ function sonnerWithoutInjectedStyles(): Plugin {
     };
 }
 
+/**
+ * Source maps for the error tracker, so a fault in the built app is reported with the names and lines of
+ * the source. Only when the build is given somewhere to send them (SENTRY_AUTH_TOKEN, SENTRY_ORG and
+ * SENTRY_PROJECT): they're uploaded to Sentry and deleted from the build, never served. Without those
+ * the build is as it always was, with no maps at all.
+ */
+const sentryUpload =
+    process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
+        ? { authToken: process.env.SENTRY_AUTH_TOKEN, org: process.env.SENTRY_ORG, project: process.env.SENTRY_PROJECT }
+        : null;
+
 export default defineConfig({
-    plugins: [react(), tailwindcss(), sonnerWithoutInjectedStyles()],
+    plugins: [
+        react(),
+        tailwindcss(),
+        sonnerWithoutInjectedStyles(),
+        ...(sentryUpload
+            ? [
+                  sentryVitePlugin({
+                      ...sentryUpload,
+                      telemetry: false,
+                      ...(process.env.TRIAGENT_VERSION ? { release: { name: process.env.TRIAGENT_VERSION } } : {}),
+                      sourcemaps: { filesToDeleteAfterUpload: ["dist/**/*.map"] },
+                  }),
+              ]
+            : []),
+    ],
     resolve: {
         alias: [
             { find: "@", replacement: path.resolve(import.meta.dirname, "src") },
@@ -41,7 +67,8 @@ export default defineConfig({
     build: {
         // The server serves only files listed in the build.
         manifest: true,
-        sourcemap: false,
+        // "hidden": written for the upload above, with no link to them from the files that are served.
+        sourcemap: sentryUpload ? "hidden" : false,
         // Fonts must stay files: the CSP allows no data: fonts.
         assetsInlineLimit: 0,
     },

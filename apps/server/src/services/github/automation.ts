@@ -9,6 +9,7 @@
 // wasn't reviewed.
 
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { log } from "@triagent/shared/log";
 import { isValidBranch } from "../../domain/names.ts";
 import { plain } from "../../domain/review-run.ts";
 import {
@@ -27,6 +28,7 @@ import {
     type Decision as Verdict,
 } from "../../domain/review-triggers.ts";
 import { ApiError, notFound } from "../../errors.ts";
+import { logFailure } from "../../failure.ts";
 import { now } from "../../security.ts";
 import { ACTIVE_JOB_STATUSES, type Job, type Project, type Repos } from "../../store/types.ts";
 import type { Actor, Core } from "../core.ts";
@@ -34,7 +36,7 @@ import type { Reports } from "../reports.ts";
 import { type JobSpec, onTheSide, type Runs, specForBranch, specForPull } from "../runs.ts";
 import type { Settings } from "../settings.ts";
 import { GitHubError, type Pull } from "./client.ts";
-import { type Github, type GithubAccess, NotConnected, STATUS_CONTEXT } from "./service.ts";
+import { type Github, type GithubAccess, NotConnected, noConnection, STATUS_CONTEXT } from "./service.ts";
 
 export const AUTOMATION: Actor = { name: "automation", userId: null, via: "system" };
 const GITHUB_ACTOR: Actor = { name: "GitHub", userId: null, via: "github" };
@@ -319,6 +321,7 @@ export class Automation {
             pulls = await gh.client.openPulls(gh.repo, MAX_OPEN_PULLS + 1);
         } catch (err) {
             const message = (err as Error).message;
+            logFailure("Couldn't read a project's open pull requests from GitHub", err, { project: project.slug });
             const s = await this.update(project, (s) => {
                 s.lastCheck = { at: now(), error: message, decisions: [] };
                 s.lastError = { at: now(), message };
@@ -337,7 +340,7 @@ export class Automation {
         for (const ask of comments?.asks ?? [])
             if (pulls.some((p) => p.number === ask.number))
                 await this.answer(project, gh, automation, ask).catch((err: unknown) =>
-                    console.error(`[${project.slug}] Answering /review on #${ask.number} failed: ${(err as Error).message}`),
+                    logFailure("Answering /review failed", err, { project: project.slug, pr: ask.number }),
                 );
         const active = (await this.store.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 200)).filter(
             (j) => j.kind === "pr" && !onTheSide(j),
@@ -452,10 +455,14 @@ export class Automation {
                     input.checks = read.checks;
                     checksReadable = read.readable ?? checksReadable;
                 } else if (verdict.need === "files")
-                    input.files = await gh.client.pullFiles(gh.repo, pr.number).catch(() => "unknown" as const);
+                    input.files = await gh.client.pullFiles(gh.repo, pr.number).catch((err: unknown) => {
+                        log.debug("Couldn't read a pull request's files from GitHub", { project: project.slug, pr: pr.number, err });
+                        return "unknown" as const;
+                    });
                 else if (verdict.need === "fingerprint")
                     input.fingerprint = diffFingerprint(
-                        await gh.client.compareDiff(gh.repo, pr.base.ref, sha).catch(() => {
+                        await gh.client.compareDiff(gh.repo, pr.base.ref, sha).catch((err: unknown) => {
+                            log.debug("Couldn't read a pull request's diff from GitHub", { project: project.slug, pr: pr.number, err });
                             unsure = true;
                             return null;
                         }),
@@ -464,7 +471,10 @@ export class Automation {
                     // Behind as well as ahead: the branch was rebased, and "ahead" would count commits already reviewed.
                     // GitHub no longer having the reviewed commit is its answer; any other failure is asked about again.
                     const cmp = await gh.client.compare(gh.repo, info.reviewedSha as string, sha).catch((err: unknown) => {
-                        if (!refused(err)) unsure = true;
+                        if (!refused(err)) {
+                            log.debug("Couldn't compare a pull request's commits on GitHub", { project: project.slug, pr: pr.number, err });
+                            unsure = true;
+                        }
                         return null;
                     });
                     input.commitsSince = cmp && cmp.behind_by === 0 ? cmp.ahead_by : null;
@@ -560,9 +570,7 @@ export class Automation {
         for (const { what, task } of after) this.runs.background(`[${project.slug}] ${what}`, task);
         const queued = decisions.filter((d) => d.action === "queued").map((d) => `#${d.number}`);
         if (queued.length || decisions.length)
-            console.log(
-                `[${project.slug}] Checked ${pulls.length} open pull request(s)${queued.length ? `; queued ${queued.join(", ")}` : ""}.`,
-            );
+            log.info("Checked open pull requests", { project: project.slug, open: pulls.length, queued: queued.join(" ") });
         return s.lastCheck;
     }
 
@@ -669,7 +677,11 @@ export class Automation {
         const upTo = new Date(Date.now() - 60_000).toISOString();
         const from = before.commentsSince;
         if (!from) return { asks: [], since: upTo, seen: [] };
-        const comments = await gh.client.commentsSince(gh.repo, from).catch(() => null);
+        const comments = await gh.client.commentsSince(gh.repo, from).catch((err: unknown) => {
+            // Asked again from the same moment next time, so a /review written meanwhile isn't missed.
+            logFailure("Couldn't read new comments from GitHub", err, { repository: gh.repo.fullName });
+            return null;
+        });
         if (!Array.isArray(comments)) return { asks: [], since: from, seen: [] };
         const asks: Ask[] = [];
         const seen: number[] = [];
@@ -728,7 +740,7 @@ export class Automation {
             now: Date.now(),
         });
         if (verdict.action === "need") return;
-        console.log(`[${project.slug}] /review on #${pr.number}: ${verdict.why}.`);
+        log.info("A review was asked for with /review", { project: project.slug, pr: pr.number, verdict: verdict.why });
         if (verdict.action === "refuse") {
             if (s.refusals?.includes(pr.number)) return;
             await gh.client.createComment(gh.repo, pr.number, REFUSAL);
@@ -753,7 +765,7 @@ export class Automation {
     async pullRequests(project: Project) {
         const s = await this.state(project);
         const automation = await this.settings.automation(this.store, project);
-        const connected = await this.github.maybeFor(project).catch(() => null);
+        const connected = await this.github.maybeFor(project).catch(noConnection(project));
         const active = (await this.store.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 200)).filter(
             (j) => !onTheSide(j),
         );
@@ -801,6 +813,8 @@ export class Automation {
                 gh = await this.github.githubFor(project);
                 items = await gh.client.branches(gh.repo);
             } catch (err) {
+                if (!(err instanceof NotConnected))
+                    logFailure("Couldn't read a project's branches from GitHub", err, { project: project.slug });
                 await this.update(project, (s) => {
                     s.lastError = { at: now(), message: (err as Error).message };
                     s.lastSyncAt = now();
@@ -867,18 +881,18 @@ export class Automation {
         if (branch === project.defaultBranch) return false;
         try {
             await this.reports.deleteBranch(GITHUB_ACTOR, project, { branch, confirm: true });
-            console.log(`[${project.slug}] Archived branch "${branch}": it was deleted on GitHub.`);
+            log.info("Archived a branch deleted on GitHub", { project: project.slug, branch });
             return true;
         } catch (err) {
             if (!(err instanceof ApiError && err.status === 404))
-                console.error(`[${project.slug}] Couldn't archive "${branch}": ${(err as Error).message}`);
+                logFailure("Couldn't archive a branch deleted on GitHub", err, { project: project.slug, branch });
             return false;
         }
     }
 
     /** What's known about the project's branches on GitHub, for the branch list. Null when it isn't connected. */
     async branchInfo(project: Project) {
-        const connected = await this.github.maybeFor(project).catch(() => null);
+        const connected = await this.github.maybeFor(project).catch(noConnection(project));
         if (!connected) return null;
         const s = await this.state(project);
         const stored = await this.store.reports.branches(project.id);
@@ -942,14 +956,14 @@ export class Automation {
     /** The fingerprint of what a pull request changes at `head`, or null when there's none to be had. */
     private async fingerprint(project: Project, base: string | null, head: string | null): Promise<string | null> {
         if (!base || !head) return null;
-        const gh = await this.github.maybeFor(project).catch(() => null);
+        const gh = await this.github.maybeFor(project).catch(noConnection(project));
         if (!gh) return null;
         return diffFingerprint(await gh.client.compareDiff(gh.repo, base, head).catch(() => null));
     }
 
     /** Recompute one branch's status (after a review, or a push). */
     private async refreshBranch(project: Project, branch: string, sha?: string | null): Promise<void> {
-        const gh = await this.github.maybeFor(project).catch(() => null);
+        const gh = await this.github.maybeFor(project).catch(noConnection(project));
         if (!gh) return;
         const s = await this.state(project);
         const items = { ...s.branches.items };
@@ -1094,7 +1108,7 @@ export class Automation {
             // not JSON: nothing to act on
         }
         const repo = (payload?.repository as { full_name?: string } | undefined)?.full_name;
-        const gh = await this.github.maybeFor(project).catch(() => null);
+        const gh = await this.github.maybeFor(project).catch(noConnection(project));
         const connected = gh?.repo.fullName;
         if (repo && connected && repo.toLowerCase() !== connected.toLowerCase()) {
             const note = `It's for ${repo}, but this project is connected to ${connected}.`;
@@ -1174,6 +1188,7 @@ export class Automation {
                     repositorySelection: inst.repository_selection ?? current.repositorySelection,
                 });
             });
+            log.info("A GitHub App installation changed on GitHub", { action: action || "changed", account: linked.accountLogin });
             return note("received", `Installation ${action || "changed"} on ${linked.accountLogin}.`);
         }
         if (!linked) return note("ignored", "That installation isn't linked to a workspace, so there's nothing to do.");
@@ -1217,7 +1232,8 @@ export class Automation {
                 try {
                     await this.tickProject(project, at);
                 } catch (err) {
-                    if (!(err instanceof NotConnected)) console.error(`[${project.slug}] Automatic reviews: ${(err as Error).message}`);
+                    if (!(err instanceof NotConnected))
+                        logFailure("Automatic reviews failed for a project", err, { project: project.slug });
                 } finally {
                     inHand.delete(repository(project));
                 }
@@ -1251,7 +1267,7 @@ export class Automation {
                 const unchanged = await this.scanUnchanged(project, gh);
                 // Queued first, so a failure is tried again next tick (a second request replaces the first: same dedupe key).
                 if (!unchanged) await this.runs.enqueue(AUTOMATION, project, specForBranch("full", project.defaultBranch, null, "nightly"));
-                else console.log(`[${project.slug}] Scheduled scan skipped: ${unchanged}.`);
+                else log.info("Scheduled scan skipped", { project: project.slug, reason: unchanged });
                 await this.update(project, (x) => {
                     x.lastNightly = today;
                     x.lastScan = unchanged
@@ -1279,7 +1295,7 @@ export class Automation {
 
     start(): void {
         if (this.timer) return;
-        const run = () => void this.tick().catch((err: unknown) => console.error(`Automatic reviews: ${(err as Error).message}`));
+        const run = () => void this.tick().catch((err: unknown) => logFailure("Automatic reviews failed", err));
         setTimeout(run, 5_000).unref();
         this.timer = setInterval(run, TICK_MS);
         this.timer.unref();

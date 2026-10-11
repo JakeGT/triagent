@@ -7,6 +7,7 @@
 // key derived from TRIAGENT_SECRETS_KEY, so the browser can neither read nor alter it.
 
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
+import { log } from "@triagent/shared/log";
 import * as client from "openid-client";
 import type { OidcConfig } from "../config.ts";
 
@@ -105,7 +106,8 @@ export class Oidc {
                 )
                 .catch((err: unknown) => {
                     this.configuration = null;
-                    console.error(`Couldn't read the identity provider's configuration from ${issuer.href}: ${describe(err)}`);
+                    // An error, though the fault is outside: until it's put right, nobody can sign in.
+                    log.error("Couldn't read the identity provider's configuration", { issuer: issuer.href, reason: describe(err) });
                     throw new OidcError("unavailable", "The sign-in provider can't be reached.");
                 });
         }
@@ -150,7 +152,7 @@ export class Oidc {
         if (params.get("error") && params.get("state") !== state.state) throw new OidcError("failed", "The sign-in couldn't be verified.");
         if (params.get("error")) {
             // Shown in the log only: the provider's own words, trimmed, never the request.
-            console.warn(`The identity provider refused a sign-in: ${String(params.get("error")).slice(0, 80)}`);
+            log.warn("The identity provider refused a sign-in", { reason: String(params.get("error")).slice(0, 80) });
             throw new OidcError("denied", "The sign-in provider didn't let you in.");
         }
         const config = await this.config();
@@ -167,7 +169,7 @@ export class Oidc {
                 ...(state.maxAge !== null ? { maxAge: state.maxAge } : {}),
             });
         } catch (err) {
-            console.warn(`A sign-in failed its checks: ${describe(err)}`);
+            log.warn("A sign-in failed its checks", { reason: describe(err) });
             throw new OidcError("failed", "The sign-in couldn't be verified.");
         }
         const claims = tokens.claims();
@@ -176,7 +178,7 @@ export class Oidc {
         // openid-client checks azp when there are several audiences; a token for one audience naming another
         // authorised party isn't ours either.
         if (claims.azp !== undefined && claims.azp !== this.settings.clientId) {
-            console.warn("A sign-in failed its checks: the ID token's azp names another client.");
+            log.warn("A sign-in failed its checks", { reason: "the ID token's azp names another client" });
             throw new OidcError("failed", "The sign-in couldn't be verified.");
         }
         const groups = Array.isArray(claims.groups) ? claims.groups.filter((g): g is string => typeof g === "string") : [];

@@ -2,6 +2,7 @@
 // until stopped.
 
 import { createServer } from "node:http";
+import { configureLog, flushLogs, log } from "../../../packages/shared/src/log.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import { requireGit } from "./git.ts";
 import { start } from "./process.ts";
@@ -18,28 +19,42 @@ try {
     throw err;
 }
 
-for (const warning of config.warnings) console.warn(`Warning: ${warning}`);
+configureLog({ ...config.log, base: { service: "runner", runner: config.name } });
 
-// A git too old to read .gitattributes from the base commit would let a pull request hide its changes.
-let gitVersion: string;
-try {
-    gitVersion = await requireGit(config.gitBin, config.path);
-} catch (err) {
-    console.error(`Not starting: ${(err as Error).message}`);
+/** Say why, wait for the line to reach the server, and stop: whatever supervises the runner starts it again. */
+async function fail(msg: string, err?: unknown, fields: Record<string, unknown> = {}): Promise<never> {
+    log.error(msg, { ...(err === undefined ? {} : { err }), ...fields });
+    await flushLogs();
     process.exit(1);
 }
+// Something nothing was ready for: the process can't be trusted to carry on, so it's reported and stopped.
+process.on("uncaughtException", (err) => void fail("Stopped by an error nothing caught", err, { unhandled: true }));
+process.on("unhandledRejection", (err) => void fail("Stopped by a failure nothing handled", err, { unhandled: true }));
+
+for (const warning of config.warnings) log.warn(warning);
+
+// A git too old to read .gitattributes from the base commit would let a pull request hide its changes.
+const gitVersion = await requireGit(config.gitBin, config.path).catch((err: unknown) => fail("Not starting: git can't be used", err));
 
 const version = await start(config.ocrBin, ["--version"], { env: { PATH: config.path, OCR_NO_UPDATE: "1" }, timeoutMs: 15_000 }).done;
 if (version.code !== 0)
-    console.warn(
-        `Couldn't run ${config.ocrBin} --version: ${version.stderr.trim() || `exit ${version.code}`}. Reviews will fail until it's installed.`,
-    );
+    log.error("Couldn't run Open Code Review: reviews will fail until it's installed", {
+        bin: config.ocrBin,
+        reason: version.stderr.trim().slice(0, 300) || `exit ${version.code}`,
+    });
 
 const runner = new Runner(config);
 runner.start();
-console.log(
-    `Triagent runner ${config.name} (${runner.id}) working for ${config.serverUrl}, ${config.concurrency} at a time (up to ${config.modelParallelism} of a review's models at once), with ${gitVersion}${version.code === 0 ? ` and ${version.stdout.trim().split("\n")[0]}` : ""}.`,
-);
+log.info("Started", {
+    id: runner.id,
+    server: new URL(config.serverUrl).origin,
+    concurrency: config.concurrency,
+    modelParallelism: config.modelParallelism,
+    git: gitVersion,
+    ocr: version.code === 0 ? (version.stdout.trim().split("\n")[0] ?? "") : "unavailable",
+    node: process.version,
+    version: /^[\w.+-]{1,64}$/.test(process.env.TRIAGENT_VERSION ?? "") ? process.env.TRIAGENT_VERSION : undefined,
+});
 
 if (config.healthPort) {
     createServer((req, res) => {
@@ -47,17 +62,17 @@ if (config.healthPort) {
         res.writeHead(ok ? 200 : 404, { "content-type": "application/json" });
         res.end(JSON.stringify(ok ? { status: "ok", running: runner.running } : { error: "Not found" }));
     })
-        .on("error", (err) => {
-            console.error(`Not starting: can't answer health checks on port ${config.healthPort} (${err.message}).`);
-            process.exit(1);
-        })
+        .on("error", (err) => void fail("Not starting: can't answer health checks", err, { port: config.healthPort }))
         .listen(config.healthPort, "127.0.0.1");
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
-        console.log("Stopping: reviews in progress are stopped and reported as such.");
+        log.info("Stopping: reviews in progress are stopped and reported as such", { signal, running: runner.running });
         setTimeout(() => process.exit(0), 20_000).unref();
-        void runner.stop().finally(() => process.exit(0));
+        // The last lines go to the server before the runner stops sending them.
+        void flushLogs()
+            .then(() => runner.stop())
+            .finally(() => process.exit(0));
     });
 }

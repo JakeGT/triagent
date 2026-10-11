@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { type Grant, ROLES, type Role, roleRank, scopesFor, TOKEN_SCOPES, type TokenScope } from "@triagent/shared";
 import { isValidSlug, USERNAME } from "../domain/names.ts";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../errors.ts";
+import { logFailure } from "../failure.ts";
 import {
     checkNewPassword,
     DUMMY_PASSWORD_HASH,
@@ -81,7 +82,7 @@ export class Accounts {
             const t = Date.now();
             void core.store.sessions
                 .sweep(t - core.config.sessionIdleMinutes * 60_000, t - core.config.sessionMaxHours * 3_600_000)
-                .catch(() => {});
+                .catch((err: unknown) => logFailure("Clearing out expired sessions failed", err));
         }, 5 * 60_000).unref();
     }
 

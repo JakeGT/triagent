@@ -4,6 +4,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
+import { type LogFormat, type LogLevel, logOptionsFromEnv } from "../../../packages/shared/src/log.ts";
 
 export interface RunnerConfig {
     serverUrl: string;
@@ -24,6 +25,9 @@ export interface RunnerConfig {
     llmTimeout: string | null;
     /** The PATH OCR and git get (they get nothing else from the runner's own environment). */
     path: string;
+    log: { level: LogLevel; format: LogFormat };
+    /** Pass this runner's own log lines (never a review's) on to the server, for its error tracker. */
+    relayLogs: boolean;
     /** Things worth fixing that don't stop the runner, to print at start-up. */
     warnings: string[];
 }
@@ -82,6 +86,14 @@ export function loadConfig(env: Env = process.env): RunnerConfig {
     // Seconds; 0 would time out every model call at once.
     const llmTimeout = env.OCR_LLM_TIMEOUT ? String(whole(env, "OCR_LLM_TIMEOUT", 0, 1, 86_400)) : null;
     const port = env.RUNNER_HEALTH_PORT ? whole(env, "RUNNER_HEALTH_PORT", 0, 1, 65535) : null;
+    let logOptions: RunnerConfig["log"];
+    try {
+        logOptions = logOptionsFromEnv(env);
+    } catch (err) {
+        throw new ConfigError((err as Error).message);
+    }
+    const relay = env.RUNNER_RELAY_LOGS || "true";
+    if (relay !== "true" && relay !== "false") throw new ConfigError(`RUNNER_RELAY_LOGS must be true or false, got "${relay}".`);
     return {
         serverUrl,
         secret,
@@ -97,6 +109,8 @@ export function loadConfig(env: Env = process.env): RunnerConfig {
         gitBin: env.GIT_BIN || "git",
         llmTimeout,
         path: env.PATH || "/usr/local/bin:/usr/bin:/bin",
+        log: logOptions,
+        relayLogs: relay === "true",
         warnings: [secretFileWarning(env.TRIAGENT_RUNNER_SECRET_FILE)].filter((w): w is string => w !== null),
     };
 }

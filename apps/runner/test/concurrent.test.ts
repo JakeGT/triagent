@@ -333,6 +333,8 @@ exec git "$@"
                 llmTimeout: null,
                 path: process.env.PATH ?? "",
                 warnings: [],
+                log: { level: "info", format: "text" },
+                relayLogs: false,
             },
             locks,
         );

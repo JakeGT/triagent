@@ -227,6 +227,18 @@ Creating an organisation or a project opens its guided setup, a popup (`features
 
 `GET /api/v1/w/{workspace}/events` is a Server-Sent Events stream of "something changed" notices for that workspace only. Notices about settings, members, tokens and secrets only reach people who manage them. Clients fetch details with their own permissions.
 
+## Logs and error reporting
+
+One logger (`packages/shared/src/log.ts`, no dependencies) for the server and the runner: `log.warn("message", { fields })`, with a fixed message and what varies in the fields. It cleans every line of credentials, prints it (as text or JSON) and hands it to its sinks. Nothing else in either app writes to the console.
+
+- A request's lines carry its id: the first middleware (`app.ts`) starts an `AsyncLocalStorage` context (`http/request-context.ts`) that the routes fill in (route, account, workspace, project) and the logger reads.
+- `failure.ts` decides the level of a failure: an `error` if the fault is ours, a `warn` if something outside was away or said no.
+- Sentry is one sink, in one file (`apps/server/src/telemetry.ts`), started by `instrument.ts` before the server is loaded (`node --import`) and only when `SENTRY_DSN` is set; the SDK isn't read from disk otherwise. An `error` line becomes an issue (the same one at most once a minute), every line a log. The SDK is told to collect no request data, and what it sends goes through `scrubEvent` on the way out.
+- The runner has no SDK and no dependencies. Its sink (`apps/runner/src/relay.ts`) posts its lines to `/internal/runner/log` with the runner secret, and the server hands them to its own sinks marked as the runner's.
+- The web app loads `@sentry/browser` only when the server wrote a `<meta name="triagent-reporting">` into `index.html` (`http/static.ts`), and sends its reports to `POST /api/v1/telemetry`, which forwards envelopes for the configured project only (`services/browser-reports.ts`).
+
+What is logged and sent, and what never is, is in [logging.md](logging.md).
+
 ## Web app
 
 `apps/web` is a single-page app built with Vite. The server serves the build (`http/static.ts`): only files that exist in it, fingerprinted assets cached for a year, and `index.html` for the app's own routes (`/w/{workspace}/p/{project}/issues?branch=main`). Without a build the server still serves the API.

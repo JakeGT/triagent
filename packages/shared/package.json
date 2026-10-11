@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./redact": "./src/redact.ts",
+    "./log": "./src/log.ts",
     "./model": "./src/model.ts",
     "./merge": "./src/merge.ts"
   },

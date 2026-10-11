@@ -4,6 +4,7 @@
 
 import { randomBytes } from "node:crypto";
 import { after } from "node:test";
+import { configureLog, LOG_LEVELS, type LogLevel } from "@triagent/shared/log";
 import type { Hono } from "hono";
 import { createApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
@@ -13,6 +14,11 @@ import { createServices, type ServiceOptions, type Services } from "../src/servi
 import { MemoryStore } from "../src/store/memory.ts";
 import { connect, type PostgresOptions, PostgresStore } from "../src/store/postgres.ts";
 import type { Store } from "../src/store/types.ts";
+
+// Tests print warnings and errors only, unless asked for more: a line for every request drowns the results.
+configureLog({
+    level: (LOG_LEVELS as readonly string[]).includes(process.env.LOG_LEVEL ?? "") ? (process.env.LOG_LEVEL as LogLevel) : "warn",
+});
 
 export const TEST_DATABASE_URL = process.env.TRIAGENT_TEST_DATABASE_URL || null;
 const opened: PostgresStore[] = [];

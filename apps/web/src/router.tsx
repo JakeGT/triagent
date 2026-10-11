@@ -21,6 +21,7 @@ import { parseIssueSearch } from "@/features/issues/search";
 import { isApiError, setCsrfToken } from "@/lib/api";
 import { PREF, prefs } from "@/lib/prefs";
 import { meQuery } from "@/lib/queries";
+import { setReportingUser } from "@/lib/reporting";
 import { localPath } from "@/lib/safe-href";
 import { parseSearch, stringifySearch } from "@/lib/search-params";
 import type { Me } from "@/lib/types";
@@ -50,6 +51,7 @@ async function loadMe(queryClient: QueryClient, href: string): Promise<Me> {
         // Cached while fresh; fetched again once stale or invalidated (after a password change, a new organisation).
         const me = await queryClient.fetchQuery(meQuery);
         setCsrfToken(me.csrf);
+        setReportingUser(me.user.id);
         return me;
     } catch (err) {
         if (isApiError(err, 401)) throw redirect({ to: "/sign-in", search: { redirect: href } });

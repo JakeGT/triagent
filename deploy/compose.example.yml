@@ -60,6 +60,9 @@ services:
       TRIAGENT_ADMIN_PASSWORD_FILE: /run/secrets/triagent_admin_password
       # The default until an instance admin saves limits in Settings → Instance → Reviews (those then apply).
       REVIEW_CONCURRENCY: "2"
+      # Optional: report errors and log lines to Sentry (docs/logging.md). Unset, nothing leaves the instance.
+      # SENTRY_DSN: https://<key>@o0.ingest.sentry.io/<project>
+      # SENTRY_TRACES_SAMPLE_RATE: "0.1"
     secrets: [triagent_database_url, triagent_secrets_key, triagent_runner_secret, triagent_admin_password]
     networks: [data, runners, proxy]
     # Published here for trying it out; behind a reverse proxy, remove this and let the proxy reach it on "proxy".

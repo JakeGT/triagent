@@ -2,6 +2,7 @@
 // with an API token, which belongs to one workspace, so every tool works inside that workspace.
 
 import { BROWSER_ONLY, permissionsOf } from "@triagent/shared";
+import { log } from "@triagent/shared/log";
 import { ZodError } from "zod";
 import { ApiError } from "../errors.ts";
 import type { Access } from "../services/accounts.ts";
@@ -58,6 +59,7 @@ export function createMcp(services: Services) {
             if (err instanceof ZodError)
                 return fail(`Invalid arguments: ${err.issues.map((i) => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
             if (err instanceof ApiError) {
+                if (err.status >= 500) log.error("An MCP tool failed", { tool: t.name, err });
                 const current = err.details?.current;
                 return {
                     result: {
@@ -67,7 +69,7 @@ export function createMcp(services: Services) {
                     },
                 };
             }
-            console.error(err);
+            log.error("An MCP tool failed", { tool: t.name, err });
             return { error: [-32603, "Internal error"] as const };
         }
     }

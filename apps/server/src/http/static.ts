@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { log } from "@triagent/shared/log";
 import type { Context, Hono } from "hono";
 
 const TYPES: Record<string, string> = {
@@ -71,10 +72,30 @@ const loaded = new Map<string, Map<string, WebFile> | null>();
 function load(dir: string): Map<string, WebFile> | null {
     if (!loaded.has(dir)) {
         const ok = existsSync(path.join(dir, "index.html")) && statSync(dir).isDirectory();
-        if (!ok) console.warn(`No web app build at ${dir}: serving the API only. Run \`pnpm build:web\` to build it.`);
+        if (!ok) log.warn("No web app build: serving the API only. Run `pnpm build:web` to build it.", { dir });
         loaded.set(dir, ok ? listFiles(dir) : null);
     }
     return loaded.get(dir) ?? null;
+}
+
+/** Where the app's error reports belong, for the page to read (apps/web/src/lib/reporting.ts). */
+export interface PageReporting {
+    dsn: string;
+    environment: string;
+    release: string | null;
+}
+
+const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * index.html saying where reports belong, in a <meta> element: read by the app before anything else
+ * runs, with no request of its own, and no inline script (which the Content Security Policy refuses).
+ */
+function withReporting(index: WebFile, reporting: PageReporting): WebFile {
+    const meta = `<meta name="triagent-reporting" content="${escapeAttr(JSON.stringify(reporting))}" />`;
+    const html = Buffer.from(index.body).toString("utf8");
+    const body = Buffer.from(html.includes("</head>") ? html.replace("</head>", `${meta}</head>`) : html);
+    return { ...index, body, etag: `"${createHash("sha256").update(body).digest("base64url").slice(0, 27)}"` };
 }
 
 const isServerPath = (p: string) => SERVER_PATHS.some((prefix) => p === prefix || p.startsWith(`${prefix}/`));
@@ -93,14 +114,15 @@ function send(c: Context, file: WebFile): Response {
  * Add the web app to `app` (after the API routes, so they take precedence). Returns false, and serves
  * nothing, when there's no build: the API works without it.
  */
-export function serveWeb(app: Hono, dir = webDistDir(null)): boolean {
+export function serveWeb(app: Hono, dir = webDistDir(null), reporting: PageReporting | null = null): boolean {
     const files = load(dir);
-    const index = files?.get("/index.html");
-    if (!files || !index) return false;
+    const built = files?.get("/index.html");
+    if (!files || !built) return false;
+    const index = reporting ? withReporting(built, reporting) : built;
     app.on(["GET", "HEAD"], "*", async (c, next) => {
         const p = c.req.path;
         if (isServerPath(p)) return next();
-        const file = files.get(p);
+        const file = p === "/index.html" ? index : files.get(p);
         if (file) return send(c, file);
         // A missing asset is a 404, not the app: a stale page asking for an old chunk should fail clearly.
         if (p.startsWith("/assets/") || /\.[a-z0-9]+$/i.test(p)) return next();

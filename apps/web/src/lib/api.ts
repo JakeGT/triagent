@@ -10,8 +10,13 @@ export class ApiError extends Error {
     readonly code: string | undefined;
     readonly body: ApiErrorBody;
 
+    /** The server's own name for the request, when it failed there: what to quote to whoever runs this Triagent. */
+    readonly requestId: string | undefined;
+
     constructor(status: number, body: ApiErrorBody) {
-        super(body.error || `The server answered ${status}.`);
+        const requestId = typeof body.requestId === "string" && /^[\w-]{6,64}$/.test(body.requestId) ? body.requestId : undefined;
+        super(`${body.error || `The server answered ${status}.`}${requestId ? ` (Reference: ${requestId})` : ""}`);
+        this.requestId = requestId;
         this.name = "ApiError";
         this.status = status;
         this.code = body.code;

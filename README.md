@@ -105,6 +105,10 @@ Custom and Azure addresses must use https and resolve only to public addresses, 
 
 One `Dockerfile` builds both images: `--target server` (the API and the web app) and `--target runner` (git and a pinned Open Code Review). [deploy/compose.example.yml](deploy/compose.example.yml) runs the server, a runner and Postgres, with secrets as files and the runner on a private network with outbound access only. Whatever proxy is in front must not pass `/internal/` (the runner API) through.
 
+### Logs and error reporting
+
+The server and the runner log one line per event, with a level and named fields (`LOG_LEVEL`, `LOG_FORMAT=text|json`); every request has an id that's sent back as `X-Request-Id`. Set `SENTRY_DSN` on the server to have errors, log lines and (optionally) traces reported to Sentry, from the server, the runners (through the server) and the web app (through the server too, so the Content Security Policy is unchanged). Without it nothing leaves the instance. What is and isn't logged or sent is in [docs/logging.md](docs/logging.md).
+
 ### Signing in
 
 By default (`AUTH_MODE=local`) people sign in with a username and password. To sign in through an identity provider instead, set `AUTH_MODE=oidc` and the `OIDC_*` settings: see [docs/authentication.md](docs/authentication.md), which includes setting up Authentik. `pnpm test:e2e` covers both, the second against a fake provider.

@@ -33,6 +33,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { log } from "../../../packages/shared/src/log.ts";
 
 export interface LockOptions {
     /** A lock whose holder hasn't refreshed it for this long, as its waiter saw it, is taken over. */
@@ -157,7 +158,7 @@ export class PathLocks {
                 // Only if it's still there ("r+" never creates it): a new file would land in someone else's lock.
                 writeFileSync(file, String(++beat), { flag: "r+" });
             } catch {
-                if (!lost) console.error(`Lost the lock on ${target}: it was taken over as abandoned. Carrying on.`);
+                if (!lost) log.error("Lost a lock: it was taken over as abandoned. Carrying on.", { target });
                 lost = true;
             }
         }, this.refreshMs);

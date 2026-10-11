@@ -17,6 +17,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { addLogSink, log } from "../../../packages/shared/src/log.ts";
 import { modelSecrets, type RunnerModel } from "../../../packages/shared/src/model.ts";
 import { redactDeep, redactor } from "../../../packages/shared/src/redact.ts";
 import {
@@ -35,6 +36,7 @@ import { type Judged, judgeFindings, whyNot } from "./judge.ts";
 import { type LockOptions, PathLocks } from "./lock.ts";
 import { start } from "./process.ts";
 import { combined, type ModelProgress, type Progress, readProgress } from "./progress.ts";
+import { LogRelay } from "./relay.ts";
 
 const FLUSH_MS = 1000;
 const HEARTBEAT_MS = 10_000;
@@ -195,6 +197,8 @@ export class JobRun {
     private slots: Slot[] = [];
     cancelled = false;
     lost = false;
+    /** Heartbeats the server hasn't answered, in a row: its lease on the job runs out after a minute of them. */
+    private missed = 0;
     private readonly stopping = new AbortController();
     private readonly timers: ReturnType<typeof setInterval>[] = [];
     private flushing: Promise<void> = Promise.resolve();
@@ -225,6 +229,14 @@ export class JobRun {
 
     redactLine(line: string): string {
         return this.redact(line);
+    }
+
+    /** `err` with this job's secrets taken out of its message and stack, for the runner's own log. */
+    redactError(err: Error): Error {
+        const out = new Error(this.redact(err.message));
+        out.name = err.name;
+        out.stack = this.redact(err.stack ?? `${err.name}: ${err.message}`);
+        return out;
     }
 
     /** OCR's report, every string in it redacted (the server does it again). */
@@ -383,11 +395,17 @@ export class JobRun {
                 if (isLost(err)) this.lose();
                 else if (err instanceof ServerError && err.status >= 400 && err.status < 500)
                     // Refused, not unreachable: sending it again would be refused again, and hold up every line after it.
-                    console.error(`The server refused ${lines.length} log line(s) of ${this.job.id} (${err.message}); dropped them.`);
+                    log.error("The server refused a review's log lines; dropped them", { run: this.job.id, lines: lines.length, err });
                 else {
                     // The server is briefly away: keep the lines for the next try.
                     this.buffer.unshift(...lines);
-                    this.buffer.splice(0, Math.max(0, this.buffer.length - 20_000));
+                    const over = Math.max(0, this.buffer.length - 20_000);
+                    if (over)
+                        log.warn("Dropped a review's oldest log lines: the server has been away too long to keep them all", {
+                            run: this.job.id,
+                            lines: over,
+                        });
+                    this.buffer.splice(0, over);
                     if (progress) this.progressDirty = true;
                 }
             }
@@ -399,8 +417,13 @@ export class JobRun {
         if (this.lost) return;
         try {
             this.obey(await this.server.heartbeat(this.job.id));
+            if (this.missed) log.info("The server is answering a review's heartbeats again", { run: this.job.id, missed: this.missed });
+            this.missed = 0;
         } catch (err) {
             if (isLost(err)) this.lose();
+            // The first, and then now and then: the server gives the review up after a minute without one.
+            else if (this.missed++ % 6 === 0)
+                log.warn("The server didn't answer a review's heartbeat", { run: this.job.id, missed: this.missed, err });
         }
     }
 
@@ -417,6 +440,7 @@ export class JobRun {
     }
 
     private lose(): void {
+        if (!this.lost) log.warn("A review was taken away: the server no longer counts it as this runner's", { run: this.job.id });
         this.lost = true;
         this.stopping.abort();
         this.stopAll();
@@ -471,11 +495,14 @@ export class Runner {
     private loop: Promise<void> | null = null;
     /** Called when a job ends (tests wait on it). */
     onJobEnd: (jobId: string) => void = () => {};
+    /** Stops this runner's log lines going to the server. */
+    private relay: (() => void) | null = null;
 
     constructor(config: RunnerConfig, locks: LockOptions = {}) {
         this.config = config;
         this.locks = new PathLocks(locks);
         this.server = new ServerClient(config.serverUrl, config.secret, () => this.identity());
+        if (config.relayLogs) this.relay = addLogSink(new LogRelay((records) => this.server.log(records)));
         this.git = new Git({ gitBin: config.gitBin, path: config.path, home: path.join(config.workDir, "git-home") });
         mkdirSync(path.join(config.workDir, "git-home"), { recursive: true, mode: 0o700 });
         mkdirSync(config.cacheDir, { recursive: true, mode: 0o700 });
@@ -506,6 +533,8 @@ export class Runner {
         for (const run of this.active.values()) run.cancel();
         while (this.active.size) await sleep(50);
         await this.loop;
+        this.relay?.();
+        this.relay = null;
     }
 
     private async poll(): Promise<void> {
@@ -515,15 +544,15 @@ export class Runner {
             if (this.active.size < this.config.concurrency) {
                 try {
                     const job = await this.server.claim();
+                    if (failures) log.info("The server is answering again", { failures });
                     failures = 0;
                     if (job) {
                         claimed = true;
-                        void this.execute(job).catch((err) => console.error(`Running ${job.id} failed: ${(err as Error).message}`));
+                        void this.execute(job).catch((err: unknown) => log.error("Running a review failed", { run: job.id, err }));
                     }
                 } catch (err) {
                     failures++;
-                    if (failures === 1 || failures % 20 === 0)
-                        console.error(`Asking the server for work failed: ${(err as Error).message}`);
+                    if (failures === 1 || failures % 20 === 0) log.warn("Asking the server for work failed", { failures, err });
                 }
             }
             if (!claimed)
@@ -538,15 +567,26 @@ export class Runner {
         const run = new JobRun(job, this.server, this.config.overBudgetGraceSeconds);
         this.active.set(job.id, run);
         run.begin();
+        const started = Date.now();
+        log.info("Review started", {
+            run: job.id,
+            kind: job.kind,
+            repository: job.repository.fullName,
+            models: job.models?.length ?? 1,
+            running: this.active.size,
+        });
+        let status = "failed";
         try {
-            await this.runJob(job, run);
+            status = await this.runJob(job, run);
         } finally {
             this.active.delete(job.id);
+            log.info("Review ended", { run: job.id, status, seconds: Math.round((Date.now() - started) / 1000) });
             this.onJobEnd(job.id);
         }
     }
 
-    private async runJob(job: ClaimedJob, run: JobRun): Promise<void> {
+    /** Returns how it ended: "lost" when the job stopped being this runner's on the way. */
+    private async runJob(job: ClaimedJob, run: JobRun): Promise<string> {
         let work: string | null = null;
         let tree = "";
         const mirror = mirrorPath(this.config.cacheDir, job.repository.cloneUrl);
@@ -569,7 +609,7 @@ export class Runner {
                 async () => {
                     run.check();
                     const swept = this.git.sweepWorktrees(mirror);
-                    if (swept) console.log(`Removed ${swept} abandoned worktree record${swept === 1 ? "" : "s"} from ${mirror}.`);
+                    if (swept) log.info("Removed abandoned worktree records", { count: swept, mirror });
                     let got = await this.git.fetch(
                         mirror,
                         {
@@ -614,7 +654,10 @@ export class Runner {
             keep = setInterval(() => {
                 if (this.git.keepWorktree(mirror, tree) || unkept) return;
                 unkept = true;
-                console.error(`Couldn't mark ${job.id}'s worktree as in use in ${mirror}: its record has gone or can't be written to.`);
+                log.error("Couldn't mark a review's worktree as in use: its record has gone or can't be written to", {
+                    run: job.id,
+                    mirror,
+                });
             }, WORKTREE_KEEP_MS);
             keep.unref();
             run.check();
@@ -721,6 +764,11 @@ export class Runner {
             if (err instanceof Stop) outcome = { status: run.cancelled ? "cancelled" : "failed", error: err.message };
             else {
                 const message = run.redactLine((err as Error).message);
+                // With this job's secrets taken out, as they are from everything else it says. A fault in the runner's
+                // own code is an error; the rest (git, the network, the repository) happens.
+                const ours = err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError;
+                if (ours) log.error("A review failed in the runner", { run: job.id, err: run.redactError(err) });
+                else log.warn("A review failed in the runner", { run: job.id, reason: message });
                 run.say(message);
                 outcome = { status: run.cancelled ? "cancelled" : "failed", error: message };
             }
@@ -729,16 +777,24 @@ export class Runner {
             if (!ocrStarted) run.setProgress({ ...run.currentProgress, tokens: 0 });
             if (keep) clearInterval(keep);
             if (work) {
-                await this.git.removeWorktree(mirror, tree).catch(() => {});
+                await this.git.removeWorktree(mirror, tree).catch((err: unknown) =>
+                    log.warn("Couldn't remove a review's worktree record; it's cleared out later", {
+                        run: job.id,
+                        mirror,
+                        err: run.redactError(err as Error),
+                    }),
+                );
                 try {
                     rmSync(work, { recursive: true, force: true });
                 } catch (err) {
-                    console.error(`Couldn't remove ${work}: ${(err as Error).message}`);
+                    log.error("Couldn't remove a review's working directory", { run: job.id, dir: work, err });
                 }
             }
             await run.end();
         }
-        if (!run.lost) await this.report(job.id, { ...outcome, headSha: fetched?.head ?? null, baseSha: fetched?.base ?? null });
+        if (run.lost) return "lost";
+        await this.report(job.id, { ...outcome, headSha: fetched?.head ?? null, baseSha: fetched?.base ?? null });
+        return outcome.status;
     }
 
     /**
@@ -812,12 +868,25 @@ export class Runner {
         });
         if (i === null) run.attach(ocr.stop);
         else run.attachModel(i, ocr.stop);
+        const which = { run: job.id, model: model.label ?? model.model };
+        log.info("Open Code Review started", { ...which, provider: model.provider, limitMinutes: limit, stallMinutes: stall });
         const exit = await ocr.done;
         if (i !== null) run.detachModel(i);
+        // How it ended, never what it wrote: its output is the review itself.
+        log.info("Open Code Review ended", {
+            ...which,
+            code: exit.code,
+            signal: exit.signal,
+            timedOut: exit.timedOut,
+            stalled: exit.stalled,
+            killed: exit.killed,
+            seconds: Math.round((Date.now() - began) / 1000),
+        });
         let report: unknown = null;
         try {
             report = exit.stdout.trim() ? run.redactReport(JSON.parse(exit.stdout)) : null;
         } catch {
+            if (exit.code === 0) log.warn("Open Code Review's report couldn't be read as JSON", { ...which, bytes: exit.stdout.length });
             report = null;
         }
         if (run.lost) throw new Stop("This job is no longer ours.");
@@ -868,8 +937,9 @@ export class Runner {
             } catch (err) {
                 // Lost, or refused (sending it again would be refused again): no point trying again.
                 const refused = err instanceof ServerError && err.status >= 400 && err.status < 500;
+                log.debug("Telling the server how a review ended failed; trying again", { run: jobId, attempt, err });
                 if (isLost(err) || refused || attempt === 8) {
-                    console.error(`Couldn't report how ${jobId} ended: ${(err as Error).message}`);
+                    log.error("Couldn't tell the server how a review ended", { run: jobId, attempts: attempt, err });
                     return;
                 }
                 await sleep(Math.min(1000 * 2 ** attempt, 30_000));

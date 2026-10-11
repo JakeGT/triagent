@@ -1,10 +1,13 @@
 // Health, the API description, the MCP endpoint and GitHub webhooks.
 
+import { log } from "@triagent/shared/log";
 import { z } from "zod";
-import { ApiError, forbidden } from "../errors.ts";
+import { ApiError, forbidden, notFound } from "../errors.ts";
 import { openapi } from "../http/openapi.ts";
 import { json, type Route, route } from "../http/route.ts";
 import { createMcp } from "../mcp/server.ts";
+import { RequestLimiter } from "../security.ts";
+import { MAX_ENVELOPE_BYTES } from "../services/browser-reports.ts";
 import type { Services } from "../services/index.ts";
 
 /** A plain-text map of the API for agents. Public: it holds no data. */
@@ -29,6 +32,10 @@ Everything lives in a workspace. An API token belongs to one workspace; send it 
 `;
 }
 
+let unhealthyAt = 0;
+/** A page that keeps failing reports it a few times, not without end. */
+const reportLimiter = new RequestLimiter(30);
+
 export function platformRoutes(services: Services, all: () => Route[]): Route[] {
     const mcp = createMcp(services);
     let document: ReturnType<typeof openapi> | null = null;
@@ -43,7 +50,12 @@ export function platformRoutes(services: Services, all: () => Route[]): Route[] 
                 try {
                     await services.store.ping();
                     return json({ status: "ok" });
-                } catch {
+                } catch (err) {
+                    // Asked every few seconds: said once a minute while it lasts.
+                    if (Date.now() - unhealthyAt > 60_000) {
+                        unhealthyAt = Date.now();
+                        log.error("The health check failed: the database can't be reached", { err });
+                    }
                     return json({ status: "failing", checks: { database: "unreachable" } }, 503);
                 }
             },
@@ -68,6 +80,33 @@ export function platformRoutes(services: Services, all: () => Route[]): Route[] 
             summary: "A plain-text guide for agents",
             async handler({ c }) {
                 return c.text(llmsTxt(services.config.publicOrigin));
+            },
+        }),
+        route({
+            method: "POST",
+            path: "/api/v1/telemetry",
+            scope: "public",
+            tag: "Platform",
+            summary: "The web app's error reports, passed on to Sentry (when SENTRY_DSN is set)",
+            description:
+                "For this site's own pages only. Takes a Sentry envelope for the project the instance was set up with, and nothing else.",
+            rawBody: true,
+            bodyLimit: MAX_ENVELOPE_BYTES,
+            async handler({ c, services: s, readRaw, ip }) {
+                const reports = s.browserReports;
+                if (!reports) throw notFound(`Nothing at ${c.req.method} ${c.req.path}.`);
+                // From our own pages: a browser says where a POST comes from, and another site's isn't taken.
+                const origin = c.req.header("origin");
+                const site = c.req.header("sec-fetch-site");
+                if (origin ? origin !== s.config.publicOrigin : site !== undefined && site !== "same-origin")
+                    throw forbidden("Reports are only taken from this site's own pages.");
+                if (!reportLimiter.allow(ip)) {
+                    c.header("Retry-After", "60");
+                    throw new ApiError(429, "Too many reports. Try again in a minute.");
+                }
+                const { status, retryAfter } = await reports.forward(await readRaw());
+                if (retryAfter) c.header("Retry-After", retryAfter);
+                return json({}, status);
             },
         }),
         route({

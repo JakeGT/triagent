@@ -760,6 +760,8 @@ describe("a job's life", () => {
                 llmTimeout: null,
                 path: process.env.PATH ?? "",
                 warnings: [],
+                log: { level: "info", format: "text" },
+                relayLogs: false,
             });
             // The work directory has gone, so not even the job's own directory can be made.
             rmSync(path.join(dir, "work"), { recursive: true, force: true });
@@ -837,6 +839,8 @@ describe("time limits and stalled reviews", () => {
             llmTimeout: null,
             path: process.env.PATH ?? "",
             warnings: [],
+            log: { level: "info", format: "text" },
+            relayLogs: false,
         });
     });
     after(async () => {
@@ -1047,6 +1051,8 @@ describe("several models at once", () => {
             llmTimeout: null,
             path: process.env.PATH ?? "",
             warnings: [],
+            log: { level: "info", format: "text" },
+            relayLogs: false,
             ...extra,
         });
     const model = (name: string) => ({

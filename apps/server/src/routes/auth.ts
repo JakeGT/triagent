@@ -1,10 +1,12 @@
 // Signing in through an identity provider (AUTH_MODE=oidc), confirming it's you before sensitive steps,
 // and what the sign-in page needs to know. Password sign-in and sign-out are in routes/account.ts.
 
+import { log } from "@triagent/shared/log";
 import type { Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import { forbidden, notFound } from "../errors.ts";
+import { logFailure } from "../failure.ts";
 import { cookieName } from "../http/mount.ts";
 import { json, type Route, route } from "../http/route.ts";
 import { sha256 } from "../security.ts";
@@ -111,14 +113,15 @@ export const authRoutes: Route[] = [
                 const current = getCookie(c, cookieName(services));
                 const result = await services.accounts.signInWithIdentity(identity, idToken, ip, current ? sha256(current) : null);
                 if ("refused" in result) {
-                    console.warn(`Sign-in refused from ${ip}: no account and no invite (subject ${identity.subject.slice(0, 64)}).`);
+                    log.warn("Sign-in refused: no account and no invite", { ip, subject: identity.subject.slice(0, 64) });
                     return c.redirect("/invite-required", 302);
                 }
                 setSessionCookie(c, services, result.cookie);
+                log.info("Signed in", { user: result.user.id, with: "provider", created: result.created });
                 return c.redirect(safeNext(next), 302);
             } catch (err) {
                 if (err instanceof OidcError) return toSignIn(c, err.code);
-                console.error("Signing in through the identity provider failed:", err instanceof Error ? err.message : err);
+                logFailure("Signing in through the identity provider failed", err);
                 return toSignIn(c, "failed");
             }
         },

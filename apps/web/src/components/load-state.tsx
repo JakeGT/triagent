@@ -3,10 +3,12 @@
 
 import { type ErrorComponentProps, useRouter } from "@tanstack/react-router";
 import { AlertTriangle, RotateCw } from "lucide-react";
+import { useEffect } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { errorMessage } from "@/lib/api";
+import { reportError } from "@/lib/reporting";
 import { cn } from "@/lib/utils";
 
 export function LoadError({
@@ -38,6 +40,8 @@ export function LoadError({
 
 export function RouteError({ error, reset }: ErrorComponentProps) {
     const router = useRouter();
+    // A page that couldn't load its data never reaches React's own error handling: said here.
+    useEffect(() => reportError(error, "route"), [error]);
     return (
         <div className="p-6">
             <LoadError

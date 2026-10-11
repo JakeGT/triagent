@@ -1,5 +1,6 @@
 // Signing in and out, your own account, your workspaces, and (for instance admins) local accounts.
 
+import { log } from "@triagent/shared/log";
 import { setCookie } from "hono/cookie";
 import { z } from "zod";
 import { ApiError, forbidden, notFound } from "../errors.ts";
@@ -41,10 +42,12 @@ export const accountRoutes: Route[] = [
                         `Too many failed attempts. Try again in ${Math.ceil(result.retryAfter / 60)} ${Math.ceil(result.retryAfter / 60) === 1 ? "minute" : "minutes"}.`,
                     );
                 }
-                console.warn(`Failed sign-in for "${body.username.slice(0, 64)}" from ${ip}`);
+                // Not the username: people type their password into that box often enough.
+                log.warn("Failed sign-in", { ip });
                 throw new ApiError(401, "Wrong username or password.");
             }
             setSessionCookie(c, services, result.cookie);
+            log.info("Signed in", { user: result.user.id, with: "password" });
             return json({ ok: true, mustChangePassword: result.user.mustChangePassword });
         },
     }),
@@ -60,7 +63,10 @@ export const accountRoutes: Route[] = [
             "`redirect` is where to go next: with an identity provider, its sign-out page (which returns to this site); otherwise null.",
         async handler({ c, services, principal }) {
             const idToken = principal?.kind === "session" ? principal.session.idToken : null;
-            if (principal?.kind === "session") await services.accounts.signOut(principal.session.idHash);
+            if (principal?.kind === "session") {
+                await services.accounts.signOut(principal.session.idHash);
+                log.info("Signed out", { user: principal.user.id });
+            }
             setCookie(c, cookieName(services), "", {
                 path: "/",
                 httpOnly: true,

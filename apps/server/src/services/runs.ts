@@ -8,6 +8,7 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 import { anyOption, JUDGE_FIRST, NO_OPTIONS, type RunOptions, type Severity } from "@triagent/shared";
+import { log } from "@triagent/shared/log";
 import { candidatePairs, type FindingPair, groupFindings, joinGroups, MAX_JUDGE_PAIRS, samePair } from "@triagent/shared/merge";
 import { modelSecrets, type RunnerModel } from "@triagent/shared/model";
 import { redactDeep, redactor } from "@triagent/shared/redact";
@@ -19,6 +20,7 @@ import type { RawReport } from "../domain/report.ts";
 import { reportMetrics } from "../domain/review-metrics.ts";
 import { commentBody, finishedStatus, reviewGaps } from "../domain/review-run.ts";
 import { ApiError, badRequest, conflict, notFound } from "../errors.ts";
+import { fromOutside, logFailure, withoutMessage } from "../failure.ts";
 import { now, randomId } from "../security.ts";
 import {
     ACTIVE_JOB_STATUSES,
@@ -33,7 +35,7 @@ import {
 } from "../store/types.ts";
 import type { Actor, Core } from "./core.ts";
 import type { CommitState, Pull } from "./github/client.ts";
-import { COMMENT_MARKER, type Github, NotConnected, RepositoryChanged, sameRepository } from "./github/service.ts";
+import { COMMENT_MARKER, type Github, NotConnected, noConnection, RepositoryChanged, sameRepository } from "./github/service.ts";
 import type { History } from "./history.ts";
 import type { Models, RunModel } from "./models.ts";
 import type { Reports } from "./reports.ts";
@@ -613,7 +615,7 @@ export class Runs {
     /** Run `task` in the background, logging (not throwing) its failure. */
     background(what: string, task: () => Promise<unknown>): void {
         const p = task()
-            .catch((err: unknown) => console.error(`${what} failed: ${(err as Error).message}`))
+            .catch((err: unknown) => logFailure("A background task failed", err, { task: what }))
             .finally(() => this.pending.delete(p));
         this.pending.add(p);
     }
@@ -1105,7 +1107,11 @@ export class Runs {
         options: RunOptions | null = null,
     ): Promise<Job> {
         // The repository it's for, so it never starts on, or reports to, another if the project moves.
-        const gh = await this.github.maybeFor(project).catch(() => null);
+        const gh = await this.github.maybeFor(project).catch((err: unknown) => {
+            // Queued all the same, without the repository it's for pinned to it.
+            logFailure("Couldn't read a project's GitHub connection when queueing a review", err, { project: project.slug });
+            return null;
+        });
         const repository = gh ? { id: gh.repo.id, fullName: gh.repo.fullName } : null;
         const created = await this.core.write(actor, async (w) => {
             const same = (await w.tx.jobs.list({ projectId: project.id, statuses: ACTIVE_JOB_STATUSES }, 100)).filter(
@@ -1149,7 +1155,10 @@ export class Runs {
                 logDropped: 0,
             };
             await w.tx.jobs.put(job);
-            w.afterCommit(() => this.announce(job, project, "queued"));
+            w.afterCommit(() => {
+                this.announce(job, project, "queued");
+                log.info("Review queued", { run: job.id, project: project.slug, kind: job.kind, pr: job.pr?.number, by: actor.via });
+            });
             return { job, isNew: true };
         });
         if (created.isNew && created.job.kind === "pr" && created.job.headSha && !onTheSide(created.job)) {
@@ -1183,6 +1192,7 @@ export class Runs {
                 };
                 await w.tx.jobs.put(next);
                 w.afterCommit(() => {
+                    log.info("Review cancelled before it started", { run: next.id, project: project?.slug });
                     this.announce(next, project, "finished");
                     this.finishedBeside(next, project);
                     if (project && !onTheSide(next)) this.onFinished(next, project);
@@ -1197,7 +1207,10 @@ export class Runs {
                 if (job.cancelRequested) return job;
                 const next: Job = { ...job, cancelRequested: { by: actor.name, at: now() } };
                 await w.tx.jobs.put(next);
-                w.afterCommit(() => this.announce(next, project, "progress"));
+                w.afterCommit(() => {
+                    log.info("Asked a running review to stop", { run: next.id, project: project?.slug });
+                    this.announce(next, project, "progress");
+                });
                 return next;
             }
             throw conflict("That run has already finished.");
@@ -1210,6 +1223,9 @@ export class Runs {
     private async noteRunner(r: RunnerHello): Promise<void> {
         const last = this.runnerSeen.get(r.id) ?? 0;
         if (Date.now() - last < 15_000) return;
+        // New to this server process, at least: a runner that restarts comes back under a new id.
+        if (!last)
+            log.info("A runner connected", { runner: CLEAN_ONLY(r.name), id: r.id, version: r.version, capacity: r.capacity ?? r.slots });
         this.runnerSeen.set(r.id, Date.now());
         if (this.runnerSeen.size > 1000) this.runnerSeen.delete(this.runnerSeen.keys().next().value as string);
         // Kept as how many it works on at once. A runner that only says how many more it can take (an older
@@ -1401,6 +1417,7 @@ export class Runs {
                 await this.conclude(job.id, runner.id, { status: "failed", error: err.message });
                 return null;
             }
+            logFailure("Couldn't get a review access to its repository", err, { run: job.id, project: project.slug });
             await this.conclude(job.id, runner.id, {
                 status: "failed",
                 error: `Couldn't get access to the repository: ${(err as Error).message}`,
@@ -1445,6 +1462,13 @@ export class Runs {
         }
         this.redactions.set(job.id, redactor(credentials.secrets));
         this.announce(job, project, "started");
+        log.info("Review started", {
+            run: job.id,
+            project: project.slug,
+            runner: CLEAN_ONLY(runner.name),
+            models: models.length,
+            waited: Math.round((Date.now() - Date.parse(job.queuedAt)) / 1000),
+        });
         if (job.kind === "pr" && job.headSha && !onTheSide(job))
             this.background(`Marking ${job.title} as in review on GitHub`, () =>
                 this.github.setStatus(
@@ -1484,7 +1508,11 @@ export class Runs {
     /** A model run again has ended, however: the review it belongs to is announced too, so its page shows how it went. */
     private finishedBeside(job: Job, project: Pick<Project, "slug"> | null): void {
         const of = job.rerunOf?.jobId;
-        if (of) void this.store.jobs.get(of).then((original) => original && this.announce(original, project, "progress"));
+        if (of)
+            void this.store.jobs
+                .get(of)
+                .then((original) => original && this.announce(original, project, "progress"))
+                .catch((err: unknown) => logFailure("Couldn't announce a review whose model was run again", err, { run: of }));
     }
 
     /** End a queued review that can never start, saying why (and telling its pull request, like a cancelled one). */
@@ -1541,7 +1569,7 @@ export class Runs {
             ) as JobCredentials | string[];
             return Array.isArray(raw) ? { secrets: raw, revoke: null } : raw;
         } catch (err) {
-            console.error(`Couldn't read the credentials of run ${job.id}: ${(err as Error).message}`);
+            log.error("Couldn't read a run's credentials", { run: job.id, err });
             return null;
         }
     }
@@ -1598,7 +1626,10 @@ export class Runs {
         sent.timer = setTimeout(() => {
             sent.timer = null;
             sent.at = Date.now();
-            void this.store.projects.get(job.projectId).then((p) => this.announce(job, p, "progress"));
+            void this.store.projects
+                .get(job.projectId)
+                .then((p) => this.announce(job, p, "progress"))
+                .catch((err: unknown) => logFailure("Couldn't announce a review's progress", err, { run: job.id }));
         }, wait);
         sent.timer.unref();
     }
@@ -1616,6 +1647,11 @@ export class Runs {
             (j) => j.status === "running" && j.leaseExpiresAt && Date.parse(j.leaseExpiresAt) < t,
         );
         for (const j of lost) {
+            log.warn("A review's runner stopped answering: the review is abandoned", {
+                run: j.id,
+                runner: j.runnerId,
+                cancelled: Boolean(j.cancelRequested),
+            });
             await this.conclude(
                 j.id,
                 null,
@@ -2044,6 +2080,10 @@ export class Runs {
                 return await record(gaps ? "partial" : "done", null, true);
             } catch (err) {
                 if (err instanceof ApiError && err.code === "job_lost") throw err;
+                // The review itself went well. A report Open Code Review wrote badly is refused like anyone's; losing a
+                // good one here is our fault, or the database's. Logged without its message, which can quote the report.
+                if (fromOutside(err)) log.warn("A finished review's report wasn't one Triagent could take", { run: jobId });
+                else log.error("A finished review's report couldn't be saved", { run: jobId, err: withoutMessage(err) });
                 return this.recordOrFail(
                     () =>
                         record("failed", `The review finished, but its report couldn't be saved: ${clean((err as Error).message)}`, false),
@@ -2104,7 +2144,8 @@ export class Runs {
             return await record();
         } catch (err) {
             if (err instanceof ApiError && err.code === "job_lost") throw err;
-            console.error(`Recording how run ${jobId} ended failed: ${(err as Error).message}`);
+            // Without its message, which can quote the report it was saving.
+            log.error("Recording how a run ended failed", { run: jobId, err: withoutMessage(err) });
             const ended = await this.store.transaction(async (tx) => {
                 const held = await tx.jobs.get(jobId);
                 if (held?.status !== "running") return null;
@@ -2146,6 +2187,15 @@ export class Runs {
         const sent = this.progressSent.get(job.id);
         if (sent?.timer) clearTimeout(sent.timer);
         this.progressSent.delete(job.id);
+        // How it ended, not why: a failure's reason can quote the code under review, and is on the run itself.
+        log.info("Review finished", {
+            run: job.id,
+            project: project?.slug,
+            status: job.status,
+            findings: typeof job.result?.total === "number" ? job.result.total : undefined,
+            seconds:
+                job.startedAt && job.finishedAt ? Math.round((Date.parse(job.finishedAt) - Date.parse(job.startedAt)) / 1000) : undefined,
+        });
         this.announce(job, project, "finished");
         this.finishedBeside(job, project);
         if (!project) return;
@@ -2158,7 +2208,7 @@ export class Runs {
         try {
             this.onFinished(job, project);
         } catch (err) {
-            console.error(`After ${job.title} finished: ${(err as Error).message}`);
+            log.error("A step after a run finished failed", { run: job.id, err });
         }
     }
 
@@ -2167,7 +2217,7 @@ export class Runs {
         const sha = job.headSha as string;
         const notes: string[] = [];
         // Only the repository this review was of: if the project points elsewhere now, say so and stop.
-        const current = await this.github.maybeFor(project).catch(() => null);
+        const current = await this.github.maybeFor(project).catch(noConnection(project));
         if (current && !sameRepository(job.repository, current.repo)) {
             const why = `this project now uses ${current.repo.fullName}, and this review was of ${job.repository?.fullName}`;
             await this.store.jobs.appendLog(job.id, [{ at: now(), line: `[triagent] Not reporting to GitHub: ${why}.` }], LOG_CAP_BYTES);
@@ -2183,6 +2233,7 @@ export class Runs {
                 notes.push(`${what}: done`);
             } catch (err) {
                 const message = (err as Error).message;
+                logFailure("Couldn't update a pull request after its review", err, { run: job.id, project: project.slug, step: what });
                 notes.push(`${what}: failed (${message})`);
                 await this.store.jobs.appendLog(
                     job.id,

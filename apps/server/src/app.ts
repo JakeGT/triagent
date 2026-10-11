@@ -1,8 +1,10 @@
 // The HTTP application: security headers, rate limits and every declared route.
 
-import { Hono } from "hono";
+import { log } from "@triagent/shared/log";
+import { type Context, Hono } from "hono";
 import { ApiError } from "./errors.ts";
 import { clientIp, errorResponse, mount } from "./http/mount.ts";
+import { type RequestInfo, runInRequest } from "./http/request-context.ts";
 import type { Route } from "./http/route.ts";
 import { serveWeb, webDistDir } from "./http/static.ts";
 import { accountRoutes } from "./routes/account.ts";
@@ -20,7 +22,8 @@ import { runRoutes } from "./routes/runs.ts";
 import { skillRoutes } from "./routes/skill.ts";
 import { tutorialRoutes } from "./routes/tutorial.ts";
 import { workspaceRoutes } from "./routes/workspace.ts";
-import { RequestLimiter } from "./security.ts";
+import { RequestLimiter, randomId } from "./security.ts";
+import { BrowserReports } from "./services/browser-reports.ts";
 import type { Services } from "./services/index.ts";
 
 const CSP = [
@@ -58,9 +61,35 @@ export function allRoutes(services: Services): Route[] {
     return routes;
 }
 
+/** Asked for every few seconds, or for every file of a page: a line each only when looking closely (LOG_LEVEL=debug). */
+const quiet = (info: RequestInfo, path: string) => path === "/healthz" || path.startsWith("/internal/runner/") || !info.route;
+
+/** One line for each request answered: what was asked, by whom, what it got and how long that took. */
+function logRequest(c: Context, info: RequestInfo, started: number): void {
+    const status = c.res.status;
+    const fields = { path: c.req.path.slice(0, 300), status, ms: Math.round(performance.now() - started) };
+    if (status >= 500) log.warn("Request answered with an error", fields);
+    else if (quiet(info, c.req.path)) log.debug("Request", fields);
+    else log.info("Request", fields);
+}
+
 export function createApp(services: Services): { app: Hono; routes: Route[] } {
     const app = new Hono();
     const limiter = new RequestLimiter(services.config.requestsPerMinute);
+
+    // First, so that everything after it (the limits, the routes, an error's answer) is part of the request.
+    app.use("*", (c, next) => {
+        const info: RequestInfo = { id: randomId(), method: c.req.method };
+        const started = performance.now();
+        c.header("X-Request-Id", info.id);
+        return runInRequest(info, async () => {
+            try {
+                await next();
+            } finally {
+                logRequest(c, info, started);
+            }
+        });
+    });
 
     app.use("*", async (c, next) => {
         c.header("Content-Security-Policy", CSP);
@@ -83,7 +112,7 @@ export function createApp(services: Services): { app: Hono; routes: Route[] } {
     const routes = allRoutes(services);
     mount(app, services, routes);
     // The web app, if it has been built (after the API, so API routes win).
-    serveWeb(app, webDistDir(services.config.webDistDir));
+    serveWeb(app, webDistDir(services.config.webDistDir), BrowserReports.forPage(services.config.telemetry));
     app.onError((err, c) => errorResponse(c, err));
     app.notFound((c) => c.json({ error: `Nothing at ${c.req.method} ${c.req.path}. See /api/v1/openapi.json.` }, 404));
     return { app, routes };

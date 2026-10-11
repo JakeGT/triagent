@@ -1,5 +1,6 @@
 // The server's internal runner API, with the shared secret.
 
+import type { LogRecord } from "../../../packages/shared/src/log.ts";
 import type { RunnerModel } from "../../../packages/shared/src/model.ts";
 
 export interface ClaimedJob {
@@ -126,6 +127,11 @@ export class ServerClient {
 
     async claim(): Promise<ClaimedJob | null> {
         return (await this.post<{ job: ClaimedJob | null }>("/internal/runner/claim", {})).job;
+    }
+
+    /** Pass on the runner's own log lines. `wanted` is false when the server has nowhere to send them. */
+    log(records: LogRecord[]): Promise<{ wanted: boolean }> {
+        return this.post("/internal/runner/log", { records }, 10_000);
     }
 
     heartbeat(jobId: string): Promise<Orders> {

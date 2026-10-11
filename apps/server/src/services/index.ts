@@ -3,6 +3,7 @@ import type { Store } from "../store/types.ts";
 import { Accounts } from "./accounts.ts";
 import { Allowances } from "./allowances.ts";
 import { AnalyticsService } from "./analytics.ts";
+import { BrowserReports } from "./browser-reports.ts";
 import { Catalogue } from "./catalogue.ts";
 import { Core } from "./core.ts";
 import { EventBus } from "./events.ts";
@@ -52,6 +53,8 @@ export interface Services {
     invites: Invites;
     /** The identity provider, when AUTH_MODE=oidc. */
     oidc: Oidc | null;
+    /** Where the web app's error reports go, when they're sent on to Sentry. */
+    browserReports: BrowserReports | null;
 }
 
 /** Test seams: the clock, how to reach OpenRouter and model providers, and how host names resolve. */
@@ -108,5 +111,6 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         automation,
         invites,
         oidc: config.oidc ? new Oidc(config.oidc, config.publicOrigin, config.secretsKey) : null,
+        browserReports: config.telemetry?.browserDsn ? new BrowserReports(config.telemetry.browserDsn, options.fetch) : null,
     };
 }

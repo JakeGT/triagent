@@ -2,6 +2,7 @@
 // admin if needed, listen.
 
 import { serve } from "@hono/node-server";
+import { configureLog, flushLogs, log } from "@triagent/shared/log";
 import { createApp } from "./app.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import { migrate } from "./db/migrate.ts";
@@ -20,6 +21,24 @@ try {
     }
     throw err;
 }
+configureLog({ ...config.log, base: { service: "server" } });
+
+/** Say why, wait for the line to be sent on, and stop: whatever supervises the server starts it again. */
+async function fail(msg: string, err?: unknown, fields: Record<string, unknown> = {}): Promise<never> {
+    log.error(msg, { ...(err === undefined ? {} : { err }), ...fields });
+    await flushLogs();
+    process.exit(1);
+}
+// Something nothing was ready for: the process can't be trusted to carry on, so it's reported and stopped.
+process.on("uncaughtException", (err) => void fail("Stopped by an error nothing caught", err, { unhandled: true }));
+process.on("unhandledRejection", (err) => void fail("Stopped by a failure nothing handled", err, { unhandled: true }));
+
+log.info("Starting", {
+    version: config.version,
+    node: process.version,
+    auth: config.authMode,
+    reporting: config.telemetry ? (config.telemetry.browserDsn ? "server, runners and browsers" : "server and runners") : "off",
+});
 
 let store: Store;
 if (config.databaseUrl) {
@@ -27,16 +46,15 @@ if (config.databaseUrl) {
     const pg = new PostgresStore(config.databaseUrl, schema);
     try {
         const applied = await migrate(pg.sql, schema);
-        if (applied.length) console.log(`Applied database migrations: ${applied.join(", ")}.`);
+        if (applied.length) log.info("Applied database migrations", { migrations: applied.join(", ") });
     } catch (err) {
-        console.error(`Couldn't prepare the database: ${(err as Error).message}`);
         await pg.close().catch(() => {});
-        process.exit(1);
+        await fail("Couldn't prepare the database", err);
     }
     store = pg;
 } else {
     store = new MemoryStore();
-    console.warn("Using the in-memory store: nothing is kept when the server stops. Set DATABASE_URL to keep data.");
+    log.warn("Using the in-memory store: nothing is kept when the server stops. Set DATABASE_URL to keep data.");
 }
 const services = createServices(config, store);
 // Live updates reach subscribers on every server process sharing the database.
@@ -44,24 +62,23 @@ if (store instanceof PostgresStore) {
     try {
         await services.events.connect(store.relay());
     } catch (err) {
-        console.error(`Couldn't listen for live updates from other server processes: ${(err as Error).message}`);
         await store.close().catch(() => {});
-        process.exit(1);
+        await fail("Couldn't listen for live updates from other server processes", err);
     }
 }
 if (!config.secretsKey)
-    console.warn(
+    log.warn(
         "No TRIAGENT_SECRETS_KEY: secrets are encrypted with a throwaway key, so they can't be read after a restart. Fine for development only.",
     );
 
 try {
     const admin = await services.accounts.bootstrap();
-    if (admin) console.log(`Created instance admin "${admin.username}" from TRIAGENT_ADMIN_USER.`);
+    if (admin) log.info("Created the instance admin from TRIAGENT_ADMIN_USER", { username: admin.username });
 } catch (err) {
-    console.error(`Couldn't create the admin from TRIAGENT_ADMIN_USER/TRIAGENT_ADMIN_PASSWORD: ${(err as Error).message}`);
+    log.error("Couldn't create the admin from TRIAGENT_ADMIN_USER and TRIAGENT_ADMIN_PASSWORD", { err });
 }
 if ((await store.users.count()) === 0)
-    console.warn(
+    log.warn(
         config.oidc
             ? `No accounts yet. The first person to sign in through ${config.oidc.providerName} gets one; members of "${config.oidc.adminGroup}" are instance admins.`
             : "No accounts yet. Set TRIAGENT_ADMIN_USER and TRIAGENT_ADMIN_PASSWORD (or _FILE) and restart.",
@@ -77,7 +94,7 @@ const sweep = () => {
     sweeping = true;
     void services.runs
         .sweep()
-        .catch((err: Error) => console.error(`Checking review leases: ${err.message}`))
+        .catch((err: unknown) => log.error("Checking for reviews whose runner stopped answering failed", { err }))
         .finally(() => {
             sweeping = false;
         });
@@ -85,10 +102,10 @@ const sweep = () => {
 const sweeper = setInterval(sweep, 15_000);
 sweeper.unref();
 sweep();
-if (!config.runnerSecret) console.warn("No TRIAGENT_RUNNER_SECRET: no runner can connect, so reviews stay queued.");
+if (!config.runnerSecret) log.warn("No TRIAGENT_RUNNER_SECRET: no runner can connect, so reviews stay queued.");
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
     const host = info.address.includes(":") ? `[${info.address}]` : info.address;
-    console.log(`Triagent listening on http://${host}:${info.port} (public address ${config.publicOrigin})`);
+    log.info("Listening", { address: `http://${host}:${info.port}`, publicOrigin: config.publicOrigin });
 });
 
 let stopping = false;
@@ -97,10 +114,15 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
         // Once: a second signal mustn't close the server and store again.
         if (stopping) return;
         stopping = true;
+        log.info("Stopping", { signal });
         clearInterval(sweeper);
         services.automation.stop();
         server.close(() => {
-            store.close().finally(() => process.exit(0));
+            // What's in hand for GitHub (a status, a comment) gets to finish, within the three seconds below.
+            void services.runs
+                .settled()
+                .then(() => Promise.allSettled([store.close(), flushLogs()]))
+                .finally(() => process.exit(0));
         });
         setTimeout(() => process.exit(0), 3000).unref();
     });

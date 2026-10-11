@@ -8,8 +8,10 @@
 // creating the instance's app, commit statuses and the pull request comment.
 
 import { ROLE_PERMISSIONS } from "@triagent/shared";
+import { log } from "@triagent/shared/log";
 import { z } from "zod";
 import { ApiError, badRequest, conflict, forbidden, notFound } from "../../errors.ts";
+import { logFailure } from "../../failure.ts";
 import { now, sha256 } from "../../security.ts";
 import type { GithubDelivery, GithubInstallation, Project, Repos, User, Workspace } from "../../store/types.ts";
 import type { Actor, Core } from "../core.ts";
@@ -72,7 +74,7 @@ export class RefusedDeliveries {
         this.counts.set(key, c);
         if (this.counts.size > 10_000) this.counts.delete(this.counts.keys().next().value as string);
         // Not every one: the log mustn't fill up with them either.
-        if (c.count === 1 || c.count % 100 === 0) console.warn(`GitHub delivery to ${what} refused (${c.count} so far): ${reason}`);
+        if (c.count === 1 || c.count % 100 === 0) log.warn("GitHub delivery refused", { to: what, count: c.count, reason });
     }
 
     get(projectId: string | null): { count: number; lastAt: string; lastReason: string } | null {
@@ -99,6 +101,15 @@ export function sameRepository(queued: RepoRef | null, repo: RepoTarget): boolea
 
 /** The project now points at another repository than the one a review was of. */
 export class RepositoryChanged extends Error {}
+
+/**
+ * For `maybeFor(project).catch(…)`: carry on as if the project weren't connected, but say why, since the
+ * failure isn't that (a project that isn't connected is no failure at all).
+ */
+export const noConnection = (project: Pick<Project, "slug">) => (err: unknown) => {
+    logFailure("Couldn't read a project's GitHub connection", err, { project: project.slug });
+    return null;
+};
 
 export class NotConnected extends ApiError {
     constructor(message: string) {
@@ -438,7 +449,7 @@ export class Github {
             userToken = await this.app.userToken(query.code);
             visible = await this.app.userInstallations(userToken);
         } catch (err) {
-            console.error(`Linking a GitHub App installation failed: ${(err as Error).message}`);
+            logFailure("Linking a GitHub App installation failed", err);
             return { redirect: back("failed"), outcome: "refused" as const };
         }
         if (!visible.includes(id)) return { redirect: back("not-yours"), outcome: "refused" as const };
@@ -456,7 +467,7 @@ export class Github {
             } else if ((await this.app.userLogin(userToken)).toLowerCase() !== account.login.toLowerCase())
                 return { redirect: back("not-account"), outcome: "refused" as const };
         } catch (err) {
-            console.error(`Checking who may link a GitHub App installation failed: ${(err as Error).message}`);
+            logFailure("Checking who may link a GitHub App installation failed", err);
             const forbidden = err instanceof GitHubError && err.status === 403;
             return { redirect: back(forbidden ? "members-permission" : "failed"), outcome: "refused" as const };
         }
@@ -599,9 +610,7 @@ export class Github {
     async recordDelivery(d: Omit<GithubDelivery, "at">): Promise<void> {
         const full: GithubDelivery = { ...d, at: now(), detail: d.detail.slice(0, 500) };
         await this.store.githubDeliveries.add(full, KEEP_DELIVERIES);
-        console.log(
-            `GitHub ${d.event ?? "?"}${d.what ? ` (${d.what})` : ""}${d.deliveryId ? ` delivery ${d.deliveryId}` : ""}: ${d.outcome}. ${d.detail}`,
-        );
+        log.info("GitHub delivery", { event: d.event, what: d.what, delivery: d.deliveryId, outcome: d.outcome, detail: full.detail });
     }
 }
 

@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync } from "node:fs";
 import path from "node:path";
+import { log } from "../../../packages/shared/src/log.ts";
 import { run, start } from "./process.ts";
 
 /**
@@ -475,6 +476,7 @@ export class Git {
         try {
             rules = JSON.parse(await this.git(["--git-dir", mirror, "cat-file", "-p", `${base}:.opencodereview/rule.json`]));
         } catch {
+            log.warn("The base commit's .opencodereview/rule.json couldn't be read, so its rule files aren't used", { base });
             return [];
         }
         const entries = (rules as { rules?: unknown })?.rules;

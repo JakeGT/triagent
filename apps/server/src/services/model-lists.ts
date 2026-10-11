@@ -4,6 +4,7 @@
 // OpenRouter's comes from its catalogue (services/catalogue.ts), with prices.
 
 import { createHash } from "node:crypto";
+import { log } from "@triagent/shared/log";
 import type { Repos } from "../store/types.ts";
 import { type Catalogue, readCapped } from "./catalogue.ts";
 import type { ModelSetup, Place } from "./model-setup.ts";
@@ -154,6 +155,8 @@ export class ModelLists {
                       : e instanceof UnsafeUrl || (e as { status?: number }).status === 400 || e.message.startsWith(spec.name)
                         ? e.message
                         : `Couldn't reach ${spec.name}.`;
+            // What the person is told, not the error itself: a provider's answer can quote the key it was sent.
+            log.warn("Couldn't fetch a provider's model list", { provider: spec.name, reason: error });
             return { ...base, models: [], fetchedAt: null, error };
         }
     }

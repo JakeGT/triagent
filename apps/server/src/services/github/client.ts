@@ -8,6 +8,7 @@ export class GitHubError extends Error {
 
     constructor(status: number, message: string) {
         super(message);
+        this.name = "GitHubError";
         this.status = status;
     }
 }

@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, before, describe, test } from "node:test";
+import { captureLog } from "@triagent/shared/log";
 import { COMMENT_MARKER } from "../src/services/github/service.ts";
 import { specForBranch } from "../src/services/runs.ts";
 import { ADMIN_PASSWORD, type Session, testApp } from "./helpers.ts";
@@ -1096,17 +1097,18 @@ test("the poller checks up to four projects at once, and never two for the same 
         seen.push(p.slug);
         if (p.slug === "own-2") throw new Error("GitHub is away");
     };
-    const errors: unknown[] = [];
-    const log = console.error;
-    console.error = (...args: unknown[]) => errors.push(args.join(" "));
+    const errors: string[] = [];
+    const restore = captureLog((level, line) => {
+        if (level === "error") errors.push(line.split("\n")[0]?.replace(/^\S+ /, "") ?? "");
+    });
     try {
         await t.services.automation.tick();
     } finally {
-        console.error = log;
+        restore();
     }
     assert.equal(seen.length, 10, "every project was checked once");
     assert.equal(new Set(seen).size, 10);
     assert.equal(shared, 3);
     assert.equal(most, 4);
-    assert.deepEqual(errors, ["[own-2] Automatic reviews: GitHub is away"]);
+    assert.deepEqual(errors, ["ERROR Automatic reviews failed for a project: GitHub is away project=own-2"]);
 });

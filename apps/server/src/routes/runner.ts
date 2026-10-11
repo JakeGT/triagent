@@ -5,6 +5,7 @@
 // expose /internal/ to the internet: runners reach the server on a private network.
 
 import { createHash, timingSafeEqual } from "node:crypto";
+import { LOG_LEVELS, type LogError, log, relayLog } from "@triagent/shared/log";
 import type { Context } from "hono";
 import { z } from "zod";
 import { MAX_MODELS } from "../domain/merge.ts";
@@ -34,13 +35,22 @@ const hello = (r: z.infer<typeof Runner>): RunnerHello => ({
 
 const digest = (s: string) => createHash("sha256").update(s).digest();
 
+/** A wrong secret is a runner set up wrongly, or someone trying the door: said once a minute at most, however often it's tried. */
+let refusedAt = 0;
+
 /** The request carries the runner secret. */
-function authorise(c: Context, services: Services): void {
+function authorise(c: Context, services: Services, ip: string): void {
     const secret = services.config.runnerSecret;
     // Without a secret configured the API doesn't exist, as far as anyone can tell.
     if (!secret) throw notFound(`Nothing at ${c.req.method} ${c.req.path}.`);
     const m = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "");
-    if (!m || !timingSafeEqual(digest(m[1] as string), digest(secret))) throw new ApiError(401, "Runner secret missing or wrong.");
+    if (!m || !timingSafeEqual(digest(m[1] as string), digest(secret))) {
+        if (Date.now() - refusedAt > 60_000) {
+            refusedAt = Date.now();
+            log.warn("A runner was refused: its secret is missing or wrong", { ip });
+        }
+        throw new ApiError(401, "Runner secret missing or wrong.");
+    }
 }
 
 /** A runner route: authorised, then its body parsed. */
@@ -58,7 +68,7 @@ function internal<B extends z.ZodType>(
         rawBody: true,
         bodyLimit: r.bodyLimit ?? 4 * 1024 * 1024,
         async handler(ctx: RequestContext<undefined, undefined>) {
-            authorise(ctx.c, ctx.services);
+            authorise(ctx.c, ctx.services, ctx.ip);
             const body = r.body.parse(parseJson(await ctx.readRaw(), ctx.c));
             return handler(ctx.services, body, ctx.params);
         },
@@ -67,7 +77,50 @@ function internal<B extends z.ZodType>(
 
 const Job = z.object({ runner: Runner });
 
+/** An error as a runner wrote it down (packages/shared/src/log.ts), with what caused it, a few deep at most. */
+const ErrorShape = z.object({
+    name: z.string().max(200),
+    message: z.string().max(4000),
+    stack: z.string().max(12_000).optional(),
+    code: z.string().max(80).optional(),
+});
+const RunnerError = ErrorShape.extend({ cause: ErrorShape.extend({ cause: ErrorShape.optional() }).optional() });
+
+const RunnerLine = z.object({
+    time: z.string().max(40),
+    level: z.enum(LOG_LEVELS as [string, ...string[]]),
+    msg: z.string().max(4000),
+    fields: z.record(z.string().max(80), z.union([z.string().max(4000), z.number(), z.boolean(), z.null()])),
+    error: RunnerError.optional(),
+});
+
 export const runnerRoutes: Route[] = [
+    internal(
+        {
+            method: "POST",
+            path: "/internal/runner/log",
+            summary: "The runner's own log lines (never a review's), for the server's error tracker; says whether they're wanted",
+            body: Job.extend({ records: z.array(RunnerLine).max(200) }),
+            bodyLimit: 1024 * 1024,
+        },
+        async (services, body) => {
+            // Without an error tracker there's nowhere for them to go: the runner printed them itself, and stops sending.
+            if (!services.config.telemetry) return json({ wanted: false });
+            for (const r of body.records)
+                relayLog(
+                    {
+                        time: r.time,
+                        level: r.level as (typeof LOG_LEVELS)[number],
+                        msg: r.msg,
+                        fields: r.fields,
+                        ...(r.error ? { error: r.error as LogError } : {}),
+                    },
+                    // Last, so a runner can't pass its lines off as the server's.
+                    { service: "runner", runner: body.runner.name },
+                );
+            return json({ wanted: true });
+        },
+    ),
     internal(
         { method: "POST", path: "/internal/runner/claim", summary: "Take the next job this runner may start, if any", body: Job },
         async (services, body) => json({ job: await services.runs.claim(hello(body.runner)) }),

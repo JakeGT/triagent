@@ -7,6 +7,7 @@
 // Stored values are frozen copies, so a caller can't change what others read.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { log } from "@triagent/shared/log";
 import type {
     ActivityRow,
     ApiToken,
@@ -57,7 +58,7 @@ function runHooks(hooks: (() => void)[]): void {
         try {
             hook();
         } catch (err) {
-            console.error("A hook run after a saved change failed:", err);
+            log.error("A hook run after a saved change failed", { err });
         }
     }
 }

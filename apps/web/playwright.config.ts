@@ -29,7 +29,15 @@ async function freePorts(count: number): Promise<number[]> {
 }
 
 // Workers load this file again: they inherit the ports chosen by the runner through the environment.
-const PORT_VARS = ["E2E_PORT", "E2E_OIDC_PORT", "E2E_PROVIDER_PORT", "E2E_GITHUB_PORT", "E2E_RUNNER_PORT", "E2E_TUTORIAL_PORT"];
+const PORT_VARS = [
+    "E2E_PORT",
+    "E2E_OIDC_PORT",
+    "E2E_PROVIDER_PORT",
+    "E2E_GITHUB_PORT",
+    "E2E_RUNNER_PORT",
+    "E2E_TUTORIAL_PORT",
+    "E2E_SENTRY_PORT",
+];
 const unset = PORT_VARS.filter((name) => !process.env[name]);
 const ports = await freePorts(unset.length);
 unset.forEach((name, i) => {
@@ -49,6 +57,10 @@ process.env.E2E_PROVIDER_ISSUER = issuer;
 // Reviews: a fake GitHub (API, app pages and git), and a runner using a fake `ocr`.
 const github = `http://127.0.0.1:${process.env.E2E_GITHUB_PORT}`;
 process.env.E2E_GITHUB_URL = github;
+// Error reporting: a fake Sentry the main server reports to, so every test here also runs with reporting on
+// (and fails on a Content Security Policy violation if the app's SDK causes one). The other two servers run without.
+const sentry = `http://127.0.0.1:${process.env.E2E_SENTRY_PORT}`;
+process.env.E2E_SENTRY_URL = sentry;
 
 export default defineConfig({
     testDir: "e2e",
@@ -84,7 +96,18 @@ export default defineConfig({
     ],
     webServer: [
         {
-            command: "node ../server/src/main.ts",
+            command: "node ../../tests/fakes/sentry-server.ts",
+            cwd: import.meta.dirname,
+            url: `${sentry}/_fake/health`,
+            reuseExistingServer: false,
+            timeout: 30_000,
+            stdout: "ignore",
+            stderr: "pipe",
+            env: { FAKE_SENTRY_PORT: String(process.env.E2E_SENTRY_PORT) },
+        },
+        {
+            // As the image starts it: reporting is set up before the server is loaded.
+            command: "node --import ../server/src/instrument.ts ../server/src/main.ts",
             cwd: import.meta.dirname,
             url: `${origin}/healthz`,
             reuseExistingServer: false,
@@ -110,6 +133,11 @@ export default defineConfig({
                 ALLOW_PRIVATE_MODEL_URLS: "true",
                 // Test accounts start with the tutorial done; tutorial.spec.ts has a server of its own.
                 TUTORIAL_AUTO_START: "false",
+                // Project 1 for the server and runner, 2 for the web app (through the server).
+                SENTRY_DSN: `http://serverkey@127.0.0.1:${process.env.E2E_SENTRY_PORT}/1`,
+                SENTRY_BROWSER_DSN: `http://browserkey@127.0.0.1:${process.env.E2E_SENTRY_PORT}/2`,
+                SENTRY_TRACES_SAMPLE_RATE: "1",
+                TRIAGENT_VERSION: "e2e",
             },
         },
         {

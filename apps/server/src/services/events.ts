@@ -7,6 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { Permission } from "@triagent/shared";
+import { log } from "@triagent/shared/log";
 import type { ActivityRow } from "../store/types.ts";
 
 export interface LiveEvent {
@@ -79,7 +80,7 @@ export class EventBus {
         try {
             this.relay?.send(JSON.stringify(message));
         } catch (err) {
-            console.error("Couldn't pass a live update to other server processes:", err);
+            log.error("Couldn't pass a live update to other server processes", { err });
         }
     }
 

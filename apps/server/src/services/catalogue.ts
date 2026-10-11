@@ -3,6 +3,7 @@
 // a slow or failed fetch never breaks a page, it just means no catalogue for a while. OPENROUTER_CATALOGUE=false
 // turns it off.
 
+import { log } from "@triagent/shared/log";
 import type { Price } from "../domain/analytics.ts";
 
 export const CATALOGUE_URL = "https://openrouter.ai/api/v1/models";
@@ -113,6 +114,7 @@ export class Catalogue {
             this.error = null;
         } catch (err) {
             // Keep any older copy; just say it couldn't be refreshed.
+            log.warn("Couldn't fetch OpenRouter's model catalogue: prices and model names may be out of date", { err });
             this.failedAt = this.options.now();
             const e = err instanceof Error ? err : new Error(String(err));
             this.error =

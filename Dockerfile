@@ -23,10 +23,20 @@ RUN pnpm install --frozen-lockfile
 
 # ---- the web app ---------------------------------------------------------------------------------
 FROM deps AS web
+# Optional, for an instance that reports errors to Sentry: with all three (the token as a build secret,
+# so it isn't kept in the image), the build uploads its source maps there and deletes them. Without, no
+# source maps are made.
+#   docker build --target server --build-arg SENTRY_ORG=… --build-arg SENTRY_PROJECT=… \
+#       --secret id=sentry_auth_token,src=… --build-arg TRIAGENT_VERSION=…
+ARG SENTRY_ORG=
+ARG SENTRY_PROJECT=
+ARG TRIAGENT_VERSION=
 COPY tsconfig.json ./
 COPY packages/shared packages/shared
 COPY apps/web apps/web
-RUN pnpm --filter @triagent/web build
+RUN --mount=type=secret,id=sentry_auth_token,required=false \
+    if [ -s /run/secrets/sentry_auth_token ]; then export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; fi; \
+    SENTRY_ORG="$SENTRY_ORG" SENTRY_PROJECT="$SENTRY_PROJECT" TRIAGENT_VERSION="$TRIAGENT_VERSION" pnpm --filter @triagent/web build
 
 # ---- the server's production dependencies only -------------------------------------------------------
 FROM ${NODE_IMAGE} AS server-deps
@@ -39,8 +49,10 @@ RUN pnpm install --frozen-lockfile --prod --filter @triagent/server...
 
 # ---- server ----------------------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS server
+# Which build this is (a commit, a tag): in the start-up log, and the release on anything reported.
+ARG TRIAGENT_VERSION=
 WORKDIR /app
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080 WEB_DIST_DIR=/app/web
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080 WEB_DIST_DIR=/app/web TRIAGENT_VERSION=${TRIAGENT_VERSION}
 COPY --from=server-deps /src/node_modules ./node_modules
 COPY --from=server-deps /src/apps/server/node_modules ./apps/server/node_modules
 COPY --from=server-deps /src/packages/shared/node_modules ./packages/shared/node_modules
@@ -55,11 +67,13 @@ COPY --from=web /src/apps/web/dist /app/web
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
-CMD ["node", "apps/server/src/main.ts"]
+# instrument.ts first: error reporting (if SENTRY_DSN is set; nothing otherwise) is in place before the server is loaded.
+CMD ["node", "--import", "./apps/server/src/instrument.ts", "apps/server/src/main.ts"]
 
 # ---- runner ----------------------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS runner
 ARG OCR_VERSION
+ARG TRIAGENT_VERSION=
 # git fetches the code; OCR is a static binary installed from npm at an exact version.
 RUN apk add --no-cache git \
     && npm install --global --no-fund --no-audit "@alibaba-group/open-code-review@${OCR_VERSION}" \
@@ -76,7 +90,7 @@ COPY packages/shared/src packages/shared/src
 # Reviews need git 2.42 or later (GIT_ATTR_SOURCE). The runner refuses to start with an older one; so does the build.
 RUN node -e "import('./apps/runner/src/git.ts').then((g) => g.requireGit('git', process.env.PATH))" \
     && node -e "import('./apps/runner/src/runner.ts')"
-ENV NODE_ENV=production OCR_NO_UPDATE=1 \
+ENV NODE_ENV=production OCR_NO_UPDATE=1 TRIAGENT_VERSION=${TRIAGENT_VERSION} \
     RUNNER_CACHE_DIR=/var/cache/triagent-runner RUNNER_WORK_DIR=/tmp/triagent-runner RUNNER_HEALTH_PORT=8081
 USER node
 HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8081/healthz >/dev/null || exit 1

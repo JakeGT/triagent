@@ -2,6 +2,7 @@
 
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { BROWSER_ONLY, permissionsOf, SCOPE_INFO } from "@triagent/shared";
+import { log } from "@triagent/shared/log";
 import type { Context, Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { ZodError } from "zod";
@@ -10,6 +11,7 @@ import { safeEqual } from "../security.ts";
 import type { Access, Principal } from "../services/accounts.ts";
 import type { Actor } from "../services/core.ts";
 import type { Services } from "../services/index.ts";
+import { currentRequest } from "./request-context.ts";
 import { type HandlerResult, needsBrowser, needsRecentSignIn, type RequestContext, type Route } from "./route.ts";
 
 export const DEFAULT_BODY_LIMIT = 256 * 1024;
@@ -129,13 +131,17 @@ export function reauthRequired(services: Services): ApiError {
 
 export function errorResponse(c: Context, err: unknown): Response {
     if (err instanceof ApiError) {
+        // A refusal is the caller's business; a 5xx (a secret that can't be decrypted, say) is ours.
+        if (err.status >= 500) log.error("Request failed", { err });
         return c.json({ ...err.details, error: err.message, ...(err.code ? { code: err.code } : {}) }, err.status as 400);
     }
     if (err instanceof ZodError) {
         return c.json({ error: err.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ") }, 400);
     }
-    console.error(err);
-    return c.json({ error: "Internal error. Check the server log." }, 500);
+    log.error("Request failed", { err });
+    const requestId = currentRequest()?.id;
+    // The id finds this request's lines in the server log, and its issue in the error tracker.
+    return c.json({ error: "Internal error. Check the server log.", ...(requestId ? { requestId } : {}) }, 500);
 }
 
 function toResponse(c: Context, result: HandlerResult): Response {
@@ -150,6 +156,8 @@ export function mount(app: Hono, services: Services, routes: Route[]): void {
         const path = r.path.replace(/\{(\w+)\}/g, ":$1");
         app.on(r.method, path, async (c) => {
             const ip = clientIp(c, services.config.proxyHops);
+            const request = currentRequest();
+            if (request) request.route = r.path;
             let principal: Principal | null = null;
             if (r.scope !== "public") {
                 const auth = await authenticate(c, services);
@@ -160,6 +168,7 @@ export function mount(app: Hono, services: Services, routes: Route[]): void {
                     );
                 if (!auth) throw new ApiError(401, "Sign in, or send Authorization: Bearer <token>.");
                 principal = auth;
+                if (request) request.user = (principal.kind === "token" ? principal.token.ownerUserId : principal.user.id) ?? undefined;
                 if (principal.kind === "token" && needsBrowser(r)) {
                     throw forbidden(
                         r.scope === "instance"
@@ -176,6 +185,8 @@ export function mount(app: Hono, services: Services, routes: Route[]): void {
             }
 
             const params = c.req.param() as Record<string, string>;
+            if (request && params.workspace) request.workspace = params.workspace.slice(0, 80);
+            if (request && params.project) request.project = params.project.slice(0, 80);
             let access: Access | null = null;
             let project = null;
             if (r.scope === "workspace" || r.scope === "project") {

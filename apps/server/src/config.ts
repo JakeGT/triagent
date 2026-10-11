@@ -2,6 +2,7 @@
 // Docker secrets convention, so secrets needn't sit in the process environment.
 
 import { readFileSync } from "node:fs";
+import { type LogFormat, type LogLevel, logOptionsFromEnv } from "@triagent/shared/log";
 
 export interface Config {
     host: string;
@@ -49,6 +50,24 @@ export interface Config {
     /** GitHub's API and web addresses (GitHub Enterprise Server, or a stand-in for tests). */
     githubApiUrl: string;
     githubUrl: string;
+    /** The build this is (TRIAGENT_VERSION, set in the images), if known. */
+    version: string | null;
+    log: { level: LogLevel; format: LogFormat };
+    /** Reporting errors and log lines to Sentry (SENTRY_DSN). Null: nothing leaves the instance. */
+    telemetry: TelemetryConfig | null;
+}
+
+export interface TelemetryConfig {
+    /** Where the server reports to, and the runners through it. */
+    dsn: string;
+    /** Where the web app reports to (through the server, never straight from the browser), or null to leave browsers out. */
+    browserDsn: string | null;
+    environment: string;
+    release: string | null;
+    /** The share of requests timed and sent as traces, from 0 (none) to 1. */
+    tracesSampleRate: number;
+    /** Send log lines too (info and above), not only errors. */
+    logs: boolean;
 }
 
 export interface OidcConfig {
@@ -100,6 +119,61 @@ function flag(env: Env, name: string, fallback: boolean): boolean {
     if (v === "false" || v === "0") return false;
     throw new ConfigError(`${name} must be true or false, got "${v}".`);
 }
+
+/** A Sentry DSN's parts: the public key, and the address envelopes for its project are sent to. */
+export function parseDsn(dsn: string): { key: string; envelopeUrl: string } | null {
+    let url: URL;
+    try {
+        url = new URL(dsn);
+    } catch {
+        return null;
+    }
+    const m = /^(.*)\/(\d+)$/.exec(url.pathname);
+    if (!/^https?:$/.test(url.protocol) || !url.username || !m || url.search || url.hash) return null;
+    return { key: url.username, envelopeUrl: `${url.protocol}//${url.host}${m[1]}/api/${m[2]}/envelope/` };
+}
+
+const logOptions = (env: Env) => {
+    try {
+        return logOptionsFromEnv(env);
+    } catch (err) {
+        throw new ConfigError((err as Error).message);
+    }
+};
+
+/** SENTRY_DSN and what goes with it. Read on its own before anything else starts (instrument.ts), and again with the rest. */
+export function telemetryConfig(env: Env = process.env): TelemetryConfig | null {
+    const dsnOf = (name: string) => {
+        const dsn = secretFromEnv(env, name);
+        if (dsn && !parseDsn(dsn))
+            throw new ConfigError(
+                `${name} must be a Sentry DSN, like https://<key>@o0.ingest.sentry.io/<project>. Copy it from the project's Client Keys.`,
+            );
+        return dsn ?? null;
+    };
+    const dsn = dsnOf("SENTRY_DSN");
+    const browserDsn = dsnOf("SENTRY_BROWSER_DSN");
+    if (!dsn) {
+        if (browserDsn) throw new ConfigError("SENTRY_BROWSER_DSN needs SENTRY_DSN: the server reports there, and the web app through it.");
+        return null;
+    }
+    const rate = env.SENTRY_TRACES_SAMPLE_RATE || "0";
+    if (!/^(0(\.\d+)?|1(\.0+)?)$/.test(rate))
+        throw new ConfigError(`SENTRY_TRACES_SAMPLE_RATE must be a number from 0 to 1, got "${rate}".`);
+    const environment = (env.SENTRY_ENVIRONMENT || (env.NODE_ENV === "production" ? "production" : "development")).trim();
+    if (!/^[\w.-]{1,64}$/.test(environment))
+        throw new ConfigError("SENTRY_ENVIRONMENT must be a short name: letters, digits, dots, dashes and underscores.");
+    return {
+        dsn,
+        browserDsn: flag(env, "SENTRY_BROWSER", true) ? (browserDsn ?? dsn) : null,
+        environment,
+        release: versionOf(env),
+        tracesSampleRate: Number(rate),
+        logs: flag(env, "SENTRY_LOGS", true),
+    };
+}
+
+const versionOf = (env: Env) => (/^[\w.+-]{1,64}$/.test(env.TRIAGENT_VERSION ?? "") ? (env.TRIAGENT_VERSION as string) : null);
 
 export function loadConfig(env: Env = process.env): Config {
     const production = env.NODE_ENV === "production";
@@ -191,6 +265,9 @@ export function loadConfig(env: Env = process.env): Config {
         runnerSecret,
         githubApiUrl: url("GITHUB_API_URL", "https://api.github.com"),
         githubUrl: url("GITHUB_URL", "https://github.com"),
+        version: versionOf(env),
+        log: logOptions(env),
+        telemetry: telemetryConfig(env),
     };
 }
 

@@ -12,6 +12,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import { log } from "@triagent/shared/log";
 import postgres from "postgres";
 import type { Relay } from "../services/events.ts";
 import type {
@@ -97,7 +98,7 @@ function runHooks(hooks: (() => void)[]): void {
         try {
             hook();
         } catch (err) {
-            console.error("A hook run after a saved change failed:", err);
+            log.error("A hook run after a saved change failed", { err });
         }
     }
 }
@@ -437,7 +438,7 @@ export class PostgresStore implements Store {
             send: (message) => {
                 this.sql
                     .notify(channel, message)
-                    .catch((err: unknown) => console.error("Couldn't send a live update to other processes:", err));
+                    .catch((err: unknown) => log.error("Couldn't send a live update to other server processes", { err }));
             },
             listen: async (receive) => {
                 await this.sql.listen(channel, receive);
@@ -471,8 +472,9 @@ export class PostgresStore implements Store {
             if (!row?.ok) return false;
             this.locks.add(name);
             return true;
-        } catch {
+        } catch (err) {
             // the database is unreachable: someone else may have it
+            log.warn("Couldn't ask the database for a lock: the work it guards is skipped this time", { lock: name, err });
             return false;
         }
     }
