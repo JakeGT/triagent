@@ -90,9 +90,15 @@ export function disagreements(issues: readonly Issue[], models: readonly string[
         byPath.set(x.path, [...(byPath.get(x.path) ?? []), x]);
     }
     const apart: (LeftApart & { order: number })[] = [];
-    for (const [path, list] of byPath) {
+    for (const [path, unsorted] of byPath) {
+        // In line order, so a finding is only compared with those that start near its end: a file can have thousands.
+        const list = [...unsorted].sort((p, q) => (p.startLine as number) - (q.startLine as number) || p.index - q.index);
         for (const [i, x] of list.entries()) {
-            for (const y of list.slice(i + 1)) {
+            const xEnd = x.endLine ?? (x.startLine as number);
+            for (let j = i + 1; j < list.length; j++) {
+                const y = list[j] as Issue;
+                // Everything after starts later still, and so is further off.
+                if ((y.startLine as number) - xEnd > LINE_SLACK) break;
                 // A model's own findings are never one finding, so two that share a model were never candidates.
                 if (x.foundBy?.some((m) => y.foundBy?.includes(m))) continue;
                 const [a, b] = [side(x), side(y)];

@@ -157,6 +157,13 @@ const GROUP_COLUMNS = [
     { label: "Cost per finding", numeric: true },
 ];
 
+/** What one review cost: nothing to price without its tokens; "at least" when some of its models have no price. */
+function ReviewCost({ review }: { review: { tokens: number | null; cost: number | null; costPartial: boolean } }) {
+    if (review.tokens === null) return "—";
+    if (review.cost === null || !review.costPartial) return usd(review.cost);
+    return <span title="Some of its models have no price, so it cost more than this">at least {usd(review.cost)}</span>;
+}
+
 export function ReviewsSection({ a }: { a: Analytics }) {
     const { ws } = useWorkspace();
     const r = a.reviews;
@@ -305,15 +312,7 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                                 : x.tokensEstimated
                                   ? `about ${compactCount(x.tokens)} (estimate)`
                                   : compactCount(x.tokens),
-                            x.tokens === null ? (
-                                "—"
-                            ) : x.cost !== null && x.costPartial ? (
-                                <span key="c" title="Some of its models have no price, so it cost more than this">
-                                    at least {usd(x.cost)}
-                                </span>
-                            ) : (
-                                usd(x.cost)
-                            ),
+                            <ReviewCost key="c" review={x} />,
                             x.findings === null ? "—" : count(x.findings),
                         ],
                     }))}

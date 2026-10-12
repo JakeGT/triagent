@@ -273,8 +273,11 @@ export function scans(recs: readonly ReviewRecord[], costs: ReadonlyMap<string, 
         // Its models ran at once, so the review took from its start to its end, not their times added up. A model
         // run again later (an attempt) took its own time on top. A record from before reviews said when they started
         // has only the models' own times to add.
-        const began = Date.parse(lead.details.startedAt ?? "");
-        const ended = Date.parse(lead.at);
+        // Every model's record carries the review's own start and end. A model run again carries its own, so
+        // it's never the one read, even where the range holds no record of the review but that.
+        const whole = lead.details.attempt ? group.find((r) => !r.details.attempt) : lead;
+        const began = Date.parse(whole?.details.startedAt ?? "");
+        const ended = Date.parse(whole?.at ?? "");
         const again = group.filter((r) => r.details.attempt).reduce((n, r) => n + (r.details.runSeconds ?? 0), 0);
         const wall = Number.isFinite(began) && Number.isFinite(ended) && ended >= began ? Math.round((ended - began) / 1000) + again : null;
         out.push({
