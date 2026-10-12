@@ -263,7 +263,15 @@ describe("analytics on seeded data", () => {
 
     test("costs without any prices: nothing is made up, and every model with tokens is listed", () => {
         const a = run({ price: () => null });
-        assert.deepEqual(a.reviews.cost, { total: null, pricedReviews: 0, perReview: null, perPr: null, prs: 0, perFinding: null });
+        assert.deepEqual(a.reviews.cost, {
+            total: null,
+            pricedReviews: 0,
+            partlyPriced: 0,
+            perReview: null,
+            perPr: null,
+            prs: 0,
+            perFinding: null,
+        });
         assert.deepEqual(
             a.unpriced.map((u) => u.model),
             [SONNET, "mystery/model"],

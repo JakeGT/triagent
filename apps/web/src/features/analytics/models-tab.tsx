@@ -6,6 +6,7 @@ import { BarList, ChartFrame, ColumnChart, type Series } from "@/components/char
 import { plural } from "@/lib/format";
 import { compactCount, count, percent, seconds, usd } from "@/lib/insights-format";
 import type { Analytics, ModelRow } from "@/lib/insights-types";
+import { Disagreements } from "./disagreements";
 import { Card, DataTable, per, pointsOf, Section, SeriesTable } from "./sections";
 
 /** A model as people know it: its name in reviews first, the provider's id under it when that's something else. */
@@ -147,6 +148,7 @@ export function ModelsTab({ a }: { a: Analytics }) {
                         </p>
                     </Card>
                     {m.agreement.findings > 0 && <Agreement a={a} name={name} />}
+                    {m.rows.some((r) => r.without.reviews > 0) && <Without a={a} />}
                     {(anyCost || anyAccepted) && (
                         <div className="grid gap-4 lg:grid-cols-2">
                             {anyCost && (
@@ -182,7 +184,57 @@ export function ModelsTab({ a }: { a: Analytics }) {
                     )}
                 </>
             )}
+            {/* Last, and whatever the range holds: it's about one branch's report as it stands. */}
+            <Disagreements project={a.scope.project} branch={a.scope.branch} />
         </Section>
+    );
+}
+
+/** What the reviews each model shared with others would have been without it: what would be missing, and what it would save. */
+function Without({ a }: { a: Analytics }) {
+    const rows = (a.models as NonNullable<Analytics["models"]>).rows.filter((r) => r.without.reviews > 0);
+    const dash = <span className="text-muted-foreground">—</span>;
+    return (
+        <Card title="Without each model">
+            <DataTable
+                caption="For each model, over the reviews it ran alongside others: the findings that would be missing without it, and the time and cost it would save"
+                columns={[
+                    { label: "Model" },
+                    { label: "Reviews with others", numeric: true },
+                    { label: "Only it found", numeric: true },
+                    { label: "Critical or high", numeric: true },
+                    { label: "Since accepted", numeric: true },
+                    { label: "Sooner by", numeric: true },
+                    { label: "Its cost", numeric: true },
+                ]}
+                rows={rows.map((r) => ({
+                    key: r.key,
+                    cells: [
+                        <ModelName key="m" row={r} />,
+                        count(r.without.reviews),
+                        count(r.unique),
+                        count(r.without.serious),
+                        count(r.without.accepted),
+                        r.without.slowestIn ? (
+                            <span key="t">
+                                {seconds(r.without.secondsSaved)}{" "}
+                                <span className="text-xs text-muted-foreground">in {count(r.without.slowestIn)}</span>
+                            </span>
+                        ) : (
+                            <span key="t" title="It was never the last model to finish">
+                                {dash}
+                            </span>
+                        ),
+                        usd(r.without.cost),
+                    ],
+                }))}
+            />
+            <p className="text-xs text-muted-foreground">
+                What dropping a model would lose and save. A review's models run at once, so it ends when the slowest does: "Sooner by" is
+                how much earlier the reviews it finished last in would have ended. Findings only it found may still be wrong: see its
+                acceptance rate above.
+            </p>
+        </Card>
     );
 }
 

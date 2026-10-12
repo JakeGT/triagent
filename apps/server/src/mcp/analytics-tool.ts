@@ -25,7 +25,7 @@ export function analyticsText(a: Analytics): string {
             `- ${n(r.total)} reviews (${n(r.runs)} run on the server, ${n(r.uploads)} uploaded): ${n(r.byStatus.done)} done, ${n(r.byStatus.partial)} partial, ${n(r.byStatus.failed)} failed, ${n(r.byStatus.cancelled)} cancelled`,
             `- Run time: median ${dur(r.runSeconds.median)}, 90th percentile ${dur(r.runSeconds.p90)}; queue time: median ${dur(r.queueSeconds.median)}`,
             `- Tokens: ${n(r.tokens.total)} (${n(r.tokens.input)} input, ${n(r.tokens.output)} output, ${n(r.tokens.cacheRead)} cache reads)${r.tokens.estimated ? `, including an estimate of ${n(r.tokens.estimatedTotal)} for ${n(r.tokens.estimated)} review(s) that stopped without saying (counted at their token budget)` : ""}`,
-            `- Cost: ${usd(r.cost.total)}; per review ${usd(r.cost.perReview)}, per pull request ${usd(r.cost.perPr)}, per finding ${usd(r.cost.perFinding)}`,
+            `- Cost: ${usd(r.cost.total)}${r.cost.partlyPriced ? ` at least (${n(r.cost.partlyPriced)} review(s) used a model with no price, so cost more than is counted, and are left out of the averages)` : ""}; per review ${usd(r.cost.perReview)}, per pull request ${usd(r.cost.perPr)}, per finding ${usd(r.cost.perFinding)}`,
         );
     // Whichever parts were asked for: a cost above (a review's, a model's) leaves these out.
     if (a.unpriced.length)
@@ -39,6 +39,10 @@ export function analyticsText(a: Analytics): string {
         for (const x of m.rows)
             lines.push(
                 `- ${x.key}: ${n(x.reviews)} reviews (${pct(x.failureRate)} failed, ${n(x.stalled)} stalled), median ${dur(x.medianRunSeconds)}, ${n(x.tokens)} tokens, ${usd(x.cost)}; ${n(x.findings)} findings, ${n(x.unique)} only it found, ${n(x.accepted)} accepted and ${n(x.rejected)} rejected (${pct(x.acceptanceRate)} accepted${x.accepted + x.rejected < m.smallSample ? ", too few to rely on" : ""}); per finding ${usd(x.costPerFinding)}, per accepted finding ${usd(x.costPerAccepted)}`,
+            );
+        for (const x of m.rows.filter((r) => r.without.reviews))
+            lines.push(
+                `- Without ${x.key}, over its ${n(x.without.reviews)} review(s) with other models: ${n(x.unique)} findings would be missing (${n(x.without.serious)} critical or high, ${n(x.without.accepted)} since accepted)${x.without.slowestIn ? `; ${n(x.without.slowestIn)} would have ended ${dur(x.without.secondsSaved)} sooner in all` : ""}; it cost ${usd(x.without.cost)} in them`,
             );
         if (m.agreement.findings)
             lines.push(

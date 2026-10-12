@@ -1,6 +1,6 @@
 // What the analytics, prices, catalogue and allowance endpoints return (see apps/server/src/domain/analytics.ts).
 
-import type { Severity, Via } from "@triagent/shared";
+import type { Category, Severity, Status, Via } from "@triagent/shared";
 import type { ReviewModel } from "./types";
 
 export type Days = 7 | 30 | 90 | 365 | 0;
@@ -68,6 +68,45 @@ export interface ModelRow {
     acceptanceRate: number | null;
     costPerFinding: number | null;
     costPerAccepted: number | null;
+    /**
+     * What its reviews with other models would have been without it: how many there were, the findings only
+     * it found that were critical or high, those since accepted, and how much sooner those reviews would
+     * have ended (it was the last to finish in `slowestIn` of them), and what it cost in them (null: no price).
+     */
+    without: { reviews: number; serious: number; accepted: number; slowestIn: number; secondsSaved: number; cost: number | null };
+}
+
+export interface DisagreementSide {
+    id: string;
+    title: string;
+    severity: Severity;
+    category: Category;
+    startLine: number;
+    endLine: number;
+    foundBy: string[];
+    status: Status;
+}
+
+/** Where the models of a branch's review disagreed (GET …/disagreements). */
+export interface Disagreements {
+    branch: string;
+    /** The review's models; null when it ran with one. */
+    models: string[] | null;
+    /** Findings several models found and gave different severities: the first rating is the one shown on the finding. */
+    rated: {
+        total: number;
+        items: {
+            id: string;
+            path: string;
+            startLine: number | null;
+            title: string;
+            ratings: { model: string; severity: Severity | null; category: Category | null }[];
+            spread: number;
+            status: Status;
+        }[];
+    };
+    /** Pairs of findings from different models, in the same file and within a few lines, that weren't merged. */
+    apart: { total: number; items: { path: string; gap: number; a: DisagreementSide; b: DisagreementSide }[] };
 }
 
 export interface ModelsSection {
@@ -136,6 +175,8 @@ export interface Analytics {
         cost: {
             total: number | null;
             pricedReviews: number;
+            /** Reviews some of whose models have no price: their known cost is in `total`, and in no average. */
+            partlyPriced: number;
             perReview: number | null;
             perPr: number | null;
             prs: number;
@@ -159,6 +200,8 @@ export interface Analytics {
             tokens: number | null;
             tokensEstimated: boolean;
             cost: number | null;
+            /** Some of its models have no price, so it cost more than `cost`. */
+            costPartial: boolean;
             findings: number | null;
             /** The run it was, when it was run here: its page has each model side by side. */
             runId: string | null;

@@ -9,6 +9,7 @@ import type {
     AnalyticsSection,
     Catalogue,
     Days,
+    Disagreements,
     InstanceModel,
     InstanceReviews,
     InstanceWorkspaces,
@@ -44,6 +45,14 @@ export const runModelsQuery = (ws: string, runId: string) =>
         queryKey: insightKeys.runModels(ws, runId),
         queryFn: ({ signal }) =>
             api.get<RunBreakdown>(`${paths.workspace(ws)}/runs/${encodeURIComponent(runId)}/models`, undefined, { signal }),
+        staleTime: 30_000,
+    });
+
+/** Where the models of a branch's review disagreed. Under the branch's own key, so triage there refreshes it. */
+export const disagreementsQuery = (ws: string, project: string, branch: string) =>
+    queryOptions({
+        queryKey: [...keys.branch(ws, project, branch), "disagreements"] as const,
+        queryFn: ({ signal }) => api.get<Disagreements>(`${paths.project(ws, project)}/disagreements`, { branch }, { signal }),
         staleTime: 30_000,
     });
 

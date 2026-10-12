@@ -2,6 +2,7 @@
 // summary and activity.
 
 import { z } from "zod";
+import { disagreements } from "../domain/disagreements.ts";
 import { overviewMarkdown } from "../domain/markdown.ts";
 import { ApiError } from "../errors.ts";
 import { json, markdown, type Route, route } from "../http/route.ts";
@@ -181,6 +182,36 @@ export const reportRoutes: Route[] = [
         async handler({ services, project: p, query }) {
             const proj = project(p);
             return json(await services.reports.overview(proj, services.reports.branchOf(proj, query.branch)));
+        },
+    }),
+    route({
+        method: "GET",
+        path: `${P}/disagreements`,
+        scope: "project",
+        permission: "read",
+        tag: "Branches",
+        summary: "Where the models of a branch's review disagreed: findings they rated differently, and near findings left apart",
+        description:
+            "For a report from a review run with several models. `rated`: findings more than one model found and gave different severities. `apart`: pairs of findings from different models in the same file, overlapping or within a few lines, that weren't merged (they were filed under different kinds of problem, mostly); some are the same problem. At most 100 of each, with the totals. `models` is null for a report from one model.",
+        query: BranchQuery,
+        async handler({ services, project: p, query }) {
+            const proj = project(p);
+            const view = await services.reports.view(services.store, proj, services.reports.branchOf(proj, query.branch));
+            const found = disagreements(view.review.issues, view.review.meta.models);
+            const status = (id: string) => view.statusOf("issue", id);
+            return json({
+                branch: view.branch,
+                ...found,
+                rated: { ...found.rated, items: found.rated.items.map((r) => ({ ...r, status: status(r.id) })) },
+                apart: {
+                    ...found.apart,
+                    items: found.apart.items.map((x) => ({
+                        ...x,
+                        a: { ...x.a, status: status(x.a.id) },
+                        b: { ...x.b, status: status(x.b.id) },
+                    })),
+                },
+            });
         },
     }),
     route({

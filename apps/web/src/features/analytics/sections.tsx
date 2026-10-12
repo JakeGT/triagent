@@ -201,7 +201,7 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                 />
                 <Stat
                     label="Cost"
-                    value={usd(r.cost.total)}
+                    value={r.cost.total !== null && r.cost.partlyPriced ? `At least ${usd(r.cost.total)}` : usd(r.cost.total)}
                     note={
                         r.cost.total === null
                             ? "Set model prices to see costs"
@@ -209,6 +209,9 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                                   r.cost.perReview !== null && `${usd(r.cost.perReview)} a review`,
                                   r.cost.perPr !== null && `${usd(r.cost.perPr)} a pull request`,
                                   r.cost.perFinding !== null && `${usd(r.cost.perFinding)} a finding`,
+                                  // A review that used a model with no price cost more than is known: no average counts it.
+                                  r.cost.partlyPriced > 0 &&
+                                      `${plural(r.cost.partlyPriced, "review")} used a model with no price, so ${r.cost.partlyPriced === 1 ? "isn't" : "aren't"} in the averages`,
                               ]
                                   .filter(Boolean)
                                   .join(" · ")
@@ -302,7 +305,15 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                                 : x.tokensEstimated
                                   ? `about ${compactCount(x.tokens)} (estimate)`
                                   : compactCount(x.tokens),
-                            x.tokens === null ? "—" : usd(x.cost),
+                            x.tokens === null ? (
+                                "—"
+                            ) : x.cost !== null && x.costPartial ? (
+                                <span key="c" title="Some of its models have no price, so it cost more than this">
+                                    at least {usd(x.cost)}
+                                </span>
+                            ) : (
+                                usd(x.cost)
+                            ),
                             x.findings === null ? "—" : count(x.findings),
                         ],
                     }))}

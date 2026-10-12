@@ -114,6 +114,52 @@ test("triage shows which models found each finding, and filters and sorts by agr
     await expect(found).toContainText("Discounts are ignored in the total.");
 });
 
+test("Analytics → Models shows where a branch's models disagreed: rated differently, and near findings left apart", async ({
+    page,
+    admin,
+}) => {
+    const { ws, project } = await seedProject(admin);
+    const report = {
+        ...MERGED,
+        comments: [
+            ...MERGED.comments,
+            // The same lines as the rounding error, filed as something else by the other model: left apart.
+            { ...finding(40, "Money is held as a float here.", [], ["model-a"]), category: "maintainability", severity: "medium" },
+        ],
+    };
+    await admin.post(`/api/v1/w/${ws}/p/${project}/reports`, { branch: "main", fileName: "merged.json", report, confirm: true });
+    await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
+
+    // Every project: there's no one report to look at, and it says what to do.
+    await page.goto(`/w/${ws}/analytics/models`);
+    await expect(page.getByTestId("disagreements-note")).toHaveText("Choose a project above to see where its models disagreed.");
+    await page.getByRole("form", { name: "What to show" }).getByLabel("Project").selectOption(project);
+
+    const found = page.getByTestId("disagreements");
+    const rated = found.locator("div", { has: page.getByRole("heading", { name: "Rated differently" }) }).first();
+    await expect(rated).toContainText("1 finding more than one model found");
+    await expect(rated.getByRole("listitem")).toContainText("src/shop/cart.ts:10");
+    await expect(rated.getByRole("listitem")).toContainText(/model-a\s*High/);
+    await expect(rated.getByRole("listitem")).toContainText(/model-b\s*Critical/);
+    const apart = found.locator("div", { has: page.getByRole("heading", { name: "Near each other, not merged" }) }).first();
+    await expect(apart).toContainText("1 pair of findings");
+    await expect(apart.getByRole("listitem")).toContainText("src/shop/cart.ts:40");
+    await expect(apart.getByRole("link", { name: "Only model B noticed this rounding error" })).toBeVisible();
+    await axe(page, "analytics models with disagreements");
+
+    // A finding's name opens it; marked a duplicate there, it's struck through here.
+    await apart.getByRole("link", { name: "Money is held as a float here" }).click();
+    await expect(page).toHaveURL(new RegExp(`/w/${ws}/p/${project}/issues/ocr-`));
+    const issues = (await admin.get(`/api/v1/w/${ws}/p/${project}/issues?branch=main`)).items as { id: string; title: string }[];
+    const id = (title: string) => issues.find((x) => x.title.startsWith(title))?.id as string;
+    await admin.patch(`/api/v1/w/${ws}/p/${project}/issues/${id("Money is held")}?branch=main`, { duplicateOf: id("Only model B") });
+    await page.goto(`/w/${ws}/analytics/models?project=${project}`);
+    await expect(page.getByTestId("disagreements").getByRole("link", { name: "Money is held as a float here" })).toHaveAttribute(
+        "title",
+        "Dealt with in triage",
+    );
+});
+
 for (const theme of ["light", "dark"] as const) {
     test(`a review with three models, live: a row for each model, and the log for one of them (${theme})`, async ({ page, admin }) => {
         test.slow();

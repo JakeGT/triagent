@@ -257,11 +257,12 @@ export type AnalyticsResult = ReturnType<typeof analyse>;
  * one, with the scan's outcome and merged findings, its models' tokens, costs and time added up.
  */
 export function scans(recs: readonly ReviewRecord[], costs: ReadonlyMap<string, number | null>) {
-    const out: { r: ReviewRecord; cost: number | null }[] = [];
+    /** `complete`: every model of it that used tokens has a price, so its cost is all of what it cost. */
+    const out: { r: ReviewRecord; cost: number | null; complete: boolean }[] = [];
     const byScan = new Map<string, ReviewRecord[]>();
     for (const r of recs) {
         const id = r.details.scan?.id;
-        if (!id) out.push({ r, cost: costs.get(r.id) ?? null });
+        if (!id) out.push({ r, cost: costs.get(r.id) ?? null, complete: (costs.get(r.id) ?? null) !== null });
         else byScan.set(id, [...(byScan.get(id) ?? []), r]);
     }
     for (const [id, group] of byScan) {
@@ -269,6 +270,13 @@ export function scans(recs: readonly ReviewRecord[], costs: ReadonlyMap<string, 
         const scan = lead.details.scan as NonNullable<ReviewRecord["details"]["scan"]>;
         const known = group.map((r) => r.tokens).filter((t): t is NonNullable<ReviewRecord["tokens"]> => t !== null);
         const priced = group.map((r) => costs.get(r.id) ?? null).filter((c): c is number => c !== null);
+        // Its models ran at once, so the review took from its start to its end, not their times added up. A model
+        // run again later (an attempt) took its own time on top. A record from before reviews said when they started
+        // has only the models' own times to add.
+        const began = Date.parse(lead.details.startedAt ?? "");
+        const ended = Date.parse(lead.at);
+        const again = group.filter((r) => r.details.attempt).reduce((n, r) => n + (r.details.runSeconds ?? 0), 0);
+        const wall = Number.isFinite(began) && Number.isFinite(ended) && ended >= began ? Math.round((ended - began) / 1000) + again : null;
         out.push({
             r: {
                 ...lead,
@@ -287,7 +295,7 @@ export function scans(recs: readonly ReviewRecord[], costs: ReadonlyMap<string, 
                     ...lead.details,
                     // Only a time some model recorded: none at all isn't a run of 0 seconds.
                     ...(group.some((r) => r.details.runSeconds !== undefined)
-                        ? { runSeconds: group.reduce((n, r) => n + (r.details.runSeconds ?? 0), 0) }
+                        ? { runSeconds: wall ?? group.reduce((n, r) => n + (r.details.runSeconds ?? 0), 0) }
                         : {}),
                     ...(scan.findings !== null
                         ? { findings: { ...(lead.details.findings ?? { bySeverity: zeroes() }), total: scan.findings } }
@@ -295,6 +303,7 @@ export function scans(recs: readonly ReviewRecord[], costs: ReadonlyMap<string, 
                 },
             },
             cost: priced.length ? priced.reduce((a, b) => a + b, 0) : null,
+            complete: priced.length > 0 && group.every((r) => !r.tokens?.total || (costs.get(r.id) ?? null) !== null),
         });
     }
     return out;
@@ -314,10 +323,15 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
     const prs = new Map<string, number>();
     let runs = 0;
     let cost = 0;
+    // Averages (a review, a pull request, a finding) are over the reviews whose whole cost is known: one with
+    // a model that has no price cost more than its figure says, so it would pull them down.
+    let wholeCost = 0;
     let priced = 0;
     let pricedFindings = 0;
     let findings = 0;
     const costs = new Map<string, number | null>();
+    const partly = new Set<string>();
+    const kindWhole = new Map<string, { cost: number; findings: number }>();
 
     const group = (which: "model" | "kind", key: string): ReviewGroup => {
         let g = groups[which].get(key);
@@ -382,15 +396,21 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
     // Each review once: a review run with several models is one scan, however many records it has.
     // Reviews as people count them (a run with several models is one), merged once.
     const merged = scans(recs, costs);
-    for (const { r, cost: c } of merged) {
+    for (const { r, cost: c, complete } of merged) {
         const found = r.status === "done" || r.status === "partial" ? (r.details.findings?.total ?? 0) : 0;
         byStatus[r.status]++;
         if (r.source === "run") runs++;
         findings += found;
-        if (c !== null) {
-            cost += c;
+        if (c !== null) cost += c;
+        if (c !== null && !complete) partly.add(r.id);
+        if (c !== null && complete) {
+            wholeCost += c;
             priced++;
             pricedFindings += found;
+            const ofKind = kindWhole.get(r.kind) ?? { cost: 0, findings: 0 };
+            ofKind.cost += c;
+            ofKind.findings += found;
+            kindWhole.set(r.kind, ofKind);
             if (r.kind === "pr" && r.details.prNumber !== undefined) {
                 const k = `${r.projectId}:${r.details.prNumber}`;
                 prs.set(k, (prs.get(k) ?? 0) + c);
@@ -421,12 +441,17 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
         costs.set(r.id, c);
     }
 
+    const perFinding = (which: "model" | "kind", g: ReviewGroup) => {
+        if (which === "model") return g.cost !== null && g.findings ? g.cost / g.findings : null;
+        const whole = kindWhole.get(g.key);
+        return whole?.findings ? whole.cost / whole.findings : null;
+    };
     const finish = (which: "model" | "kind") =>
         [...groups[which].values()]
             .map((g) => ({
                 ...g,
                 medianRunSeconds: median(runTimes[which].get(g.key) ?? []),
-                costPerFinding: g.cost !== null && g.findings ? g.cost / g.findings : null,
+                costPerFinding: perFinding(which, g),
             }))
             .sort((a, b) => b.reviews - a.reviews || a.key.localeCompare(b.key));
 
@@ -450,6 +475,8 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             tokens: r.tokens?.total ?? null,
             tokensEstimated: Boolean(r.details.estimatedTokens),
             cost: costs.get(r.id) ?? null,
+            /** Some of its models have no price: it cost more than `cost`. */
+            costPartial: partly.has(r.id),
             findings: r.details.findings?.total ?? null,
             /** The run it was, for one run on the server since runs said (its page has each model side by side). */
             runId: r.source === "run" ? (r.details.scan?.id ?? r.details.jobId ?? null) : null,
@@ -466,12 +493,14 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
             tokens,
             findings,
             cost: {
-                total: priced ? cost : null,
+                total: priced || partly.size ? cost : null,
                 pricedReviews: priced,
-                perReview: priced ? cost / priced : null,
+                /** Reviews with a price for some of their models only: their known cost is in `total`, and in no average. */
+                partlyPriced: partly.size,
+                perReview: priced ? wholeCost / priced : null,
                 perPr: prCosts.length ? prCosts.reduce((a, b) => a + b, 0) / prCosts.length : null,
                 prs: prCosts.length,
-                perFinding: pricedFindings ? cost / pricedFindings : null,
+                perFinding: pricedFindings ? wholeCost / pricedFindings : null,
             },
             series,
             byModel: finish("model"),
@@ -847,6 +876,13 @@ export interface ModelRow {
     acceptanceRate: number | null;
     costPerFinding: number | null;
     costPerAccepted: number | null;
+    /**
+     * What its reviews with other models would have been without it: how many there were, the findings
+     * only it found that were rated critical or high, those since accepted, and how much sooner those
+     * reviews would have ended (it was the last to finish in `slowestIn` of them, by `secondsSaved` in all),
+     * and what it cost in them (null without a price).
+     */
+    without: { reviews: number; serious: number; accepted: number; slowestIn: number; secondsSaved: number; cost: number | null };
 }
 
 /**
@@ -892,6 +928,7 @@ function modelsSection(
                 acceptanceRate: null,
                 costPerFinding: null,
                 costPerAccepted: null,
+                without: { reviews: 0, serious: 0, accepted: 0, slowestIn: 0, secondsSaved: 0, cost: null },
                 runTimes: [],
                 labelCounts: new Map(),
             };
@@ -932,6 +969,41 @@ function modelsSection(
         if ((r.status === "done" || r.status === "partial") && r.details.runSeconds !== undefined) m.runTimes.push(r.details.runSeconds);
     }
 
+    // Each review with several models: who took part, and who it waited for. Its models run at once, so it
+    // ends when the slowest does; without that one, it would have ended when the next slowest did.
+    const together = new Map<string, { model: string; seconds: number | null; cost: number | null; again: boolean }[]>();
+    for (const r of recs) {
+        const id = r.details.scan?.id;
+        if (!id || !r.model) continue;
+        together.set(id, [
+            ...(together.get(id) ?? []),
+            {
+                model: r.model,
+                seconds: r.details.runSeconds ?? null,
+                cost: costOf(r.tokens, input.price(r.model)),
+                // A model run again later is the same model of the same review: its cost counts, its time doesn't.
+                again: Boolean(r.details.attempt),
+            },
+        ]);
+    }
+    for (const all of together.values()) {
+        const parts = all.filter((x) => !x.again);
+        if (parts.length < 2) continue;
+        for (const key of new Set(parts.map((x) => x.model))) row(key, null).without.reviews++;
+        for (const x of all) {
+            const w = row(x.model, null).without;
+            if (x.cost !== null) w.cost = (w.cost ?? 0) + x.cost;
+        }
+        const timed = parts
+            .flatMap((x) => (x.seconds === null ? [] : [{ model: x.model, seconds: x.seconds }]))
+            .sort((a, b) => b.seconds - a.seconds);
+        const [slowest, next] = timed;
+        if (timed.length !== parts.length || !slowest || !next || slowest.seconds === next.seconds) continue;
+        const w = row(slowest.model, null).without;
+        w.slowestIn++;
+        w.secondsSaved += slowest.seconds - next.seconds;
+    }
+
     // Which models each review ran (by the provider's ids), including any that found nothing.
     const ran = new Map<string, Set<string>>();
     for (const r of history) {
@@ -960,7 +1032,11 @@ function modelsSection(
         if (p && s.outcome) p[s.outcome]++;
         if (s.scanModels < 2) continue;
         const found = finders.get(inScan(s)) ?? new Set([s.model]);
-        if (found.size === 1) m.unique++;
+        if (found.size === 1) {
+            m.unique++;
+            if (s.severity === "critical" || s.severity === "high") m.without.serious++;
+            if (s.outcome === "accepted") m.without.accepted++;
+        }
         // Against each other model of the same review: did it find this one too?
         for (const other of (s.scanId ? ran.get(s.scanId) : null) ?? found) {
             if (other === s.model) continue;
