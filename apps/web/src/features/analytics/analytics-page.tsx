@@ -1,5 +1,5 @@
 // Insights → Analytics: reviews and what they cost, each model side by side, findings and triage, for
-// every project or one, one branch or all, over a range. Seven tabs, each its own address
+// every project or one, one branch or all, over a range. Seven tabs (eight where the authors leaderboard is on), each its own address
 // (/analytics/models), so a tab only asks the server for what it shows. The scope lives in the URL
 // (?project=&branch=&days=) and is kept from tab to tab, so any view can be shared.
 
@@ -10,12 +10,14 @@ import { LoadError, LoadingRows } from "@/components/load-state";
 import { Page, PageHeader, PageMeta } from "@/components/page";
 import { analyticsQuery } from "@/lib/insights-queries";
 import type { AnalyticsSection, Days } from "@/lib/insights-types";
+import { originLevelQuery } from "@/lib/origins";
 import { branchesQuery, projectsQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { CommonIssuesTab } from "./common-issues-tab";
 import { InsightsTab } from "./insights-tab";
 import { ModelsTab } from "./models-tab";
+import { AuthorsTab, WhereFrom } from "./origins";
 import { OverviewTab } from "./overview-tab";
 import { ANALYTICS_TABS, type AnalyticsSearch, type AnalyticsTab, analyticsTab, RANGES } from "./search";
 import { FindingsSection, PerformanceSection, ReviewsSection, TriageSection } from "./sections";
@@ -30,6 +32,7 @@ const SECTIONS: Record<AnalyticsTab, AnalyticsSection[]> = {
     // Nothing: what's there is written from the figures, on the server.
     insights: [],
     "common-issues": [],
+    authors: [],
 };
 
 export function AnalyticsPage() {
@@ -39,6 +42,8 @@ export function AnalyticsPage() {
     const tab = analyticsTab((useParams({ strict: false }) as { tab?: string }).tab);
     const days = search.days ?? 30;
     const projects = useQuery(projectsQuery(ws));
+    // The Authors tab is there only for workspaces whose admins turned the leaderboard on.
+    const leaderboard = useQuery(originLevelQuery(ws)).data?.level === "leaderboard";
     const branches = useQuery({ ...branchesQuery(ws, search.project ?? ""), enabled: Boolean(search.project) });
     const query = useQuery({
         ...analyticsQuery(ws, { project: search.project, branch: search.branch, days, sections: SECTIONS[tab] }),
@@ -109,7 +114,7 @@ export function AnalyticsPage() {
             {/* Links, not buttons: each tab is a page of its own, and the browser's back button goes between them. */}
             <nav aria-label="Analytics" className="-mb-2 overflow-x-auto border-b" data-testid="analytics-tabs">
                 <ul className="flex min-w-max gap-1">
-                    {ANALYTICS_TABS.map((t) => (
+                    {ANALYTICS_TABS.filter((t) => t.id !== "authors" || leaderboard || tab === "authors").map((t) => (
                         <li key={t.id}>
                             <Link
                                 to="/w/$ws/analytics/$tab"
@@ -134,6 +139,8 @@ export function AnalyticsPage() {
                 <InsightsTab search={search} scope={scope} />
             ) : tab === "common-issues" ? (
                 <CommonIssuesTab search={search} />
+            ) : tab === "authors" ? (
+                <AuthorsTab search={search} />
             ) : query.isError ? (
                 <LoadError error={query.error} onRetry={() => query.refetch()} title="Couldn't load analytics" />
             ) : !query.data ? (
@@ -163,7 +170,12 @@ export function AnalyticsPage() {
                         </>
                     )}
                     {tab === "models" && <ModelsTab a={query.data} />}
-                    {tab === "findings" && <FindingsSection a={query.data} />}
+                    {tab === "findings" && (
+                        <>
+                            <FindingsSection a={query.data} />
+                            <WhereFrom search={search} />
+                        </>
+                    )}
                     {tab === "triage" && <TriageSection a={query.data} />}
                 </div>
             )}

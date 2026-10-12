@@ -19,6 +19,8 @@ export const ANALYTICS_TABS = [
     { id: "findings", label: "Findings" },
     { id: "triage", label: "Triage & people" },
     { id: "common-issues", label: "Common issues" },
+    // Only shown when the workspace's admins have turned the leaderboard on (Settings → Analysis).
+    { id: "authors", label: "Authors" },
     { id: "insights", label: "Insights" },
 ] as const;
 export type AnalyticsTab = (typeof ANALYTICS_TABS)[number]["id"];

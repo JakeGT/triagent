@@ -522,6 +522,46 @@ export interface PatternFinding {
     addedAt: string;
 }
 
+/** The commit that last changed a finding's lines, and who wrote it (see migration 0013). */
+export interface FindingOrigin {
+    workspaceId: string;
+    projectId: string;
+    branch: string;
+    findingId: string;
+    commit: string;
+    /** The commit's first line. */
+    headline: string;
+    authoredAt: string;
+    authorName: string;
+    /** The author's GitHub login, when GitHub knows the account. */
+    authorLogin: string | null;
+    /** The member of the workspace the author is, when one matches. */
+    memberId: string | null;
+    prNumber: number | null;
+    prTitle: string | null;
+}
+
+/** The last time a branch's findings were traced to commits. */
+export interface OriginScan {
+    workspaceId: string;
+    projectId: string;
+    branch: string;
+    /** The commit blamed: the report's. */
+    commit: string | null;
+    status: "running" | "done" | "failed";
+    startedAt: string;
+    finishedAt: string | null;
+    /** Files looked at, findings traced, and findings that couldn't be (no lines, or a file GitHub couldn't blame). */
+    files: number;
+    traced: number;
+    skipped: number;
+    error: string | null;
+    /** Lines of the files looked at that each author last changed, by author key (domain/origins.ts). */
+    lines: Record<string, number>;
+    /** Each author key's name and login, as last seen. */
+    authors: Record<string, { name: string; login: string | null; memberId: string | null }>;
+}
+
 /** A runner process, as last seen by the server. */
 export interface RunnerRecord {
     id: string;
@@ -673,6 +713,17 @@ export interface Repos {
         /** Every finding of `from` goes under `to`. */
         move(from: string, to: string): Promise<void>;
         renameBranch(projectId: string, from: string, to: string): Promise<void>;
+    };
+    origins: {
+        forBranch(projectId: string, branch: string): Promise<FindingOrigin[]>;
+        get(projectId: string, branch: string, findingId: string): Promise<FindingOrigin | null>;
+        /** A branch's findings' origins, all at once: what was there before goes. */
+        replace(projectId: string, branch: string, rows: readonly FindingOrigin[]): Promise<void>;
+        scan(projectId: string, branch: string): Promise<OriginScan | null>;
+        putScan(scan: OriginScan): Promise<void>;
+        renameBranch(projectId: string, from: string, to: string): Promise<void>;
+        /** Forget everything traced in a workspace (it turned this off). */
+        clear(workspaceId: string): Promise<void>;
     };
     settings: {
         get(workspaceId: string, projectId: string | null, key: string): Promise<SettingRecord | null>;

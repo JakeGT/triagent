@@ -1,14 +1,15 @@
 // A project's common issues (services/patterns.ts): the kinds of problem reviews keep finding there, with
 // what's under each on a branch; asking the analysis model to group a branch's findings; people's own
-// changes; and likely false positives.
+// changes; likely false positives; and where findings came from (services/origins.ts).
 
 import { CATEGORIES } from "@triagent/shared";
 import { z } from "zod";
 import { MAX_GUIDANCE, MAX_SUMMARY, MAX_TITLE } from "../domain/patterns.ts";
 import { json, type Route, route } from "../http/route.ts";
 import type { Access } from "../services/accounts.ts";
+import { ORIGIN_LEVELS } from "../services/origins.ts";
 import type { Project } from "../store/types.ts";
-import { BranchQuery, P } from "./common.ts";
+import { BranchQuery, P, W } from "./common.ts";
 
 const workspace = (access: Access | null) => (access as Access).workspace;
 const project = (p: Project | null) => p as Project;
@@ -131,6 +132,64 @@ export const patternRoutes: Route[] = [
                 await services.patterns.findFalsePositives(actor, workspace(access), proj, services.reports.branchOf(proj, query.branch)),
                 202,
             );
+        },
+    }),
+    // ---- where findings came from ---------------------------------------------------------------
+    route({
+        method: "GET",
+        path: `${W}/settings/origins`,
+        scope: "workspace",
+        permission: "read",
+        tag: "Settings",
+        summary: "Whether this workspace traces findings to the commits behind them, and whether it shows a leaderboard of authors",
+        async handler({ services, access }) {
+            return json({ level: await services.origins.level(services.store, workspace(access).id), levels: ORIGIN_LEVELS });
+        },
+    }),
+    route({
+        method: "PUT",
+        path: `${W}/settings/origins`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "Turn tracing findings to commits off or on, or on with the authors leaderboard",
+        description:
+            "`off`: nothing is asked of GitHub, and what was traced is deleted. `on`: each finding's commit, the age of the code and the pull request it came in by, and a suggested assignee. `leaderboard`: also findings counted by author, for everyone in the workspace.",
+        body: z.object({ level: z.enum(ORIGIN_LEVELS) }).strict(),
+        async handler({ services, access, body, actor }) {
+            return json(await services.origins.save(actor, workspace(access), body.level));
+        },
+    }),
+    route({
+        method: "GET",
+        path: `${P}/origins`,
+        scope: "project",
+        permission: "read",
+        tag: "Common issues",
+        summary:
+            "Where a branch's findings came from: the age of the code behind them, the pull requests, and (if the workspace shows it) the authors",
+        description:
+            "From Git blame at the report's commit: the newest commit to change a finding's lines. `age` counts the open findings by how old that code is, `pulls` the pull requests behind the most. `authors` is null unless the workspace's level is `leaderboard`. `scan` is the last tracing (running, done or failed); `stale` when the report has moved on since. Blame names whoever last changed a line, which isn't always who wrote the problem.",
+        query: BranchQuery,
+        async handler({ services, access, project: p, query }) {
+            const proj = project(p);
+            return json(await services.origins.summary(workspace(access), proj, services.reports.branchOf(proj, query.branch)));
+        },
+    }),
+    route({
+        method: "POST",
+        path: `${P}/origins`,
+        scope: "project",
+        permission: "triage",
+        tag: "Common issues",
+        summary: "Trace a branch's findings to the commits behind them, by asking GitHub for the blame of each file",
+        description:
+            "Happens by itself after each review once the workspace turns it on. Returns the scan, `running` until it's done. 409 when the workspace hasn't turned it on, the project isn't connected to GitHub, or the report doesn't say which commit it's of.",
+        query: BranchQuery,
+        async handler({ services, access, project: p, query }) {
+            const proj = project(p);
+            const scan = await services.origins.trace(workspace(access), proj, services.reports.branchOf(proj, query.branch));
+            return json({ ...scan, lines: undefined, authors: undefined }, 202);
         },
     }),
 ];

@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { ChangedElsewhere } from "@/components/changed-elsewhere";
-import { CheckField, Field, FieldError, NativeSelect } from "@/components/field";
+import { CheckField, type Choice, ChoiceField, Field, FieldError, NativeSelect } from "@/components/field";
 import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
 import { Button } from "@/components/ui/button";
@@ -14,10 +14,76 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { analysisKeys, analysisSettingsQuery, type AnalysisSettings as Settings } from "@/lib/analysis";
 import { api, errorMessage, paths } from "@/lib/api";
 import { useDraft } from "@/lib/drafts";
+import { type OriginLevel, originKeys, originLevelQuery, saveOriginLevel } from "@/lib/origins";
+import { keys } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
 import { ReadOnlyNote, SettingsPage, SettingsSection, StatusNote } from "./settings-page";
 
 type Draft = Pick<Settings, "model" | "afterReview">;
+
+const LEVELS: readonly Choice<OriginLevel>[] = [
+    { value: "off", label: "Off", hint: "Nothing is asked of GitHub. Turning it off deletes what was traced." },
+    {
+        value: "on",
+        label: "Trace findings to commits",
+        hint: "Each finding shows the commit that last changed its lines, and suggests its author as the assignee. Analytics → Findings shows how old that code is, and the pull requests behind the most findings.",
+    },
+    {
+        value: "leaderboard",
+        label: "Also show an authors leaderboard",
+        hint: "Analytics → Authors counts open findings by who last changed the code, for everyone in the workspace. Good fun in a team that wants it; leave it off in one that doesn't.",
+    },
+];
+
+/** Where findings came from: off, on, or on with the leaderboard. Saved by itself: it isn't about the model. */
+function OriginsLevel() {
+    const { ws, can } = useWorkspace();
+    const queryClient = useQueryClient();
+    const query = useQuery(originLevelQuery(ws));
+    const form = useDraft<OriginLevel>(query.data?.level);
+    const save = useMutation({
+        mutationFn: (level: OriginLevel) => saveOriginLevel(ws, level),
+        onSuccess: async (v) => {
+            form.saved(v.level);
+            queryClient.setQueryData(originKeys.level(ws), { level: v.level });
+            await queryClient.invalidateQueries({ queryKey: keys.ws(ws) });
+            toast.success(v.level === "off" ? "Tracing turned off, and what was traced deleted." : "Saved.");
+        },
+    });
+    if (form.draft === undefined) return null;
+    const level = form.draft;
+    return (
+        <form
+            onSubmit={(e) => {
+                e.preventDefault();
+                save.mutate(level);
+            }}
+        >
+            <SettingsSection
+                title="Where findings came from"
+                description="Git blame, asked of GitHub at each report's commit: who last changed a finding's lines, and when. Authors are kept as Git names and GitHub logins; email addresses aren't kept. Blame names the last person to touch a line, which isn't always who wrote the problem."
+            >
+                <ChoiceField
+                    legend="Trace findings to commits"
+                    hideLegend
+                    name="origins"
+                    value={level}
+                    choices={LEVELS}
+                    onChange={(v) => form.setDraft(v)}
+                    disabled={!can("configure")}
+                />
+                <FieldError message={save.error ? errorMessage(save.error) : null} />
+                {can("configure") && (
+                    <FormActions>
+                        <Button type="submit" disabled={save.isPending || !form.dirty}>
+                            {save.isPending ? "Saving…" : "Save tracing"}
+                        </Button>
+                    </FormActions>
+                )}
+            </SettingsSection>
+        </form>
+    );
+}
 
 export function AnalysisSettings() {
     const { ws, can } = useWorkspace();
@@ -140,6 +206,7 @@ export function AnalysisSettings() {
                             </FormActions>
                         )}
                     </form>
+                    <OriginsLevel />
                 </>
             )}
         </SettingsPage>

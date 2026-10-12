@@ -130,6 +130,14 @@ const line = (x: {
 }) =>
     `- ${x.id} [${x.severity}/${x.category}/${x.status}${x.assignee ? ` @${x.assignee}` : ""}] \`${x.path}${x.startLine ? `:${x.startLine}` : ""}\` — ${x.title}${x.foundBy ? ` (found by ${x.foundBy.join(", ")}${x.lowerConfidence ? ": lower confidence" : ""})` : ""}`;
 
+/** The commit behind an issue's lines, for workspaces that trace them: where to look for why the code is as it is. */
+function originText(
+    o: { commit: string; headline: string; authoredAt: string; author: string; pr: { number: number } | null } | null,
+): string {
+    if (!o) return "";
+    return `\n\n**Lines last changed:** ${o.authoredAt.slice(0, 10)} by ${o.author.replace(/[\r\n`*_[\]]/g, " ")} in ${o.commit.slice(0, 7)}${o.pr ? ` (pull request #${o.pr.number})` : ""}`;
+}
+
 /** What an issue's common issue adds for whoever is about to fix it: there are others like it, and how they're avoided. */
 function commonIssueText(c: { id: string; title: string; summary: string; guidance: string } | null): string {
     if (!c) return "";
@@ -281,7 +289,11 @@ export const TOOLS: Tool[] = [
             const { ref, view } = await viewOf(ctx, args);
             const issue = view.getIssue(String(args.id));
             const commonIssue = await ctx.services.patterns.forIssue(ref.project, ref.branch, issue.id);
-            return { text: issueMarkdown(issue, view.branch) + commonIssueText(commonIssue), data: { ...issue, commonIssue } };
+            const origin = await ctx.services.origins.forIssue(ref.project, ref.branch, issue.id);
+            return {
+                text: issueMarkdown(issue, view.branch) + originText(origin) + commonIssueText(commonIssue),
+                data: { ...issue, commonIssue, origin },
+            };
         },
     }),
     tool({

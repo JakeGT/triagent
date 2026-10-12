@@ -21,6 +21,7 @@ import type {
     ApiToken,
     ArchivedReport,
     AuditRow,
+    FindingOrigin,
     FindingSource,
     GithubDelivery,
     GithubInstallation,
@@ -28,6 +29,7 @@ import type {
     Job,
     Membership,
     ModelGrant,
+    OriginScan,
     Pattern,
     PatternFinding,
     Project,
@@ -389,6 +391,37 @@ const toPatternFinding = (r: Row): PatternFinding => ({
     title: r.title,
     severity: r.severity,
     addedAt: iso(r.added_at),
+});
+
+const toOrigin = (r: Row): FindingOrigin => ({
+    workspaceId: r.workspace_id,
+    projectId: r.project_id,
+    branch: r.branch,
+    findingId: r.finding_id,
+    commit: r.commit_sha,
+    headline: r.headline,
+    authoredAt: iso(r.authored_at),
+    authorName: r.author_name,
+    authorLogin: r.author_login,
+    memberId: r.member_id,
+    prNumber: r.pr_number,
+    prTitle: r.pr_title,
+});
+
+const toOriginScan = (r: Row): OriginScan => ({
+    workspaceId: r.workspace_id,
+    projectId: r.project_id,
+    branch: r.branch,
+    commit: r.commit_sha,
+    status: r.status,
+    startedAt: iso(r.started_at),
+    finishedAt: isoOrNull(r.finished_at),
+    files: r.files,
+    traced: r.traced,
+    skipped: r.skipped,
+    error: r.error,
+    lines: r.lines ?? {},
+    authors: r.authors ?? {},
 });
 
 const toRunner = (r: Row): RunnerRecord => ({
@@ -1081,6 +1114,80 @@ export class PostgresStore implements Store {
                       and exists (select 1 from pattern_findings f
                                   where f.project_id = t.project_id and f.branch = ${from} and f.finding_id = t.finding_id)`;
                 await sql`update pattern_findings set branch = ${to} where project_id = ${projectId} and branch = ${from}`;
+            }),
+    };
+
+    origins: Repos["origins"] = {
+        forBranch: async (projectId, branch) =>
+            (await this.rows((sql) => sql`select * from finding_origins where project_id = ${projectId} and branch = ${branch}`)).map(
+                toOrigin,
+            ),
+        get: async (projectId, branch, findingId) =>
+            first(
+                await this.rows(
+                    (sql) =>
+                        sql`select * from finding_origins where project_id = ${projectId} and branch = ${branch} and finding_id = ${findingId}`,
+                ),
+                toOrigin,
+            ),
+        replace: (projectId, branch, rows) =>
+            this.write(async (sql) => {
+                await sql`delete from finding_origins where project_id = ${projectId} and branch = ${branch}`;
+                for (let i = 0; i < rows.length; i += 500) {
+                    const batch = rows.slice(i, i + 500).map((r) => ({
+                        workspace_id: r.workspaceId,
+                        project_id: r.projectId,
+                        branch: r.branch,
+                        finding_id: r.findingId,
+                        commit_sha: r.commit,
+                        headline: r.headline,
+                        authored_at: r.authoredAt,
+                        author_name: r.authorName,
+                        author_login: r.authorLogin,
+                        member_id: r.memberId,
+                        pr_number: r.prNumber,
+                        pr_title: r.prTitle,
+                    }));
+                    await sql`insert into finding_origins ${sql(batch)} on conflict (project_id, branch, finding_id) do nothing`;
+                }
+            }),
+        scan: async (projectId, branch) =>
+            first(
+                await this.rows((sql) => sql`select * from origin_scans where project_id = ${projectId} and branch = ${branch}`),
+                toOriginScan,
+            ),
+        putScan: (scan) =>
+            this.upsert(
+                "origin_scans",
+                {
+                    workspace_id: scan.workspaceId,
+                    project_id: scan.projectId,
+                    branch: scan.branch,
+                    commit_sha: scan.commit,
+                    status: scan.status,
+                    started_at: scan.startedAt,
+                    finished_at: scan.finishedAt,
+                    files: scan.files,
+                    traced: scan.traced,
+                    skipped: scan.skipped,
+                    error: scan.error,
+                    lines: json(this.sql, scan.lines),
+                    authors: json(this.sql, scan.authors),
+                },
+                ["project_id", "branch"],
+            ),
+        renameBranch: (projectId, from, to) =>
+            this.write(async (sql) => {
+                // What's there under the new name gives way to this branch's.
+                await sql`delete from finding_origins where project_id = ${projectId} and branch = ${to}`;
+                await sql`update finding_origins set branch = ${to} where project_id = ${projectId} and branch = ${from}`;
+                await sql`delete from origin_scans where project_id = ${projectId} and branch = ${to}`;
+                await sql`update origin_scans set branch = ${to} where project_id = ${projectId} and branch = ${from}`;
+            }),
+        clear: (workspaceId) =>
+            this.write(async (sql) => {
+                await sql`delete from finding_origins where workspace_id = ${workspaceId}`;
+                await sql`delete from origin_scans where workspace_id = ${workspaceId}`;
             }),
     };
 

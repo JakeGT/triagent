@@ -116,7 +116,7 @@ test.describe("what a model writes about reviews", () => {
             await page.getByLabel("Model for analysis").selectOption(ids[3] as string);
             await page.getByLabel("Write what the review changed").check();
             await axe(page, `analysis settings (${theme})`);
-            await page.getByRole("button", { name: "Save" }).click();
+            await page.getByRole("button", { name: "Save", exact: true }).click();
             await expect(page.getByTestId("analysis-status")).toContainText("Ready: analyst-model is asked.");
             await shot(page, `analysis-settings-${theme}`);
 

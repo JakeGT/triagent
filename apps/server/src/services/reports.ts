@@ -199,6 +199,7 @@ export class Reports {
             await w.tx.triage.renameBranch(project.id, from, to);
             await w.tx.findingSources.renameBranch(project.id, from, to);
             await w.tx.patterns.renameBranch(project.id, from, to);
+            await w.tx.origins.renameBranch(project.id, from, to);
             await w.tx.reports.renameArchive(project.id, from, to);
             // Moving the default branch's report keeps it the default unless told otherwise.
             // The project as it is now: another change may have saved it since this request loaded it.

@@ -14,6 +14,7 @@ import type {
     ApiToken,
     ArchivedReport,
     AuditRow,
+    FindingOrigin,
     FindingSource,
     GithubDelivery,
     GithubInstallation,
@@ -22,6 +23,7 @@ import type {
     LogLine,
     Membership,
     ModelGrant,
+    OriginScan,
     Page,
     Pattern,
     PatternFinding,
@@ -187,6 +189,8 @@ export class MemoryStore implements Store {
         findingSources: this.table<FindingSource>(),
         analyses: this.table<Analysis>(),
         patterns: this.table<Pattern>(),
+        origins: this.table<FindingOrigin>(),
+        originScans: this.table<OriginScan>(),
         patternFindings: this.table<PatternFinding>(),
         instanceSettings: this.table<{ value: unknown }>(),
         modelGrants: this.table<ModelGrant>(),
@@ -283,6 +287,7 @@ export class MemoryStore implements Store {
                 for (const s of this.t.findingSources.values()) if (s.workspaceId === id) this.t.findingSources.delete(sourceKey(s));
                 for (const a of this.t.analyses.values()) if (a.workspaceId === id) this.t.analyses.delete(a.id);
                 for (const p of this.t.patterns.values()) if (p.workspaceId === id) await this.patterns.delete(p.id);
+                await this.origins.clear(id);
                 for (const i of this.t.githubInstallations.values())
                     if (i.workspaceId === id) this.t.githubInstallations.delete(String(i.id));
                 this.t.modelGrants.delete(id);
@@ -330,6 +335,8 @@ export class MemoryStore implements Store {
                     }
                 for (const a of this.t.analyses.values()) if (a.projectId === id) this.t.analyses.delete(a.id);
                 for (const p of this.t.patterns.values()) if (p.projectId === id) this.t.patterns.delete(p.id);
+                for (const o of this.t.origins.values()) if (o.projectId === id) this.t.origins.delete(linkKey(o));
+                for (const o of this.t.originScans.values()) if (o.projectId === id) this.t.originScans.delete(key(o.projectId, o.branch));
                 for (const f of this.t.patternFindings.values()) if (f.projectId === id) this.t.patternFindings.delete(linkKey(f));
                 this.t.githubState.delete(id);
                 this.t.githubDeliveries.delete(id);
@@ -523,6 +530,42 @@ export class MemoryStore implements Store {
                     this.t.patternFindings.delete(linkKey(f));
                     this.t.patternFindings.set(linkKey({ ...f, branch: to }), { ...f, branch: to });
                 }
+            }),
+    };
+
+    origins: Repos["origins"] = {
+        forBranch: async (projectId, branch) => this.t.origins.values().filter((o) => o.projectId === projectId && o.branch === branch),
+        get: async (projectId, branch, findingId) => this.t.origins.get(linkKey({ projectId, branch, findingId })),
+        replace: (projectId, branch, rows) =>
+            this.write(() => {
+                for (const o of this.t.origins.values())
+                    if (o.projectId === projectId && o.branch === branch) this.t.origins.delete(linkKey(o));
+                for (const r of rows) this.t.origins.set(linkKey(r), r);
+            }),
+        scan: async (projectId, branch) => this.t.originScans.get(key(projectId, branch)),
+        putScan: (scan) => this.write(() => this.t.originScans.set(key(scan.projectId, scan.branch), scan)),
+        renameBranch: (projectId, from, to) =>
+            this.write(() => {
+                // What's there under the new name gives way to this branch's.
+                for (const o of this.t.origins.values())
+                    if (o.projectId === projectId && o.branch === to) this.t.origins.delete(linkKey(o));
+                for (const o of this.t.origins.values()) {
+                    if (o.projectId !== projectId || o.branch !== from) continue;
+                    this.t.origins.delete(linkKey(o));
+                    this.t.origins.set(linkKey({ ...o, branch: to }), { ...o, branch: to });
+                }
+                const scan = this.t.originScans.get(key(projectId, from));
+                this.t.originScans.delete(key(projectId, to));
+                if (scan) {
+                    this.t.originScans.delete(key(projectId, from));
+                    this.t.originScans.set(key(projectId, to), { ...scan, branch: to });
+                }
+            }),
+        clear: (workspaceId) =>
+            this.write(() => {
+                for (const o of this.t.origins.values()) if (o.workspaceId === workspaceId) this.t.origins.delete(linkKey(o));
+                for (const o of this.t.originScans.values())
+                    if (o.workspaceId === workspaceId) this.t.originScans.delete(key(o.projectId, o.branch));
             }),
     };
 

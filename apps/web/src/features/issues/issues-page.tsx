@@ -359,6 +359,20 @@ export function IssuesPage() {
                         onClear={() => filter({ ...search, pattern: undefined, page: undefined })}
                     />
                 )}
+                {search.author && (
+                    <div
+                        className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-md border bg-card px-3 py-2 text-sm"
+                        data-testid="by-author"
+                    >
+                        <p>
+                            <span className="text-muted-foreground">In code last changed by </span>
+                            <span className="font-medium">{search.author.replace(/^name:/, "")}</span>
+                        </p>
+                        <Button variant="outline" size="sm" onClick={() => filter({ ...search, author: undefined, page: undefined })}>
+                            <X /> Show every issue
+                        </Button>
+                    </div>
+                )}
                 {selectedIds.length > 0 && canTriage && (
                     <BulkBar
                         ids={selectedIds}

@@ -116,9 +116,17 @@ const GIT_ENV = {
     GIT_COMMITTER_EMAIL: "fake@example.test",
 };
 
-async function git(args: string[], cwd?: string): Promise<string> {
-    const { stdout } = await run("git", args, { cwd, env: GIT_ENV, maxBuffer: 50 * 1024 * 1024 });
+async function git(args: string[], cwd?: string, env: Record<string, string> = {}): Promise<string> {
+    const { stdout } = await run("git", args, { cwd, env: { ...GIT_ENV, ...env }, maxBuffer: 50 * 1024 * 1024 });
     return stdout.trim();
+}
+
+/** Who wrote a commit, and when: for tests of blame. */
+export interface CommitAuthor {
+    name: string;
+    email: string;
+    /** ISO time; now when not given. */
+    at?: string;
 }
 
 export class FakeGitHub {
@@ -132,6 +140,12 @@ export class FakeGitHub {
     readonly userTokens = new Map<string, string>();
     /** Organisation memberships: org → login → role (`GET /user/memberships/orgs/{org}`). */
     readonly orgRoles = new Map<string, Map<string, { role: "admin" | "member"; state: "active" | "pending" }>>();
+    /** GitHub accounts by the email address commits carry: a commit's author is a `user` only when it's here. */
+    readonly logins = new Map<string, string>();
+    /** The pull request a commit came in by, for blame (`associatedPullRequests`). */
+    readonly commitPulls = new Map<string, { number: number; title: string }>();
+    /** Files whose blame GraphQL fails for: a file too slow to blame takes its whole request with it. */
+    readonly unblameable = new Set<string>();
     /** Installation tokens revoked with `DELETE /installation/token`. */
     readonly revoked = new Set<string>();
     readonly oauthCodes = new Map<string, string>();
@@ -326,6 +340,7 @@ export class FakeGitHub {
         files: Record<string, string | null>,
         message = "Change",
         from?: string,
+        author?: CommitAuthor,
     ): Promise<string> {
         const repo = this.repo(fullName);
         if (!repo.gitDir) throw new Error(`${fullName} has no git repository (use gitRepo).`);
@@ -347,7 +362,17 @@ export class FakeGitHub {
             }
             // Every file given is committed, even one a .gitignore in the same commit names.
             await git(["add", "-A", "--force"], work);
-            await git(["-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", message], work);
+            await git(
+                ["-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", message],
+                work,
+                author
+                    ? {
+                          GIT_AUTHOR_NAME: author.name,
+                          GIT_AUTHOR_EMAIL: author.email,
+                          ...(author.at ? { GIT_AUTHOR_DATE: author.at, GIT_COMMITTER_DATE: author.at } : {}),
+                      }
+                    : {},
+            );
             const sha = await git(["rev-parse", "HEAD"], work);
             await git(["push", "--quiet", "--force", repo.gitDir, `HEAD:refs/heads/${branch}`], work);
             repo.branches.set(branch, sha);
@@ -672,6 +697,17 @@ export class FakeGitHub {
             res.writeHead(204);
             return res.end();
         }
+        if (p === "/graphql" && req.method === "POST") {
+            if (auth.kind === "none") return json(res, 401, { message: "Bad credentials" });
+            const v = (body.variables ?? {}) as Record<string, unknown>;
+            const repo = this.repos.get(`${String(v.owner)}/${String(v.name)}`);
+            if (!repo || !auth.canRead(repo))
+                return json(res, 200, { data: { repository: null }, errors: [{ message: "Could not resolve to a Repository." }] });
+            return this.blame(repo, String(v.oid), v).then(
+                (out) => json(res, 200, out),
+                (err: Error) => json(res, 502, { message: err.message }),
+            );
+        }
         m = /^\/repos\/([\w.-]+)\/([\w.-]+)(\/.*)?$/.exec(p);
 
         if (m) {
@@ -681,6 +717,62 @@ export class FakeGitHub {
             return this.repoApi(req, res, repo, m[3] ?? "", body, auth, paged, url);
         }
         return json(res, 404, { message: "Not Found" });
+    }
+
+    /** GraphQL's answer to domain/origins.ts `blameQuery`: `git blame` of each path asked for (`p0`, `p1`…) at `oid`. */
+    private async blame(repo: FakeRepo, oid: string, v: Record<string, unknown>): Promise<unknown> {
+        if (!repo.gitDir || !/^[0-9a-f]{40}$/.test(oid)) return { data: { repository: { object: null } } };
+        const paths = Object.keys(v)
+            .filter((k) => /^p\d+$/.test(k))
+            .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+            .map((k) => String(v[k]));
+        if (paths.some((p) => this.unblameable.has(p))) throw new Error("Something went wrong while executing your query.");
+        const object: Record<string, unknown> = {};
+        const errors: { message: string }[] = [];
+        for (const [i, file] of paths.entries()) {
+            let out: string;
+            try {
+                out = await git(["--git-dir", repo.gitDir, "blame", "--line-porcelain", oid, "--", file]);
+            } catch {
+                object[`f${i}`] = null;
+                errors.push({ message: `Could not blame ${file}.` });
+                continue;
+            }
+            // One record per line: its commit, then that commit's details, then the line itself after a tab.
+            const ranges: { startingLine: number; endingLine: number; commit: Record<string, unknown> }[] = [];
+            let at: { sha: string; line: number; name: string; email: string; time: number; summary: string } | null = null;
+            for (const row of out.split("\n")) {
+                const head = /^([0-9a-f]{40}) \d+ (\d+)/.exec(row);
+                if (head) at = { sha: head[1] as string, line: Number(head[2]), name: "", email: "", time: 0, summary: "" };
+                else if (!at) continue;
+                else if (row.startsWith("author ")) at.name = row.slice(7);
+                else if (row.startsWith("author-mail ")) at.email = row.slice(12).replace(/[<>]/g, "");
+                else if (row.startsWith("author-time ")) at.time = Number(row.slice(12));
+                else if (row.startsWith("summary ")) at.summary = row.slice(8);
+                else if (row.startsWith("\t")) {
+                    const last = ranges.at(-1);
+                    if (last && last.commit.oid === at.sha && last.endingLine === at.line - 1) last.endingLine = at.line;
+                    else {
+                        const login = this.logins.get(at.email);
+                        const pull = this.commitPulls.get(at.sha);
+                        ranges.push({
+                            startingLine: at.line,
+                            endingLine: at.line,
+                            commit: {
+                                oid: at.sha,
+                                authoredDate: new Date(at.time * 1000).toISOString(),
+                                messageHeadline: at.summary,
+                                author: { name: at.name, email: at.email, user: login ? { login } : null },
+                                associatedPullRequests: { nodes: pull ? [pull] : [] },
+                            },
+                        });
+                    }
+                    at = null;
+                }
+            }
+            object[`f${i}`] = { ranges };
+        }
+        return { data: { repository: { object } }, ...(errors.length ? { errors } : {}) };
     }
 
     private repoApi(
@@ -854,8 +946,15 @@ export class FakeGitHub {
                         files,
                         str("message") || "Change",
                         b.from ? str("from") : undefined,
+                        b.author ? (b.author as CommitAuthor) : undefined,
                     ),
                 });
+            case "/_fake/blame":
+                // Who GitHub knows a commit's author as, and the pull request a commit came in by.
+                for (const [email, login] of Object.entries((b.logins ?? {}) as Record<string, string>)) this.logins.set(email, login);
+                for (const [sha, pull] of Object.entries((b.pulls ?? {}) as Record<string, { number: number; title: string }>))
+                    this.commitPulls.set(sha, pull);
+                return json(res, 200, { ok: true });
             case "/_fake/pull":
                 return json(res, 200, await this.openPull(str("fullName"), b as never));
             case "/_fake/pat":

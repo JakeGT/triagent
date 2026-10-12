@@ -98,7 +98,8 @@ export class GitHubClient {
     async request<T>(method: string, path: string, body?: unknown): Promise<T> {
         // Only ever the API's own paths: the credential must never go anywhere else.
         if (!path.startsWith("/")) throw new GitHubError(0, "GitHub API paths start with /.");
-        const url = `${this.apiUrl}${path}`;
+        // GraphQL has one address: beside the REST API's on github.com, and at /api/graphql (not /api/v3) on GitHub Enterprise.
+        const url = path === "/graphql" ? `${this.apiUrl.replace(/\/api\/v3\/?$/, "/api")}/graphql` : `${this.apiUrl}${path}`;
         let res: Response;
         try {
             res = await fetch(url, {
@@ -125,6 +126,17 @@ export class GitHubClient {
             throw new GitHubError(res.status, `GitHub said ${res.status}: ${message}. ${this.hint(res.status)}`.trim());
         }
         return data as T;
+    }
+
+    /**
+     * A GraphQL query. Its `errors` come back with its `data` rather than thrown: one field failing (a
+     * file that can't be blamed, say) leaves the others' answers usable. No data at all is an error.
+     */
+    async graphql<T>(query: string, variables: Record<string, unknown>): Promise<{ data: T; errors: string[] }> {
+        const out = await this.request<{ data?: T | null; errors?: { message?: unknown }[] }>("POST", "/graphql", { query, variables });
+        const errors = (Array.isArray(out.errors) ? out.errors : []).map((e) => String(e?.message ?? "").slice(0, 200));
+        if (!out.data) throw new GitHubError(502, `GitHub couldn't answer: ${errors[0] ?? "it sent no data"}.`);
+        return { data: out.data, errors };
     }
 
     /**

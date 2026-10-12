@@ -340,6 +340,34 @@ function IssueView({ id }: { id: string }) {
                                 </Button>
                             )}
                         </div>
+                        {issue.origin && (
+                            <p
+                                className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+                                data-testid="issue-origin"
+                            >
+                                <span>
+                                    Lines last changed {timeAgo(issue.origin.authoredAt)} by {issue.origin.suggested ?? issue.origin.author}{" "}
+                                    in <span className="font-mono">{issue.origin.commit.slice(0, 7)}</span>
+                                    {issue.origin.pr ? ` (#${issue.origin.pr.number})` : ""}.
+                                </span>
+                                {assignee === null && issue.origin.suggested && issue.assignee !== issue.origin.suggested && (
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-6 px-2 text-xs"
+                                        onClick={() =>
+                                            void change(
+                                                { assignee: issue.origin?.suggested ?? null },
+                                                `Assigned to ${issue.origin?.suggested}.`,
+                                            )
+                                        }
+                                    >
+                                        Assign to {issue.origin.suggested}
+                                    </Button>
+                                )}
+                            </p>
+                        )}
                     </form>
 
                     <fieldset className="grid gap-field">

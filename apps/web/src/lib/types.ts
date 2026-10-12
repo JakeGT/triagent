@@ -182,6 +182,17 @@ export interface IssueDetail extends IssueSummary {
     tasks: { id: string; section: string; title: string }[];
     /** The common issue it's under (a kind of problem reviews keep finding here), with its advice. */
     commonIssue?: { id: string; title: string; summary: string; guidance: string } | null;
+    /** The commit that last changed its lines, in workspaces that trace findings to commits. */
+    origin?: {
+        commit: string;
+        headline: string;
+        authoredAt: string;
+        author: string;
+        login: string | null;
+        pr: { number: number; title: string } | null;
+        /** The author as a member of this workspace: who it could be assigned to. */
+        suggested: string | null;
+    } | null;
 }
 
 export interface Counts {

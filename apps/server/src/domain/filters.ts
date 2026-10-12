@@ -42,6 +42,11 @@ export interface IssueFilters {
      * filters turns it into `ids` first (services/patterns.ts `narrow`).
      */
     pattern: string;
+    /**
+     * Only findings in code this author last changed (an author's key: "@login", or "name:…"). Resolved to
+     * `ids` like `pattern` (services/origins.ts `narrow`), and only where the workspace has its leaderboard on.
+     */
+    author: string;
     sort: IssueSort;
     limit: number;
     offset: number;
@@ -120,6 +125,7 @@ export function parseFilters(input: Input, { maxLimit = 500, defaultLimit = 50 }
         lowerConfidence: flag(get("lowerConfidence", "lower_confidence"), "lowerConfidence"),
         ids: list(get("ids")),
         pattern: text(get("pattern"), 40, "pattern"),
+        author: text(get("author"), 120, "author").toLowerCase(),
         sort: oneOf([sort], ISSUE_SORTS, "sort")[0] as IssueSort,
         limit: whole(get("limit"), defaultLimit, 1, maxLimit, "limit"),
         offset: whole(get("offset"), 0, 0, 1_000_000, "offset"),
@@ -132,8 +138,9 @@ export function describeFilters(f: IssueFilters): string {
     for (const k of ["path", "q", "task", "assignee"] as const) if (f[k]) parts.push(`${k}=${f[k]}`);
     for (const k of ["hasSuggestion", "needsDiscussion", "duplicates", "adjusted", "lowerConfidence"] as const)
         if (f[k] !== null) parts.push(`${k}=${f[k]}`);
+    if (f.author) parts.push(`in code last changed by ${f.author.replace(/^name:/, "")}`);
     if (f.pattern) parts.push("under one common issue");
-    else if (f.ids.length) parts.push(`${f.ids.length} chosen id(s)`);
+    else if (f.ids.length && !f.author) parts.push(`${f.ids.length} chosen id(s)`);
     if (f.foundBy) parts.push(`found by at least ${f.foundBy} models`);
     if (f.model) parts.push(f.onlyModel ? `found only by ${f.model}` : `found by ${f.model}`);
     return parts.length ? ` for ${parts.join(", ")}` : "";

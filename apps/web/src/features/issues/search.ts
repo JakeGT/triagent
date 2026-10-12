@@ -51,6 +51,8 @@ export interface IssueSearch {
     onlyModel?: boolean;
     /** Only findings under this common issue (its id). */
     pattern?: string;
+    /** Only findings in code this author last changed (their key on the leaderboard: "@login" or "name:…"). */
+    author?: string;
     sort?: IssueSort;
     /** From 1. */
     page?: number;
@@ -106,6 +108,8 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
     // An id, as the server makes them: anything else would only be refused.
     const pattern = text(raw.pattern, 40);
     if (pattern && /^[\w-]+$/.test(pattern)) out.pattern = pattern;
+    const author = text(raw.author, 120);
+    if (author) out.author = author;
     const sort = text(raw.sort);
     if (sort && (ISSUE_SORTS as readonly string[]).includes(sort) && sort !== "priority") out.sort = sort as IssueSort;
     const page = Number(raw.page);
@@ -135,6 +139,7 @@ export function issueApiQuery(s: IssueSearch, pageSize = PAGE_SIZE): Record<stri
         model: s.model,
         onlyModel: s.model && s.onlyModel ? "true" : undefined,
         pattern: s.pattern,
+        author: s.author,
         sort: s.sort,
         limit: String(pageSize),
         offset: s.page && s.page > 1 ? String((s.page - 1) * pageSize) : undefined,
@@ -157,6 +162,7 @@ export function activeFilters(s: IssueSearch): number {
     if (s.foundBy) n++;
     if (s.model) n++;
     if (s.pattern) n++;
+    if (s.author) n++;
     return n;
 }
 

@@ -17,6 +17,7 @@ import { ModelSetup } from "./model-setup.ts";
 import type { Lookup } from "./model-urls.ts";
 import { Models } from "./models.ts";
 import { Oidc } from "./oidc.ts";
+import { Origins } from "./origins.ts";
 import { CommonIssues } from "./patterns.ts";
 import { Prices } from "./prices.ts";
 import { Projects } from "./projects.ts";
@@ -56,6 +57,8 @@ export interface Services {
     analyst: Analyst;
     /** A project's common issues, and likely false positives. */
     patterns: CommonIssues;
+    /** Where findings came from: the commits behind them, for workspaces that turn it on. */
+    origins: Origins;
     invites: Invites;
     /** The identity provider, when AUTH_MODE=oidc. */
     oidc: Oidc | null;
@@ -98,10 +101,12 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         ...(options.fetch ? { fetch: options.fetch } : {}),
     });
     // After automation's own look at a finished review: what the workspace asked to have written about it.
+    const origins = new Origins(core, github, reports, () => clock().getTime());
     const finished = runs.onFinished;
     runs.onFinished = (job, project) => {
         finished(job, project);
         analyst.reviewFinished(job);
+        origins.reviewFinished(job, project);
     };
     return {
         core,
@@ -125,6 +130,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         analytics,
         analyst,
         patterns: new CommonIssues(core, reports, analyst),
+        origins,
         github,
         runs,
         automation,

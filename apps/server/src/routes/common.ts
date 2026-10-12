@@ -40,6 +40,13 @@ export const IssueQuery = BranchQuery.extend({
         .describe("Only findings marked as lower confidence (one model found them, and the review asked for that), or only the others"),
     ids: z.string().optional().describe("Comma-separated issue ids"),
     pattern: z.string().max(40).optional().describe("Only findings under this common issue (its id: see …/patterns)"),
+    author: z
+        .string()
+        .max(120)
+        .optional()
+        .describe(
+            'Only findings in code this author last changed, by their key in …/origins ("@login" or "name:…"), where the workspace shows authors',
+        ),
     sort: z.enum(ISSUE_SORTS).optional(),
     limit: z.string().regex(/^\d+$/).optional(),
     offset: z.string().regex(/^\d+$/).optional(),
