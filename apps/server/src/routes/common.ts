@@ -39,6 +39,7 @@ export const IssueQuery = BranchQuery.extend({
         .optional()
         .describe("Only findings marked as lower confidence (one model found them, and the review asked for that), or only the others"),
     ids: z.string().optional().describe("Comma-separated issue ids"),
+    pattern: z.string().max(40).optional().describe("Only findings under this common issue (its id: see …/patterns)"),
     sort: z.enum(ISSUE_SORTS).optional(),
     limit: z.string().regex(/^\d+$/).optional(),
     offset: z.string().regex(/^\d+$/).optional(),

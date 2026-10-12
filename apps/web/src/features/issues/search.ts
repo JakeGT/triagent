@@ -49,6 +49,8 @@ export interface IssueSearch {
     /** Only findings this model found (its name in the review), and with `onlyModel`, that no other did. */
     model?: string;
     onlyModel?: boolean;
+    /** Only findings under this common issue (its id). */
+    pattern?: string;
     sort?: IssueSort;
     /** From 1. */
     page?: number;
@@ -101,6 +103,8 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
         // Means nothing without a model to be the only one.
         if (flag(raw.onlyModel) === true) out.onlyModel = true;
     }
+    const pattern = text(raw.pattern, 40);
+    if (pattern) out.pattern = pattern;
     const sort = text(raw.sort);
     if (sort && (ISSUE_SORTS as readonly string[]).includes(sort) && sort !== "priority") out.sort = sort as IssueSort;
     const page = Number(raw.page);
@@ -129,6 +133,7 @@ export function issueApiQuery(s: IssueSearch, pageSize = PAGE_SIZE): Record<stri
         foundBy: s.foundBy ? String(s.foundBy) : undefined,
         model: s.model,
         onlyModel: s.model && s.onlyModel ? "true" : undefined,
+        pattern: s.pattern,
         sort: s.sort,
         limit: String(pageSize),
         offset: s.page && s.page > 1 ? String((s.page - 1) * pageSize) : undefined,
@@ -150,6 +155,7 @@ export function activeFilters(s: IssueSearch): number {
     for (const k of FLAGS) if (s[k] !== undefined) n++;
     if (s.foundBy) n++;
     if (s.model) n++;
+    if (s.pattern) n++;
     return n;
 }
 

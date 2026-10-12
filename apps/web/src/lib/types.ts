@@ -180,6 +180,8 @@ export interface IssueDetail extends IssueSummary {
     duplicateOfTitle: string | null;
     updatedBy: string | null;
     tasks: { id: string; section: string; title: string }[];
+    /** The common issue it's under (a kind of problem reviews keep finding here), with its advice. */
+    commonIssue?: { id: string; title: string; summary: string; guidance: string } | null;
 }
 
 export interface Counts {

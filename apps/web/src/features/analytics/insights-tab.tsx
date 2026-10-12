@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { Markdown } from "@/components/markdown";
+import { SeverityMark } from "@/components/marks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +25,7 @@ import {
 import { errorMessage } from "@/lib/api";
 import { count } from "@/lib/insights-format";
 import type { Days } from "@/lib/insights-types";
+import { falsePositivesQuery, patternApi, patternKeys } from "@/lib/patterns";
 import { projectsQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
 import type { AnalyticsSearch } from "./search";
@@ -211,6 +213,97 @@ function LatestReview({ project, branch }: { project: string; branch: string }) 
     );
 }
 
+/** Open findings a model thinks the team would dismiss, going by what it has dismissed before. Suggestions: nothing is closed. */
+function LikelyFalsePositives({ project, branch }: { project: string; branch: string }) {
+    const { ws, can } = useWorkspace();
+    const queryClient = useQueryClient();
+    const { data } = useQuery(falsePositivesQuery(ws, project, branch));
+    const find = useMutation({
+        mutationFn: () => patternApi.findFalsePositives(ws, project, branch),
+        onSettled: () => queryClient.invalidateQueries({ queryKey: patternKeys.falsePositives(ws, project, branch) }),
+    });
+    if (!data) return null;
+    const a = data.analysis;
+    const looked = a?.status === "done";
+    return (
+        <Card title="Likely false positives">
+            <p className="max-w-measure text-sm text-muted-foreground">
+                Open findings on {branch} that look like ones this project has already dismissed, going by the reason given each time.
+                Suggestions to check: nothing is closed for you.
+            </p>
+            {data.dismissed === 0 ? (
+                <Caution>
+                    Nothing has been dismissed with a reason in this project yet, so there's nothing to learn from. Mark findings won't fix
+                    with a note saying why, and come back.
+                </Caution>
+            ) : a?.status === "running" ? (
+                <Writing analysis={a} />
+            ) : (
+                <>
+                    {looked && a.result?.warning && <Caution>{a.result.warning}</Caution>}
+                    {!looked && data.dismissed < data.enough && (
+                        <Caution>
+                            Only {data.dismissed} {data.dismissed === 1 ? "finding has" : "findings have"} been dismissed with a reason
+                            here. Suggestions drawn from fewer than {data.enough} are guesses.
+                        </Caution>
+                    )}
+                    {a?.status === "failed" && (
+                        <p className="text-sm text-muted-foreground" data-testid="analysis-failed">
+                            {a.error}
+                        </p>
+                    )}
+                    {looked &&
+                        (data.items.length ? (
+                            <ul className="grid gap-3" data-testid="false-positives">
+                                {data.items.map((x) => (
+                                    <li key={x.id} className="grid gap-1 border-t pt-3 text-sm first:border-t-0 first:pt-0">
+                                        <span className="flex flex-wrap items-baseline gap-x-2">
+                                            <SeverityMark severity={x.severity} />
+                                            <Link
+                                                to="/w/$ws/p/$project/issues/$issueId"
+                                                params={{ ws, project, issueId: x.id }}
+                                                search={{ branch } as never}
+                                                className="link"
+                                            >
+                                                {x.title}
+                                            </Link>
+                                        </span>
+                                        <span className="font-mono text-xs break-all text-muted-foreground">
+                                            {x.path}
+                                            {x.startLine ? `:${x.startLine}` : ""}
+                                        </span>
+                                        {x.why && <span>{x.why}</span>}
+                                        <span className="text-muted-foreground">
+                                            Like “{x.like.title}”, dismissed because: {x.like.reason}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="text-sm">None of the open findings it looked at seem to be cases like those.</p>
+                        ))}
+                    {looked && <WrittenBy analysis={a} />}
+                    {can("triage") &&
+                        (data.model.ready ? (
+                            <div>
+                                <Button variant="outline" size="sm" onClick={() => find.mutate()} disabled={find.isPending}>
+                                    {find.isPending ? "Asking…" : looked ? "Look again" : "Look for likely false positives"}
+                                </Button>
+                            </div>
+                        ) : (
+                            <NoModel model={data.model} />
+                        ))}
+                    {find.isError && (
+                        <p className="text-sm text-destructive" role="alert">
+                            {errorMessage(find.error)}
+                        </p>
+                    )}
+                </>
+            )}
+        </Card>
+    );
+}
+
 export function InsightsTab({ search, scope }: { search: AnalyticsSearch; scope: string }) {
     const { ws } = useWorkspace();
     const projects = useQuery(projectsQuery(ws));
@@ -223,13 +316,17 @@ export function InsightsTab({ search, scope }: { search: AnalyticsSearch; scope:
         >
             <Ask search={search} scope={scope} />
             {search.project && branch ? (
-                <LatestReview project={search.project} branch={branch} />
+                <>
+                    <LatestReview project={search.project} branch={branch} />
+                    <LikelyFalsePositives project={search.project} branch={branch} />
+                </>
             ) : search.project ? (
                 // A project is chosen: its default branch is on its way with the list of projects.
                 <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
                 <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground" data-testid="insights-note">
-                    Choose a project above to see what its latest review changed, and how that review's models compare.
+                    Choose a project above to see what its latest review changed, how that review's models compare, and which open findings
+                    look like ones already dismissed.
                 </p>
             )}
         </Section>

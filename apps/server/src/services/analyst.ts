@@ -86,7 +86,7 @@ export interface AnalystOptions {
 type Ready = { ready: true; model: ResolvedModel; id: string; label: string } | { ready: false; reason: string };
 
 /** What a piece of work is given to ask with: each call is one request, and its tokens are added up. */
-type Ask = (system: string, user: string) => Promise<string>;
+export type Ask = (system: string, user: string) => Promise<string>;
 
 const listed = (x: Pick<Issue, "severity" | "category" | "path" | "title">): ListedFinding => ({
     severity: x.severity,
@@ -147,6 +147,12 @@ export class Analyst {
             model: typeof value?.model === "string" ? value.model : null,
             afterReview: { ...DEFAULTS.afterReview, ...(value?.afterReview ?? {}) },
         };
+    }
+
+    /** Whether there's a model to ask now, and if not, why: what pages show beside what could be asked for. */
+    async model(workspace: Workspace): Promise<{ ready: true; label: string } | { ready: false; reason: string }> {
+        const chosen = await this.chosen(this.store, workspace);
+        return chosen.ready ? { ready: true, label: chosen.label } : { ready: false, reason: chosen.reason };
     }
 
     /** The model that would be asked now, with its key, or why nothing can be. Reveals a secret: never return it. */
@@ -236,7 +242,7 @@ export class Analyst {
         return failed;
     }
 
-    private async latest(workspace: Workspace, kind: AnalysisKind, subject: string): Promise<Analysis | null> {
+    async latest(workspace: Workspace, kind: AnalysisKind, subject: string): Promise<Analysis | null> {
         const [a] = await this.store.analyses.list({ workspaceId: workspace.id, kind, subject }, 1);
         return a ? this.settle(a) : null;
     }
@@ -252,7 +258,7 @@ export class Analyst {
      * Start a piece of writing: a row that's running, and `work` going on in the background until the row
      * is done or failed. Throws 409 when no model can be asked, saying why, and 429 past the hour's limit.
      */
-    private async begin(
+    async begin(
         actor: Actor,
         workspace: Workspace,
         what: Pick<Analysis, "kind" | "projectId" | "branch" | "subject" | "input">,

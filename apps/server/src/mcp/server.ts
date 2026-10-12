@@ -20,6 +20,7 @@ const INSTRUCTIONS = `Triagent holds Open Code Review findings for the projects 
 - Call list_projects and pass "project" to the other tools, matching the repository you're working in by its git remote. Most tools also take "branch" (default: the project's default branch).
 - To work through findings: claim_next_issue gives you the most urgent open, unassigned issue and marks it in progress for you, so several agents never pick the same one. When it's fixed, update_issue with status "resolved" and a note saying what you changed; if you stop, release_issue.
 - Pass "rev" from get_issue to update_issue: if someone changed the issue meanwhile, nothing is saved and you get the latest version.
+- Before writing or changing code in a project, call list_common_issues (with "path" for the files you'll touch): the mistakes reviews keep finding there, each with how to avoid it. An issue under one says so.
 - Issues flagged needsDiscussion need a person's decision first; don't fix them on your own.
 - To upload a report, create_upload_link and run the curl command it returns, so the report never passes through this conversation.`;
 

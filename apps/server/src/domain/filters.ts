@@ -37,6 +37,11 @@ export interface IssueFilters {
     /** Only findings marked as lower confidence (one model found them, and the review asked), or only the others. */
     lowerConfidence: boolean | null;
     ids: string[];
+    /**
+     * Only findings under this common issue. The view doesn't know which those are: whoever reads the
+     * filters turns it into `ids` first (services/patterns.ts `narrow`).
+     */
+    pattern: string;
     sort: IssueSort;
     limit: number;
     offset: number;
@@ -114,6 +119,7 @@ export function parseFilters(input: Input, { maxLimit = 500, defaultLimit = 50 }
         onlyModel: flag(get("onlyModel", "only_model"), "onlyModel") === true,
         lowerConfidence: flag(get("lowerConfidence", "lower_confidence"), "lowerConfidence"),
         ids: list(get("ids")),
+        pattern: text(get("pattern"), 40, "pattern"),
         sort: oneOf([sort], ISSUE_SORTS, "sort")[0] as IssueSort,
         limit: whole(get("limit"), defaultLimit, 1, maxLimit, "limit"),
         offset: whole(get("offset"), 0, 0, 1_000_000, "offset"),
@@ -126,7 +132,8 @@ export function describeFilters(f: IssueFilters): string {
     for (const k of ["path", "q", "task", "assignee"] as const) if (f[k]) parts.push(`${k}=${f[k]}`);
     for (const k of ["hasSuggestion", "needsDiscussion", "duplicates", "adjusted", "lowerConfidence"] as const)
         if (f[k] !== null) parts.push(`${k}=${f[k]}`);
-    if (f.ids.length) parts.push(`${f.ids.length} chosen id(s)`);
+    if (f.pattern) parts.push("under one common issue");
+    else if (f.ids.length) parts.push(`${f.ids.length} chosen id(s)`);
     if (f.foundBy) parts.push(`found by at least ${f.foundBy} models`);
     if (f.model) parts.push(f.onlyModel ? `found only by ${f.model}` : `found by ${f.model}`);
     return parts.length ? ` for ${parts.join(", ")}` : "";

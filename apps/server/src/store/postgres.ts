@@ -28,6 +28,8 @@ import type {
     Job,
     Membership,
     ModelGrant,
+    Pattern,
+    PatternFinding,
     Project,
     Repos,
     ReviewRecord,
@@ -360,6 +362,33 @@ const toAnalysis = (r: Row): Analysis => ({
     error: r.error,
     createdAt: iso(r.created_at),
     finishedAt: isoOrNull(r.finished_at),
+});
+
+const toPattern = (r: Row): Pattern => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    projectId: r.project_id,
+    title: r.title,
+    summary: r.summary,
+    guidance: r.guidance,
+    category: r.category,
+    hidden: r.hidden,
+    source: r.source,
+    createdBy: r.created_by,
+    createdAt: iso(r.created_at),
+    updatedBy: r.updated_by,
+    updatedAt: iso(r.updated_at),
+});
+
+const toPatternFinding = (r: Row): PatternFinding => ({
+    patternId: r.pattern_id,
+    projectId: r.project_id,
+    branch: r.branch,
+    findingId: r.finding_id,
+    path: r.path,
+    title: r.title,
+    severity: r.severity,
+    addedAt: iso(r.added_at),
 });
 
 const toRunner = (r: Row): RunnerRecord => ({
@@ -974,6 +1003,85 @@ export class PostgresStore implements Store {
                         limit ${limit}`,
                 )
             ).map(toAnalysis),
+    };
+
+    patterns: Repos["patterns"] = {
+        get: async (id) => first(await this.rows((sql) => sql`select * from patterns where id = ${id}`), toPattern),
+        put: (p) =>
+            this.upsert(
+                "patterns",
+                {
+                    id: p.id,
+                    workspace_id: p.workspaceId,
+                    project_id: p.projectId,
+                    title: p.title,
+                    summary: p.summary,
+                    guidance: p.guidance,
+                    category: p.category,
+                    hidden: p.hidden,
+                    source: p.source,
+                    created_by: p.createdBy,
+                    created_at: p.createdAt,
+                    updated_by: p.updatedBy,
+                    updated_at: p.updatedAt,
+                },
+                ["id"],
+            ),
+        delete: (id) =>
+            this.write(async (sql) => {
+                await sql`delete from patterns where id = ${id}`;
+            }),
+        forProject: async (projectId) =>
+            (await this.rows((sql) => sql`select * from patterns where project_id = ${projectId} order by created_at, id`)).map(toPattern),
+        findings: async (projectId, branch) =>
+            (
+                await this.rows(
+                    (sql) => sql`
+                        select * from pattern_findings
+                        where project_id = ${projectId} ${branch === undefined ? sql`` : sql`and branch = ${branch}`}`,
+                )
+            ).map(toPatternFinding),
+        link: (rows) =>
+            this.write(async (sql) => {
+                for (let i = 0; i < rows.length; i += 500) {
+                    const batch = rows.slice(i, i + 500).map((r) => ({
+                        pattern_id: r.patternId,
+                        project_id: r.projectId,
+                        branch: r.branch,
+                        finding_id: r.findingId,
+                        path: r.path,
+                        title: r.title,
+                        severity: r.severity,
+                        added_at: r.addedAt,
+                    }));
+                    await sql`
+                        insert into pattern_findings ${sql(batch)}
+                        on conflict (project_id, branch, finding_id)
+                        do update set pattern_id = excluded.pattern_id, path = excluded.path, title = excluded.title,
+                                      severity = excluded.severity, added_at = excluded.added_at`;
+                }
+            }),
+        unlink: (projectId, branch, findingIds) =>
+            this.write(async (sql) => {
+                if (!findingIds.length) return;
+                await sql`
+                    delete from pattern_findings
+                    where project_id = ${projectId} and branch = ${branch} and finding_id in ${sql([...findingIds])}`;
+            }),
+        move: (from, to) =>
+            this.write(async (sql) => {
+                await sql`update pattern_findings set pattern_id = ${to} where pattern_id = ${from}`;
+            }),
+        renameBranch: (projectId, from, to) =>
+            this.write(async (sql) => {
+                // What's left under the new name from a branch since deleted gives way to this branch's.
+                await sql`
+                    delete from pattern_findings t
+                    where t.project_id = ${projectId} and t.branch = ${to}
+                      and exists (select 1 from pattern_findings f
+                                  where f.project_id = t.project_id and f.branch = ${from} and f.finding_id = t.finding_id)`;
+                await sql`update pattern_findings set branch = ${to} where project_id = ${projectId} and branch = ${from}`;
+            }),
     };
 
     findingSources: Repos["findingSources"] = {

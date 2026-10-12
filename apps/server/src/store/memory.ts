@@ -23,6 +23,8 @@ import type {
     Membership,
     ModelGrant,
     Page,
+    Pattern,
+    PatternFinding,
     Project,
     Repos,
     ReviewRecord,
@@ -65,6 +67,7 @@ function runHooks(hooks: (() => void)[]): void {
     }
 }
 const key = (...parts: string[]) => parts.join("\0");
+const linkKey = (f: Pick<PatternFinding, "projectId" | "branch" | "findingId">) => key(f.projectId, f.branch, f.findingId);
 const sourceKey = (s: Pick<FindingSource, "projectId" | "branch" | "findingId" | "model" | "provider">) =>
     key(s.projectId, s.branch, s.findingId, s.model, s.provider);
 
@@ -183,6 +186,8 @@ export class MemoryStore implements Store {
         runners: this.table<RunnerRecord>(),
         findingSources: this.table<FindingSource>(),
         analyses: this.table<Analysis>(),
+        patterns: this.table<Pattern>(),
+        patternFindings: this.table<PatternFinding>(),
         instanceSettings: this.table<{ value: unknown }>(),
         modelGrants: this.table<ModelGrant>(),
         invites: this.table<Invite>(),
@@ -277,6 +282,7 @@ export class MemoryStore implements Store {
                 this.t.reviewHistory.remove((r) => r.workspaceId === id);
                 for (const s of this.t.findingSources.values()) if (s.workspaceId === id) this.t.findingSources.delete(sourceKey(s));
                 for (const a of this.t.analyses.values()) if (a.workspaceId === id) this.t.analyses.delete(a.id);
+                for (const p of this.t.patterns.values()) if (p.workspaceId === id) await this.patterns.delete(p.id);
                 for (const i of this.t.githubInstallations.values())
                     if (i.workspaceId === id) this.t.githubInstallations.delete(String(i.id));
                 this.t.modelGrants.delete(id);
@@ -323,6 +329,8 @@ export class MemoryStore implements Store {
                         this.t.jobLogs.delete(j.id);
                     }
                 for (const a of this.t.analyses.values()) if (a.projectId === id) this.t.analyses.delete(a.id);
+                for (const p of this.t.patterns.values()) if (p.projectId === id) this.t.patterns.delete(p.id);
+                for (const f of this.t.patternFindings.values()) if (f.projectId === id) this.t.patternFindings.delete(linkKey(f));
                 this.t.githubState.delete(id);
                 this.t.githubDeliveries.delete(id);
             }),
@@ -477,6 +485,45 @@ export class MemoryStore implements Store {
                 )
                 .sort((x, y) => y.createdAt.localeCompare(x.createdAt) || y.id.localeCompare(x.id))
                 .slice(0, limit),
+    };
+
+    patterns: Repos["patterns"] = {
+        get: async (id) => this.t.patterns.get(id),
+        put: (p) => this.write(() => this.t.patterns.set(p.id, p)),
+        delete: (id) =>
+            this.write(() => {
+                this.t.patterns.delete(id);
+                for (const f of this.t.patternFindings.values()) if (f.patternId === id) this.t.patternFindings.delete(linkKey(f));
+            }),
+        forProject: async (projectId) =>
+            this.t.patterns
+                .values()
+                .filter((p) => p.projectId === projectId)
+                .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
+        findings: async (projectId, branch) =>
+            this.t.patternFindings.values().filter((f) => f.projectId === projectId && (branch === undefined || f.branch === branch)),
+        link: (rows) =>
+            this.write(() => {
+                for (const r of rows) this.t.patternFindings.set(linkKey(r), r);
+            }),
+        unlink: (projectId, branch, findingIds) =>
+            this.write(() => {
+                for (const findingId of findingIds) this.t.patternFindings.delete(linkKey({ projectId, branch, findingId }));
+            }),
+        move: (from, to) =>
+            this.write(() => {
+                for (const f of this.t.patternFindings.values())
+                    if (f.patternId === from) this.t.patternFindings.set(linkKey(f), { ...f, patternId: to });
+            }),
+        renameBranch: (projectId, from, to) =>
+            this.write(() => {
+                // What's left under the new name from a branch since deleted gives way to this branch's.
+                for (const f of this.t.patternFindings.values()) {
+                    if (f.projectId !== projectId || f.branch !== from) continue;
+                    this.t.patternFindings.delete(linkKey(f));
+                    this.t.patternFindings.set(linkKey({ ...f, branch: to }), { ...f, branch: to });
+                }
+            }),
     };
 
     findingSources: Repos["findingSources"] = {

@@ -1,5 +1,5 @@
 // Insights → Analytics: reviews and what they cost, each model side by side, findings and triage, for
-// every project or one, one branch or all, over a range. Six tabs, each its own address
+// every project or one, one branch or all, over a range. Seven tabs, each its own address
 // (/analytics/models), so a tab only asks the server for what it shows. The scope lives in the URL
 // (?project=&branch=&days=) and is kept from tab to tab, so any view can be shared.
 
@@ -13,6 +13,7 @@ import type { AnalyticsSection, Days } from "@/lib/insights-types";
 import { branchesQuery, projectsQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import { CommonIssuesTab } from "./common-issues-tab";
 import { InsightsTab } from "./insights-tab";
 import { ModelsTab } from "./models-tab";
 import { OverviewTab } from "./overview-tab";
@@ -28,6 +29,7 @@ const SECTIONS: Record<AnalyticsTab, AnalyticsSection[]> = {
     triage: ["triage"],
     // Nothing: what's there is written from the figures, on the server.
     insights: [],
+    "common-issues": [],
 };
 
 export function AnalyticsPage() {
@@ -130,6 +132,8 @@ export function AnalyticsPage() {
 
             {tab === "insights" ? (
                 <InsightsTab search={search} scope={scope} />
+            ) : tab === "common-issues" ? (
+                <CommonIssuesTab search={search} />
             ) : query.isError ? (
                 <LoadError error={query.error} onRetry={() => query.refetch()} title="Couldn't load analytics" />
             ) : !query.data ? (

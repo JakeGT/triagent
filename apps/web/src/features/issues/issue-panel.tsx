@@ -513,6 +513,38 @@ function IssueView({ id }: { id: string }) {
                 )}
             </div>
 
+            {issue.commonIssue && (
+                <section
+                    aria-labelledby="common-issue-heading"
+                    className="grid grid-cols-[minmax(0,1fr)] gap-1.5"
+                    data-testid="common-issue"
+                >
+                    <h3 id="common-issue-heading" className="text-sm font-medium">
+                        Common issue here
+                    </h3>
+                    <div className="grid gap-1.5 rounded-md border bg-background px-3 py-2 text-sm">
+                        <p className="font-medium">{issue.commonIssue.title}</p>
+                        {issue.commonIssue.summary && <p className="text-muted-foreground">{issue.commonIssue.summary}</p>}
+                        {issue.commonIssue.guidance && (
+                            <p>
+                                <span className="font-medium">How to avoid it: </span>
+                                {issue.commonIssue.guidance}
+                            </p>
+                        )}
+                        <p>
+                            <Link
+                                to="/w/$ws/p/$project/issues"
+                                params={{ ws, project: slug }}
+                                search={{ ...(branchParam ? { branch: branchParam } : {}), pattern: issue.commonIssue.id } as never}
+                                className="link"
+                            >
+                                See the others like it
+                            </Link>
+                        </p>
+                    </div>
+                </section>
+            )}
+
             {issue.duplicates.length > 0 && (
                 <section aria-labelledby="dups-heading" className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                     <h3 id="dups-heading" className="text-sm font-medium">

@@ -26,7 +26,11 @@ export const issueRoutes: Route[] = [
         async handler(ctx) {
             const ref = branchRef(ctx, ctx.query.branch);
             const full = ctx.query.full === "true";
-            const filters = parseFilters(queryParams(ctx), { maxLimit: full ? 200 : 1000 });
+            const filters = await ctx.services.patterns.narrow(
+                ref.project,
+                ref.branch,
+                parseFilters(queryParams(ctx), { maxLimit: full ? 200 : 1000 }),
+            );
             const view = await ctx.services.reports.view(ctx.services.store, ref.project, ref.branch);
             return json({ branch: ref.branch, ...view.listIssues(filters, { full }) });
         },
@@ -42,7 +46,11 @@ export const issueRoutes: Route[] = [
         produces: "markdown",
         async handler(ctx) {
             const ref = branchRef(ctx, ctx.query.branch);
-            const filters = parseFilters(queryParams(ctx), { maxLimit: 200, defaultLimit: 50 });
+            const filters = await ctx.services.patterns.narrow(
+                ref.project,
+                ref.branch,
+                parseFilters(queryParams(ctx), { maxLimit: 200, defaultLimit: 50 }),
+            );
             const view = await ctx.services.reports.view(ctx.services.store, ref.project, ref.branch);
             const result = view.listIssues(filters, { full: true });
             return markdown(issuesMarkdown(view, result as never, filters));
@@ -59,7 +67,11 @@ export const issueRoutes: Route[] = [
         produces: "csv",
         async handler(ctx) {
             const ref = branchRef(ctx, ctx.query.branch);
-            const filters = parseFilters(queryParams(ctx), { maxLimit: 100_000, defaultLimit: 100_000 });
+            const filters = await ctx.services.patterns.narrow(
+                ref.project,
+                ref.branch,
+                parseFilters(queryParams(ctx), { maxLimit: 100_000, defaultLimit: 100_000 }),
+            );
             const view = await ctx.services.reports.view(ctx.services.store, ref.project, ref.branch);
             const rows = view.listIssues(filters, { full: true }).items as unknown as Record<string, unknown>[];
             const cols = [
@@ -142,7 +154,9 @@ export const issueRoutes: Route[] = [
         async handler(ctx) {
             const ref = branchRef(ctx, ctx.query.branch);
             const view = await ctx.services.reports.view(ctx.services.store, ref.project, ref.branch);
-            return json(view.getIssue(ctx.params.id as string));
+            const issue = view.getIssue(ctx.params.id as string);
+            // The common issue it's under, with its advice, if it's under one.
+            return json({ ...issue, commonIssue: await ctx.services.patterns.forIssue(ref.project, ref.branch, issue.id) });
         },
     }),
     route({

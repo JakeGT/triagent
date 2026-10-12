@@ -19,6 +19,7 @@ export function itemLabel(row: ActivityRow): string {
     if (row.kind === "report") return `report ${row.itemId}`;
     if (row.kind === "branch") return `branch ${row.itemId}`;
     if (row.kind === "project") return `project ${row.itemId}`;
+    if (row.kind === "pattern") return "a common issue";
     if (row.kind === "run") return "a review";
     return `${row.kind || "item"} ${row.itemId}`;
 }
@@ -98,6 +99,18 @@ export function describeActivity(row: ActivityRow): string {
         parts.push(`deleted branch ${row.itemId}${d.unresolved ? ` with ${plural(Number(d.unresolved), "unresolved issue")}` : ""}`);
     } else if (row.kind === "run" && c.finished) {
         parts.push(finishedReview(obj(c.finished)));
+    } else if (row.kind === "pattern") {
+        const title = typeof c.title === "string" ? `the common issue “${c.title}”` : "a common issue";
+        if (c.created) parts.push(`added the common issue “${String(obj(c.created).title ?? "")}”`);
+        else if (c.deleted) parts.push(`deleted the common issue “${String(obj(c.deleted).title ?? "")}”`);
+        else if (c.merged) parts.push(`merged “${String(obj(c.merged).from ?? "")}” into ${title}`);
+        else {
+            if (c.renamed)
+                parts.push(`renamed the common issue “${String((c.renamed as Change).from)}” to “${String((c.renamed as Change).to)}”`);
+            if (c.hidden)
+                parts.push(`${(c.hidden as Change).to ? "hid" : "showed"} ${title} ${(c.hidden as Change).to ? "from" : "to"} agents`);
+            if (Array.isArray(c.edited) && c.edited.length) parts.push(`edited ${title}`);
+        }
     } else if (row.kind === "project") {
         if (c.created) parts.push(`created the project ${String(obj(c.created).name ?? row.itemId)}`);
         else if (c.deleted) parts.push(`deleted the project ${row.itemId}`);

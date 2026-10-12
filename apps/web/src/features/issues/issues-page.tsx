@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { type ColumnDef, flexRender, getCoreRowModel, type RowSelectionState, useReactTable } from "@tanstack/react-table";
 import { SEVERITIES } from "@triagent/shared";
-import { ChevronLeft, ChevronRight, Copy as Duplicate, Lightbulb, MessageSquare, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy as Duplicate, Lightbulb, MessageSquare, Users, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { announce } from "@/components/announcer";
 import { LoadError, LoadingRows } from "@/components/load-state";
@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { lines, plural } from "@/lib/format";
+import { commonIssuesQuery } from "@/lib/patterns";
 import { useShortcutsEnabled } from "@/lib/prefs";
 import { issuesQuery } from "@/lib/queries";
 import { useCan, useProject } from "@/lib/session";
@@ -344,6 +345,15 @@ export function IssuesPage() {
                     onChange={filter}
                     searchRef={searchRef}
                 />
+                {search.pattern && (
+                    <UnderCommonIssue
+                        ws={ws}
+                        project={slug}
+                        branch={branch}
+                        id={search.pattern}
+                        onClear={() => filter({ ...search, pattern: undefined, page: undefined })}
+                    />
+                )}
                 {selectedIds.length > 0 && canTriage && (
                     <BulkBar
                         ids={selectedIds}
@@ -489,6 +499,39 @@ export function IssuesPage() {
                 )}
             </section>
             <Outlet />
+        </div>
+    );
+}
+
+/** The list is only what's under one common issue: says which, with its advice, and how to take the filter off. */
+function UnderCommonIssue({
+    ws,
+    project,
+    branch,
+    id,
+    onClear,
+}: {
+    ws: string;
+    project: string;
+    branch: string;
+    id: string;
+    onClear(): void;
+}) {
+    const { data } = useQuery(commonIssuesQuery(ws, project, branch));
+    const item = data?.items.find((x) => x.id === id);
+    return (
+        <div
+            className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-md border bg-card px-3 py-2 text-sm"
+            data-testid="under-common-issue"
+        >
+            <p className="max-w-measure">
+                <span className="text-muted-foreground">Common issue: </span>
+                <span className="font-medium">{item?.title ?? "…"}</span>
+                {item?.guidance && <span className="text-muted-foreground"> How to avoid it: {item.guidance}</span>}
+            </p>
+            <Button variant="outline" size="sm" onClick={onClear}>
+                <X /> Show every issue
+            </Button>
         </div>
     );
 }

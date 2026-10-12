@@ -17,6 +17,7 @@ import { ModelSetup } from "./model-setup.ts";
 import type { Lookup } from "./model-urls.ts";
 import { Models } from "./models.ts";
 import { Oidc } from "./oidc.ts";
+import { CommonIssues } from "./patterns.ts";
 import { Prices } from "./prices.ts";
 import { Projects } from "./projects.ts";
 import { Reports } from "./reports.ts";
@@ -53,6 +54,8 @@ export interface Services {
     analytics: AnalyticsService;
     /** Asking a model to write about reviews and findings. */
     analyst: Analyst;
+    /** A project's common issues, and likely false positives. */
+    patterns: CommonIssues;
     invites: Invites;
     /** The identity provider, when AUTH_MODE=oidc. */
     oidc: Oidc | null;
@@ -121,6 +124,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         reviewLimits,
         analytics,
         analyst,
+        patterns: new CommonIssues(core, reports, analyst),
         github,
         runs,
         automation,

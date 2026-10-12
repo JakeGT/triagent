@@ -15,6 +15,7 @@ import { insightRoutes } from "./routes/insights.ts";
 import { instanceModelRoutes } from "./routes/instance-models.ts";
 import { inviteRoutes } from "./routes/invites.ts";
 import { issueRoutes } from "./routes/issues.ts";
+import { patternRoutes } from "./routes/patterns.ts";
 import { platformRoutes } from "./routes/platform.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { reportRoutes } from "./routes/reports.ts";
@@ -57,6 +58,7 @@ export function allRoutes(services: Services): Route[] {
         ...runnerRoutes,
         ...insightRoutes,
         ...analysisRoutes,
+        ...patternRoutes,
         ...instanceModelRoutes,
         ...platformRoutes(services, () => routes),
     );

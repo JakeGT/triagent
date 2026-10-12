@@ -464,7 +464,7 @@ export interface FindingSource {
 }
 
 /** What a model can be asked to write (services/analyst.ts). */
-export const ANALYSIS_KINDS = ["comparison", "summary", "answer"] as const;
+export const ANALYSIS_KINDS = ["comparison", "summary", "answer", "patterns", "falsePositives"] as const;
 export type AnalysisKind = (typeof ANALYSIS_KINDS)[number];
 
 /** One time a model was asked to write something about findings or reviews (see migration 0011). */
@@ -475,7 +475,7 @@ export interface Analysis {
     projectId: string | null;
     branch: string | null;
     kind: AnalysisKind;
-    /** What it's about within its kind: a run's id for a comparison or a summary; "" for a question. */
+    /** What it's about within its kind: a run's id for a comparison or a summary; a branch for its findings' grouping or likely false positives; "" for a question. */
     subject: string;
     status: "running" | "done" | "failed";
     requestedBy: { name: string; userId: string | null };
@@ -488,6 +488,38 @@ export interface Analysis {
     error: string | null;
     createdAt: string;
     finishedAt: string | null;
+}
+
+/** A common issue: a kind of problem reviews keep finding in a project (see migration 0012). */
+export interface Pattern {
+    id: string;
+    workspaceId: string;
+    projectId: string;
+    title: string;
+    /** What goes wrong. */
+    summary: string;
+    /** How to avoid it. */
+    guidance: string;
+    category: Category | null;
+    /** Left out of what agents are told and of the page's list. */
+    hidden: boolean;
+    source: "model" | "person";
+    createdBy: string;
+    createdAt: string;
+    updatedBy: string | null;
+    updatedAt: string;
+}
+
+/** A finding under a common issue, with what it said when it was put there. */
+export interface PatternFinding {
+    patternId: string;
+    projectId: string;
+    branch: string;
+    findingId: string;
+    path: string;
+    title: string;
+    severity: Severity;
+    addedAt: string;
 }
 
 /** A runner process, as last seen by the server. */
@@ -626,6 +658,21 @@ export interface Repos {
             filter: { workspaceId: string; kind?: AnalysisKind; projectId?: string; subject?: string; since?: string },
             limit: number,
         ): Promise<Analysis[]>;
+    };
+    patterns: {
+        get(id: string): Promise<Pattern | null>;
+        put(pattern: Pattern): Promise<void>;
+        /** With its findings (they go with it). */
+        delete(id: string): Promise<void>;
+        forProject(projectId: string): Promise<Pattern[]>;
+        /** The findings under a project's common issues: on one branch, or on all of them. */
+        findings(projectId: string, branch?: string): Promise<PatternFinding[]>;
+        /** Put findings under common issues; one already under another moves. */
+        link(rows: readonly PatternFinding[]): Promise<void>;
+        unlink(projectId: string, branch: string, findingIds: readonly string[]): Promise<void>;
+        /** Every finding of `from` goes under `to`. */
+        move(from: string, to: string): Promise<void>;
+        renameBranch(projectId: string, from: string, to: string): Promise<void>;
     };
     settings: {
         get(workspaceId: string, projectId: string | null, key: string): Promise<SettingRecord | null>;

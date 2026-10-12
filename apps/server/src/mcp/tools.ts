@@ -67,6 +67,7 @@ const filterProps = {
         .optional()
         .describe("Only findings this model found, by its name in the review (list_issues says which models a review used)"),
     onlyModel: z.boolean().optional().describe("With `model`: only findings no other model found"),
+    pattern: z.string().max(40).optional().describe("Only findings under this common issue (its id, from list_common_issues)"),
     lowerConfidence: z
         .boolean()
         .optional()
@@ -128,6 +129,18 @@ const line = (x: {
     lowerConfidence?: boolean;
 }) =>
     `- ${x.id} [${x.severity}/${x.category}/${x.status}${x.assignee ? ` @${x.assignee}` : ""}] \`${x.path}${x.startLine ? `:${x.startLine}` : ""}\` — ${x.title}${x.foundBy ? ` (found by ${x.foundBy.join(", ")}${x.lowerConfidence ? ": lower confidence" : ""})` : ""}`;
+
+/** What an issue's common issue adds for whoever is about to fix it: there are others like it, and how they're avoided. */
+function commonIssueText(c: { id: string; title: string; summary: string; guidance: string } | null): string {
+    if (!c) return "";
+    return [
+        "",
+        "",
+        `**Common issue here:** ${c.title} (id ${c.id}; list_issues with pattern "${c.id}" shows the others)`,
+        ...(c.summary ? ["", c.summary] : []),
+        ...(c.guidance ? ["", `**How to avoid it:** ${c.guidance}`] : []),
+    ].join("\n");
+}
 
 function tool(t: Tool): Tool {
     return t;
@@ -242,8 +255,12 @@ export const TOOLS: Tool[] = [
             offset: z.number().int().min(0).optional(),
         }),
         async run(ctx, args) {
-            const { view } = await viewOf(ctx, args);
-            const filters = parseFilters(args, { maxLimit: 200, defaultLimit: 50 });
+            const { ref, view } = await viewOf(ctx, args);
+            const filters = await ctx.services.patterns.narrow(
+                ref.project,
+                ref.branch,
+                parseFilters(args, { maxLimit: 200, defaultLimit: 50 }),
+            );
             const r = view.listIssues(filters);
             const more = r.offset + r.items.length < r.total ? `\n_More: repeat with offset ${r.offset + r.items.length}._` : "";
             return {
@@ -261,9 +278,10 @@ export const TOOLS: Tool[] = [
         readOnly: true,
         input: z.object({ ...where, id: z.string().max(MAX_ID) }),
         async run(ctx, args) {
-            const { view } = await viewOf(ctx, args);
+            const { ref, view } = await viewOf(ctx, args);
             const issue = view.getIssue(String(args.id));
-            return { text: issueMarkdown(issue, view.branch), data: issue };
+            const commonIssue = await ctx.services.patterns.forIssue(ref.project, ref.branch, issue.id);
+            return { text: issueMarkdown(issue, view.branch) + commonIssueText(commonIssue), data: { ...issue, commonIssue } };
         },
     }),
     tool({
@@ -299,11 +317,20 @@ export const TOOLS: Tool[] = [
         permission: "triage",
         input: z.object({ ...where, ...filterProps, note: z.string().max(4000).optional() }),
         async run(ctx, args) {
-            const { project: _p, branch: _b, ...body } = args;
+            const { project: _p, branch: _b, pattern, ...body } = args;
             const ref = await refOf(ctx, args);
-            const r = await ctx.services.triage.claimNext(ctx.actor, ref, body);
+            // Only what's under a common issue: as the ids of those findings.
+            const ids =
+                typeof pattern === "string" && pattern ? await ctx.services.patterns.findingIds(ref.project, ref.branch, pattern) : null;
+            if (ids && !ids.length)
+                return { text: "Nothing to claim: no finding on this branch is under that common issue.", data: { issue: null } };
+            const r = await ctx.services.triage.claimNext(ctx.actor, ref, ids ? { ...body, ids } : body);
             if (!r.issue) return { text: r.message ?? "Nothing to claim.", data: r };
-            return { text: `Claimed:\n\n${issueMarkdown(r.issue, ref.branch)}`, data: r };
+            const commonIssue = await ctx.services.patterns.forIssue(ref.project, ref.branch, r.issue.id);
+            return {
+                text: `Claimed:\n\n${issueMarkdown(r.issue, ref.branch)}${commonIssueText(commonIssue)}`,
+                data: { ...r, commonIssue },
+            };
         },
     }),
     tool({
@@ -438,6 +465,63 @@ export const TOOLS: Tool[] = [
                 text: `Uploaded to ${ref.branch}: ${r.next.issues} findings (${r.carriedOver} carried over, ${r.added} new, ${r.removed} gone).`,
                 data: r,
             };
+        },
+    }),
+    tool({
+        name: "list_common_issues",
+        title: "List common issues",
+        description:
+            "The kinds of problem code reviews keep finding in a project, each with what goes wrong and how to avoid it. Read this before writing or changing code in the project, and follow the advice; name `path` for only those with findings in the file or folder you're about to touch. Each says how many of its findings are open on the branch.",
+        permission: "read",
+        readOnly: true,
+        input: z.object({
+            ...where,
+            path: z.string().max(500).optional().describe("Only common issues with open findings in this file, or folder ending in /"),
+            category: z.array(z.enum(CATEGORIES)).optional(),
+            q: z.string().max(200).optional().describe("Words that must all appear in its title, what goes wrong or how to avoid it"),
+            limit: z.number().int().min(1).max(100).optional().describe("Default 30"),
+        }),
+        async run(ctx, args) {
+            const ref = await refOf(ctx, args);
+            const all = (await ctx.services.patterns.list(ctx.access.workspace, ref.project, ref.branch)).items.filter((p) => !p.hidden);
+            const path = typeof args.path === "string" ? args.path.replace(/^\.\//, "") : "";
+            const folder = path.endsWith("/") ? path : `${path}/`;
+            const categories = Array.isArray(args.category) ? (args.category as string[]) : [];
+            const terms = typeof args.q === "string" ? args.q.toLowerCase().split(/\s+/).filter(Boolean) : [];
+            // By where its open findings are: every one of them, not only the few shown as examples.
+            let here: Set<string> | null = null;
+            if (path) {
+                const { view } = await viewOf(ctx, args);
+                here = new Set();
+                for (const l of await ctx.services.store.patterns.findings(ref.project.id, ref.branch)) {
+                    const x = view.issue(l.findingId);
+                    if (x && !view.isDone(x.id) && (x.path === path || x.path.startsWith(folder))) here.add(l.patternId);
+                }
+            }
+            const inPath = here;
+            const items = all
+                .filter((p) => !inPath || inPath.has(p.id))
+                .filter((p) => !categories.length || (p.category !== null && categories.includes(p.category)))
+                .filter((p) => {
+                    const hay = `${p.title}\n${p.summary}\n${p.guidance}`.toLowerCase();
+                    return terms.every((t) => hay.includes(t));
+                })
+                .slice(0, typeof args.limit === "number" ? args.limit : 30);
+            const text = items.length
+                ? items
+                      .map((p) =>
+                          [
+                              `## ${p.title} (id ${p.id}${p.category ? `, ${p.category}` : ""})`,
+                              `- ${p.open} open on ${ref.branch}, ${p.total} in all${p.files.length ? `; mostly in ${p.files.map((f) => `\`${f.path}\``).join(", ")}` : ""}`,
+                              ...(p.summary ? [`- **What goes wrong:** ${p.summary}`] : []),
+                              ...(p.guidance ? [`- **How to avoid it:** ${p.guidance}`] : []),
+                          ].join("\n"),
+                      )
+                      .join("\n\n")
+                : all.length
+                  ? "No common issue matches."
+                  : "This project has no common issues yet. Someone can ask for them on its Analytics → Common issues page, once a review has findings.";
+            return { text, data: { branch: ref.branch, items } };
         },
     }),
     tool({
