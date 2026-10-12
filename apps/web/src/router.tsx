@@ -220,6 +220,10 @@ const wsSettingsRoutes = [
         },
     }),
     settingsPage(
+        "/analysis",
+        lazyRouteComponent(() => import("@/features/settings/analysis-settings"), "AnalysisSettings"),
+    ),
+    settingsPage(
         "/model-prices",
         lazyRouteComponent(() => import("@/features/settings/model-prices-settings"), "ModelPricesSettings"),
     ),

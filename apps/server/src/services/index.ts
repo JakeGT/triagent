@@ -2,6 +2,7 @@ import type { Config } from "../config.ts";
 import type { Store } from "../store/types.ts";
 import { Accounts } from "./accounts.ts";
 import { Allowances } from "./allowances.ts";
+import { Analyst } from "./analyst.ts";
 import { AnalyticsService } from "./analytics.ts";
 import { BrowserReports } from "./browser-reports.ts";
 import { Catalogue } from "./catalogue.ts";
@@ -50,6 +51,8 @@ export interface Services {
     allowances: Allowances;
     reviewLimits: ReviewLimitSettings;
     analytics: AnalyticsService;
+    /** Asking a model to write about reviews and findings. */
+    analyst: Analyst;
     invites: Invites;
     /** The identity provider, when AUTH_MODE=oidc. */
     oidc: Oidc | null;
@@ -86,6 +89,17 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
     webhooks.automation = automation;
     const invites = new Invites(core);
     const triage = new Triage(core, reports);
+    const analytics = new AnalyticsService(core, projects, reports, prices, () => clock().getTime());
+    const analyst = new Analyst(core, setup, runs, reports, analytics, prices, projects, {
+        now: () => clock().getTime(),
+        ...(options.fetch ? { fetch: options.fetch } : {}),
+    });
+    // After automation's own look at a finished review: what the workspace asked to have written about it.
+    const finished = runs.onFinished;
+    runs.onFinished = (job, project) => {
+        finished(job, project);
+        analyst.reviewFinished(job);
+    };
     return {
         core,
         config,
@@ -105,7 +119,8 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
         prices,
         allowances,
         reviewLimits,
-        analytics: new AnalyticsService(core, projects, reports, prices, () => clock().getTime()),
+        analytics,
+        analyst,
         github,
         runs,
         automation,

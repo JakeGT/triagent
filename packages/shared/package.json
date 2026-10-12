@@ -9,7 +9,8 @@
     "./redact": "./src/redact.ts",
     "./log": "./src/log.ts",
     "./model": "./src/model.ts",
-    "./merge": "./src/merge.ts"
+    "./merge": "./src/merge.ts",
+    "./ask": "./src/ask.ts"
   },
   "dependencies": {
     "zod": "^4.6.5"

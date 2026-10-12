@@ -27,6 +27,10 @@ export function analyticsText(a: Analytics): string {
             `- Tokens: ${n(r.tokens.total)} (${n(r.tokens.input)} input, ${n(r.tokens.output)} output, ${n(r.tokens.cacheRead)} cache reads)${r.tokens.estimated ? `, including an estimate of ${n(r.tokens.estimatedTotal)} for ${n(r.tokens.estimated)} review(s) that stopped without saying (counted at their token budget)` : ""}`,
             `- Cost: ${usd(r.cost.total)}${r.cost.partlyPriced ? ` at least (${n(r.cost.partlyPriced)} review(s) used a model with no price, so cost more than is counted, and are left out of the averages)` : ""}; per review ${usd(r.cost.perReview)}, per pull request ${usd(r.cost.perPr)}, per finding ${usd(r.cost.perFinding)}`,
         );
+    if (a.analysis?.count)
+        lines.push(
+            `- Analyses written by a model (not in the figures above): ${n(a.analysis.count)}, ${n(a.analysis.tokens)} tokens, ${usd(a.analysis.cost)}`,
+        );
     // Whichever parts were asked for: a cost above (a review's, a model's) leaves these out.
     if (a.unpriced.length)
         lines.push(

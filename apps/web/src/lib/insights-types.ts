@@ -153,6 +153,8 @@ export interface Analytics {
     scope: { project: string | null; branch: string | null; projects: { slug: string; name: string }[] };
     truncated: { history: boolean; activity: boolean; current: boolean; sources: boolean };
     models?: ModelsSection;
+    /** With the reviews: what a model was asked to write in the range, apart from the reviews' own figures. */
+    analysis?: { count: number; tokens: number; cost: number | null; unpricedTokens: number };
     unpriced: { model: string; reviews: number; tokens: number }[];
     reviews?: {
         total: number;

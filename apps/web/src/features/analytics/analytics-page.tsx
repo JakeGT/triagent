@@ -1,5 +1,5 @@
 // Insights → Analytics: reviews and what they cost, each model side by side, findings and triage, for
-// every project or one, one branch or all, over a range. Five tabs, each its own address
+// every project or one, one branch or all, over a range. Six tabs, each its own address
 // (/analytics/models), so a tab only asks the server for what it shows. The scope lives in the URL
 // (?project=&branch=&days=) and is kept from tab to tab, so any view can be shared.
 
@@ -13,6 +13,7 @@ import type { AnalyticsSection, Days } from "@/lib/insights-types";
 import { branchesQuery, projectsQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import { InsightsTab } from "./insights-tab";
 import { ModelsTab } from "./models-tab";
 import { OverviewTab } from "./overview-tab";
 import { ANALYTICS_TABS, type AnalyticsSearch, type AnalyticsTab, analyticsTab, RANGES } from "./search";
@@ -25,6 +26,8 @@ const SECTIONS: Record<AnalyticsTab, AnalyticsSection[]> = {
     models: ["models"],
     findings: ["findings"],
     triage: ["triage"],
+    // Nothing: what's there is written from the figures, on the server.
+    insights: [],
 };
 
 export function AnalyticsPage() {
@@ -35,7 +38,10 @@ export function AnalyticsPage() {
     const days = search.days ?? 30;
     const projects = useQuery(projectsQuery(ws));
     const branches = useQuery({ ...branchesQuery(ws, search.project ?? ""), enabled: Boolean(search.project) });
-    const query = useQuery(analyticsQuery(ws, { project: search.project, branch: search.branch, days, sections: SECTIONS[tab] }));
+    const query = useQuery({
+        ...analyticsQuery(ws, { project: search.project, branch: search.branch, days, sections: SECTIONS[tab] }),
+        enabled: SECTIONS[tab].length > 0,
+    });
 
     const set = (next: AnalyticsSearch) =>
         navigate({ to: "/w/$ws/analytics/$tab", params: { ws, tab }, search: { ...search, ...next } as never, replace: true });
@@ -122,7 +128,9 @@ export function AnalyticsPage() {
                 </ul>
             </nav>
 
-            {query.isError ? (
+            {tab === "insights" ? (
+                <InsightsTab search={search} scope={scope} />
+            ) : query.isError ? (
                 <LoadError error={query.error} onRetry={() => query.refetch()} title="Couldn't load analytics" />
             ) : !query.data ? (
                 <LoadingRows rows={10} />

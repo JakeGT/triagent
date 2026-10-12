@@ -18,6 +18,7 @@ export const ANALYTICS_TABS = [
     { id: "models", label: "Models" },
     { id: "findings", label: "Findings" },
     { id: "triage", label: "Triage & people" },
+    { id: "insights", label: "Insights" },
 ] as const;
 export type AnalyticsTab = (typeof ANALYTICS_TABS)[number]["id"];
 

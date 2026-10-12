@@ -11,9 +11,11 @@
 // that) leaves the review as it was, saying so.
 //
 // OCR has no way to ask a model a question of one's own (`ocr llm test` sends a fixed one), so the
-// requests are made here, in the three protocols OCR speaks over HTTP. Amazon Bedrock isn't one of
-// them: its requests are signed with AWS credentials, and the server never names such a model.
+// requests are made by packages/shared/src/ask.ts, in the three protocols OCR speaks over HTTP. Amazon
+// Bedrock isn't one of them: its requests are signed with AWS credentials, and the server never names
+// such a model.
 
+import { askModel, jsonIn, whyNot } from "../../../packages/shared/src/ask.ts";
 import { candidatePairs, type FindingPair, type FindingRef, type PartFindings } from "../../../packages/shared/src/merge.ts";
 import type { RunnerModel } from "../../../packages/shared/src/model.ts";
 import type { FinishPart } from "./client.ts";
@@ -22,11 +24,7 @@ import type { FinishPart } from "./client.ts";
 const BATCH = 25;
 /** The most of a finding's text a model is sent. */
 const MAX_TEXT = 1200;
-/** The most of an answer that's read: 25 answers are a few hundred bytes. */
-const MAX_ANSWER_BYTES = 1024 * 1024;
 const TIMEOUT_MS = 120_000;
-/** Room for a model that thinks before it answers; the answer itself is a line. */
-const MAX_TOKENS = 8000;
 
 export interface Judged {
     /** Every pair asked about, with its answer. */
@@ -82,159 +80,16 @@ export function question(findings: PartFindings, pairs: readonly FindingPair[]):
  * p<count> and nothing else. Only `true` and `false` are answers. Null unless every pair has one.
  */
 export function readAnswers(said: string, count: number): boolean[] | null {
-    const from = said.indexOf("{");
-    const to = said.lastIndexOf("}");
-    if (from < 0 || to <= from) return null;
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(said.slice(from, to + 1));
-    } catch {
-        return null;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const parsed = jsonIn(said);
+    if (!parsed) return null;
     const out: boolean[] = [];
     for (let i = 1; i <= count; i++) {
-        const v = Object.hasOwn(parsed, `p${i}`) ? (parsed as Record<string, unknown>)[`p${i}`] : undefined;
+        const v = Object.hasOwn(parsed, `p${i}`) ? parsed[`p${i}`] : undefined;
         if (typeof v !== "boolean") return null;
         out.push(v);
     }
     return out;
 }
-
-interface Said {
-    text: string;
-    input: number;
-    output: number;
-}
-
-const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
-
-/** The request each protocol takes, and what it says back. */
-const PROTOCOLS: Record<
-    Exclude<RunnerModel["protocol"], "anthropic-bedrock">,
-    {
-        path: string;
-        headers(model: RunnerModel): Record<string, string>;
-        body(model: RunnerModel, user: string): Record<string, unknown>;
-        read(answer: Record<string, unknown>): Said;
-    }
-> = {
-    openai: {
-        path: "/chat/completions",
-        headers: (m) => ({ authorization: `Bearer ${m.apiKey}` }),
-        body: (m, user) => ({
-            model: m.model,
-            messages: [
-                { role: "system", content: SYSTEM },
-                { role: "user", content: user },
-            ],
-        }),
-        read(answer) {
-            const message = (answer.choices as { message?: { content?: unknown } }[] | undefined)?.[0]?.message;
-            const usage = (answer.usage ?? {}) as Record<string, unknown>;
-            // Some servers give the content as parts.
-            const said = Array.isArray(message?.content)
-                ? message.content.map((p: { text?: unknown }) => (typeof p?.text === "string" ? p.text : "")).join("")
-                : message?.content;
-            return {
-                text: typeof said === "string" ? said : "",
-                input: count(usage.prompt_tokens),
-                output: count(usage.completion_tokens),
-            };
-        },
-    },
-    "openai-responses": {
-        path: "/responses",
-        headers: (m) => ({ authorization: `Bearer ${m.apiKey}` }),
-        body: (m, user) => ({ model: m.model, instructions: SYSTEM, input: user, store: false }),
-        read(answer) {
-            const usage = (answer.usage ?? {}) as Record<string, unknown>;
-            const said = (Array.isArray(answer.output) ? answer.output : [])
-                .flatMap((o: { type?: unknown; content?: unknown }) => (o?.type === "message" && Array.isArray(o.content) ? o.content : []))
-                .map((c: { type?: unknown; text?: unknown }) => (c?.type === "output_text" && typeof c.text === "string" ? c.text : ""))
-                .join("");
-            return { text: said, input: count(usage.input_tokens), output: count(usage.output_tokens) };
-        },
-    },
-    anthropic: {
-        path: "/v1/messages",
-        headers: (m) => ({ "x-api-key": m.apiKey, "anthropic-version": "2023-06-01" }),
-        body: (m, user) => ({ model: m.model, max_tokens: MAX_TOKENS, system: SYSTEM, messages: [{ role: "user", content: user }] }),
-        read(answer) {
-            const usage = (answer.usage ?? {}) as Record<string, unknown>;
-            // Only what it wrote as its answer: a model that thinks first sends that as blocks of another type.
-            const said = (Array.isArray(answer.content) ? answer.content : [])
-                .map((c: { type?: unknown; text?: unknown }) => (c?.type === "text" && typeof c.text === "string" ? c.text : ""))
-                .join("");
-            return {
-                text: said,
-                input: count(usage.input_tokens) + count(usage.cache_creation_input_tokens) + count(usage.cache_read_input_tokens),
-                output: count(usage.output_tokens),
-            };
-        },
-    },
-};
-
-/** A response's body as text, given up on once it's longer than anything a model should say here. */
-async function limited(res: Response): Promise<string> {
-    const reader = res.body?.getReader();
-    if (!reader) return "";
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.length;
-        if (size > MAX_ANSWER_BYTES) {
-            await reader.cancel().catch(() => {});
-            throw new Error("its answer was far longer than it should be");
-        }
-        chunks.push(value);
-    }
-    return Buffer.concat(chunks).toString("utf8");
-}
-
-/** One request to the model. Throws saying what went wrong, never with the key in it (the caller redacts anyway). */
-async function ask(model: RunnerModel, user: string, timeoutMs: number, signal?: AbortSignal): Promise<Said> {
-    if (model.protocol === "anthropic-bedrock") throw new Error("a model on Amazon Bedrock can't be asked");
-    // A server newer than this runner may name a protocol it doesn't speak.
-    if (!Object.hasOwn(PROTOCOLS, model.protocol))
-        throw new Error(`this runner can't ask a model that speaks ${String(model.protocol).slice(0, 40)}`);
-    const protocol = PROTOCOLS[model.protocol];
-    const url = `${model.url.replace(/\/+$/, "")}${protocol.path}`;
-    if (!/^https?:\/\//i.test(url)) throw new Error("the model has no address to ask at");
-    const limit = AbortSignal.timeout(timeoutMs);
-    let res: Response;
-    try {
-        res = await fetch(url, {
-            method: "POST",
-            headers: { "content-type": "application/json", accept: "application/json", ...protocol.headers(model) },
-            body: JSON.stringify(protocol.body(model, user)),
-            // The key goes to the address it was given for, and nowhere a redirect points.
-            redirect: "error",
-            signal: signal ? AbortSignal.any([limit, signal]) : limit,
-        });
-    } catch (err) {
-        const waited = Math.max(1, Math.round(timeoutMs / 1000));
-        if (limit.aborted) throw new Error(`it didn't answer within ${waited} second${waited === 1 ? "" : "s"}`);
-        throw new Error(`it couldn't be reached (${(err as Error).message})`);
-    }
-    if (!res.ok) {
-        await res.body?.cancel().catch(() => {});
-        throw new Error(`its provider answered ${res.status}`);
-    }
-    let answer: unknown;
-    try {
-        answer = JSON.parse(await limited(res));
-    } catch (err) {
-        throw new Error(/longer than/.test((err as Error).message) ? (err as Error).message : "its provider's answer wasn't JSON");
-    }
-    if (!answer || typeof answer !== "object" || Array.isArray(answer)) throw new Error("its provider's answer wasn't an object");
-    return protocol.read(answer as Record<string, unknown>);
-}
-
-/** What went wrong, whatever was thrown. */
-export const whyNot = (err: unknown): string => (err instanceof Error && err.message) || String(err) || "something went wrong";
 
 /**
  * Ask `model` about every pair of the review's findings worth asking about (up to the limit). All of
@@ -258,7 +113,12 @@ export async function judgeFindings(
         total = all;
         for (let i = 0; i < pairs.length; i += BATCH) {
             const batch = pairs.slice(i, i + BATCH);
-            const said = await ask(model, question(findings, batch), options.timeoutMs ?? TIMEOUT_MS, options.signal);
+            const said = await askModel(model, {
+                system: SYSTEM,
+                user: question(findings, batch),
+                timeoutMs: options.timeoutMs ?? TIMEOUT_MS,
+                signal: options.signal,
+            });
             tokens.input += said.input;
             tokens.output += said.output;
             const answers = readAnswers(said.text, batch.length);
@@ -271,3 +131,5 @@ export async function judgeFindings(
     }
     return { pairs: out, total, tokens: out.length ? tokens : null, seconds: seconds() };
 }
+
+export { whyNot };

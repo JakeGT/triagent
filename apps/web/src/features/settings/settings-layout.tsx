@@ -102,6 +102,7 @@ export function SettingsLayout() {
         wsLink("/projects", "Projects", "/w/$ws/settings/projects"),
         wsLink("/models", "Models", "/w/$ws/settings/models"),
         wsLink("/model-prices", "Model prices", "/w/$ws/settings/model-prices"),
+        wsLink("/analysis", "Analysis", "/w/$ws/settings/analysis"),
         wsLink("/members", "Members", "/w/$ws/settings/members"),
         ...(can("tokens") ? [wsLink("/tokens", "API tokens", "/w/$ws/settings/tokens")] : []),
         ...(can("members") ? [wsLink("/audit", "Audit log", "/w/$ws/settings/audit")] : []),

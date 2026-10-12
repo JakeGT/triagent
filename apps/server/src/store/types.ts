@@ -463,6 +463,33 @@ export interface FindingSource {
     decidedAt: string | null;
 }
 
+/** What a model can be asked to write (services/analyst.ts). */
+export const ANALYSIS_KINDS = ["comparison", "summary", "answer"] as const;
+export type AnalysisKind = (typeof ANALYSIS_KINDS)[number];
+
+/** One time a model was asked to write something about findings or reviews (see migration 0011). */
+export interface Analysis {
+    id: string;
+    workspaceId: string;
+    /** Null when it's about the workspace as a whole. */
+    projectId: string | null;
+    branch: string | null;
+    kind: AnalysisKind;
+    /** What it's about within its kind: a run's id for a comparison or a summary; "" for a question. */
+    subject: string;
+    status: "running" | "done" | "failed";
+    requestedBy: { name: string; userId: string | null };
+    /** The model that was asked, as it was then; null until one was found to ask. */
+    model: { id: string | null; provider: string; model: string; label: string } | null;
+    tokens: { input: number; output: number; total: number } | null;
+    /** What was asked: a question and its scope. */
+    input: Record<string, unknown> | null;
+    result: Record<string, unknown> | null;
+    error: string | null;
+    createdAt: string;
+    finishedAt: string | null;
+}
+
 /** A runner process, as last seen by the server. */
 export interface RunnerRecord {
     id: string;
@@ -590,6 +617,15 @@ export interface Repos {
         renameBranch(projectId: string, from: string, to: string): Promise<void>;
         /** Forget a project's (deleting a project otherwise keeps them for analytics). */
         removeProject(workspaceId: string, projectId: string): Promise<void>;
+    };
+    analyses: {
+        get(id: string): Promise<Analysis | null>;
+        put(analysis: Analysis): Promise<void>;
+        /** Newest first: a workspace's, narrowed by any of kind, project, subject and when they were asked for. */
+        list(
+            filter: { workspaceId: string; kind?: AnalysisKind; projectId?: string; subject?: string; since?: string },
+            limit: number,
+        ): Promise<Analysis[]>;
     };
     settings: {
         get(workspaceId: string, projectId: string | null, key: string): Promise<SettingRecord | null>;

@@ -10,6 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { log } from "@triagent/shared/log";
 import type {
     ActivityRow,
+    Analysis,
     ApiToken,
     ArchivedReport,
     AuditRow,
@@ -181,6 +182,7 @@ export class MemoryStore implements Store {
         githubDeliveries: this.table<GithubDelivery[]>(),
         runners: this.table<RunnerRecord>(),
         findingSources: this.table<FindingSource>(),
+        analyses: this.table<Analysis>(),
         instanceSettings: this.table<{ value: unknown }>(),
         modelGrants: this.table<ModelGrant>(),
         invites: this.table<Invite>(),
@@ -274,6 +276,7 @@ export class MemoryStore implements Store {
                 this.t.activity.remove((r) => r.workspaceId === id);
                 this.t.reviewHistory.remove((r) => r.workspaceId === id);
                 for (const s of this.t.findingSources.values()) if (s.workspaceId === id) this.t.findingSources.delete(sourceKey(s));
+                for (const a of this.t.analyses.values()) if (a.workspaceId === id) this.t.analyses.delete(a.id);
                 for (const i of this.t.githubInstallations.values())
                     if (i.workspaceId === id) this.t.githubInstallations.delete(String(i.id));
                 this.t.modelGrants.delete(id);
@@ -319,6 +322,7 @@ export class MemoryStore implements Store {
                         this.t.jobs.delete(j.id);
                         this.t.jobLogs.delete(j.id);
                     }
+                for (const a of this.t.analyses.values()) if (a.projectId === id) this.t.analyses.delete(a.id);
                 this.t.githubState.delete(id);
                 this.t.githubDeliveries.delete(id);
             }),
@@ -455,6 +459,24 @@ export class MemoryStore implements Store {
             this.t.secrets.values().filter((s) => s.workspaceId === workspaceId && s.projectId === projectId),
         put: (s) => this.write(() => this.t.secrets.set(key(s.workspaceId ?? "", s.projectId ?? "", s.name), s)),
         delete: (workspaceId, projectId, name) => this.write(() => this.t.secrets.delete(key(workspaceId ?? "", projectId ?? "", name))),
+    };
+
+    analyses: Repos["analyses"] = {
+        get: async (id) => this.t.analyses.get(id),
+        put: (a) => this.write(() => this.t.analyses.set(a.id, a)),
+        list: async (f, limit) =>
+            this.t.analyses
+                .values()
+                .filter(
+                    (a) =>
+                        a.workspaceId === f.workspaceId &&
+                        (!f.kind || a.kind === f.kind) &&
+                        (!f.projectId || a.projectId === f.projectId) &&
+                        (f.subject === undefined || a.subject === f.subject) &&
+                        (!f.since || a.createdAt >= f.since),
+                )
+                .sort((x, y) => y.createdAt.localeCompare(x.createdAt) || y.id.localeCompare(x.id))
+                .slice(0, limit),
     };
 
     findingSources: Repos["findingSources"] = {

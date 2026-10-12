@@ -188,7 +188,7 @@ describe("asking a model which findings are the same problem", () => {
         // A protocol this runner doesn't know (a newer server's) says so, rather than failing somewhere inside.
         assert.match(
             (await judgeFindings({ ...m, protocol: "gemini" as RunnerModel["protocol"] }, twoReviews())).error ?? "",
-            /this runner can't ask a model that speaks gemini/,
+            /a model that speaks gemini can't be asked here/,
         );
         // Nor does anything going wrong before a model is asked: it's an answer like the others, never a throw.
         const broken = {

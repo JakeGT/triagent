@@ -2,8 +2,8 @@
 // problem (apps/runner/src/judge.ts). It listens on 127.0.0.1, answers in whichever of the three protocols
 // the request's path is (chat completions, responses, messages), and keeps every request it was sent.
 //
-// Tests choose what it says: `same` decides each pair (by default every pair is the same problem), and
-// `mode` makes it misbehave: answer 500, say something that isn't an answer, take too long, send far too
+// Tests choose what it says: `same` decides each pair (by default every pair is the same problem), `say`
+// answers any other question in words (services/analyst.ts asks those), and `mode` makes it misbehave: answer 500, say something that isn't an answer, take too long, send far too
 // much, or send the caller somewhere else.
 
 import http from "node:http";
@@ -23,6 +23,9 @@ export interface ProviderRequest {
     body: Record<string, unknown>;
     /** The pairs it was asked about. */
     pairs: AskedPair[];
+    /** What it was told it is for, and what it was asked, whichever protocol said so. */
+    system: string;
+    user: string;
 }
 
 export type ProviderMode = "answer" | "error" | "nonsense" | "slow" | "huge" | "redirect" | "strings" | "partial";
@@ -33,6 +36,8 @@ export class FakeProvider {
     same: (pair: AskedPair) => boolean = () => true;
     /** Said before and after the answer, as a model that chats would. */
     chatter: [string, string] = ["", ""];
+    /** What it says to a question that isn't about pairs; null to answer about pairs as usual. */
+    say: ((asked: { system: string; user: string }) => string | null) | null = null;
     private server: http.Server | null = null;
     url = "";
 
@@ -66,11 +71,18 @@ export class FakeProvider {
         const question = path.endsWith("/responses") ? body.input : messages.find((m) => m.role === "user")?.content;
         let pairs: AskedPair[] = [];
         try {
-            pairs = (JSON.parse(String(question)) as { pairs: AskedPair[] }).pairs;
+            const asked = (JSON.parse(String(question)) as { pairs?: unknown }).pairs;
+            if (Array.isArray(asked)) pairs = asked as AskedPair[];
         } catch {
             // not a question this fake knows
         }
-        this.requests.push({ path, headers: req.headers, raw, body, pairs });
+        const system = String(
+            path.endsWith("/responses")
+                ? (body.instructions ?? "")
+                : (body.system ?? messages.find((m) => m.role === "system")?.content ?? ""),
+        );
+        const asked = { system, user: String(question ?? "") };
+        this.requests.push({ path, headers: req.headers, raw, body, pairs, ...asked });
         const json = (status: number, value: unknown) => {
             res.writeHead(status, { "content-type": "application/json" });
             res.end(JSON.stringify(value));
@@ -78,11 +90,11 @@ export class FakeProvider {
         if (this.mode === "error") json(500, { error: { message: "The provider is having a bad day." } });
         else if (this.mode === "redirect") res.writeHead(307, { location: `${this.url}/elsewhere${path}` }).end();
         else if (this.mode === "slow") setTimeout(() => json(200, {}), 5000).unref();
-        else json(...this.reply(path, pairs));
+        else json(...this.reply(path, pairs, this.say?.(asked) ?? null));
     }
 
     /** What it says about these pairs, in the protocol the path is. */
-    private reply(path: string, pairs: AskedPair[]): [number, unknown] {
+    private reply(path: string, pairs: AskedPair[], words: string | null = null): [number, unknown] {
         const answers =
             this.mode === "strings"
                 ? Object.fromEntries(pairs.map((p) => [p.id, "true"]))
@@ -92,7 +104,7 @@ export class FakeProvider {
                 ? "Certainly! They all look quite similar to me."
                 : this.mode === "huge"
                   ? "x".repeat(2 * 1024 * 1024)
-                  : `${this.chatter[0]}${JSON.stringify(answers)}${this.chatter[1]}`;
+                  : (words ?? `${this.chatter[0]}${JSON.stringify(answers)}${this.chatter[1]}`);
         if (path.endsWith("/chat/completions"))
             return [
                 200,

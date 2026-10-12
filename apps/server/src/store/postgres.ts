@@ -17,6 +17,7 @@ import postgres from "postgres";
 import type { Relay } from "../services/events.ts";
 import type {
     ActivityRow,
+    Analysis,
     ApiToken,
     ArchivedReport,
     AuditRow,
@@ -341,6 +342,24 @@ const toSource = (r: Row): FindingSource => ({
     firstSeenAt: iso(r.first_seen_at),
     outcome: r.outcome,
     decidedAt: isoOrNull(r.decided_at),
+});
+
+const toAnalysis = (r: Row): Analysis => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    projectId: r.project_id,
+    branch: r.branch,
+    kind: r.kind,
+    subject: r.subject,
+    status: r.status,
+    requestedBy: r.requested_by,
+    model: r.model,
+    tokens: r.tokens,
+    input: r.input,
+    result: r.result,
+    error: r.error,
+    createdAt: iso(r.created_at),
+    finishedAt: isoOrNull(r.finished_at),
 });
 
 const toRunner = (r: Row): RunnerRecord => ({
@@ -915,6 +934,46 @@ export class PostgresStore implements Store {
             );
             return Object.fromEntries(rows.map((r) => [r.workspace_id as string, Number(r.total)]));
         },
+    };
+
+    analyses: Repos["analyses"] = {
+        get: async (id) => first(await this.rows((sql) => sql`select * from analyses where id = ${id}`), toAnalysis),
+        put: (a) =>
+            this.upsert(
+                "analyses",
+                {
+                    id: a.id,
+                    workspace_id: a.workspaceId,
+                    project_id: a.projectId,
+                    branch: a.branch,
+                    kind: a.kind,
+                    subject: a.subject,
+                    status: a.status,
+                    requested_by: json(this.sql, a.requestedBy),
+                    model: a.model ? json(this.sql, a.model) : null,
+                    tokens: a.tokens ? json(this.sql, a.tokens) : null,
+                    input: a.input ? json(this.sql, a.input) : null,
+                    result: a.result ? json(this.sql, a.result) : null,
+                    error: a.error,
+                    created_at: a.createdAt,
+                    finished_at: a.finishedAt,
+                },
+                ["id"],
+            ),
+        list: async (f, limit) =>
+            (
+                await this.rows(
+                    (sql) => sql`
+                        select * from analyses
+                        where workspace_id = ${f.workspaceId}
+                        ${f.kind ? sql`and kind = ${f.kind}` : sql``}
+                        ${f.projectId ? sql`and project_id = ${f.projectId}` : sql``}
+                        ${f.subject === undefined ? sql`` : sql`and subject = ${f.subject}`}
+                        ${f.since ? sql`and created_at >= ${f.since}` : sql``}
+                        order by created_at desc, id desc
+                        limit ${limit}`,
+                )
+            ).map(toAnalysis),
     };
 
     findingSources: Repos["findingSources"] = {

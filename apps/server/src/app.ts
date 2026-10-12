@@ -8,6 +8,7 @@ import { type RequestInfo, runInRequest } from "./http/request-context.ts";
 import type { Route } from "./http/route.ts";
 import { serveWeb, webDistDir } from "./http/static.ts";
 import { accountRoutes } from "./routes/account.ts";
+import { analysisRoutes } from "./routes/analysis.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { githubRoutes } from "./routes/github.ts";
 import { insightRoutes } from "./routes/insights.ts";
@@ -55,6 +56,7 @@ export function allRoutes(services: Services): Route[] {
         ...githubRoutes,
         ...runnerRoutes,
         ...insightRoutes,
+        ...analysisRoutes,
         ...instanceModelRoutes,
         ...platformRoutes(services, () => routes),
     );

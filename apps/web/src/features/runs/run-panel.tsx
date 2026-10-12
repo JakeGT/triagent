@@ -9,6 +9,7 @@ import { LoadError, LoadingRows } from "@/components/load-state";
 import { ModelChips, modelLabels } from "@/components/model-choice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RunAnalysis } from "@/features/analysis/run-analysis";
 import { api, isApiError, paths } from "@/lib/api";
 import { formatDateTime, plural } from "@/lib/format";
 import { keys, modelsQuery } from "@/lib/queries";
@@ -351,6 +352,7 @@ function RunDetailView({ runId }: { runId: string }) {
             {(r.status === "done" || r.status === "partial") && (r.result?.models?.length ?? 0) > 1 && !r.result?.bakeOff && (
                 <RunModelsTable ws={ws} project={slug} runId={r.id} branch={r.branch} />
             )}
+            {(r.status === "done" || r.status === "partial") && <RunAnalysis ws={ws} runId={r.id} />}
             <div className="grid gap-1">
                 <h3 className="text-sm font-medium" id="run-log-heading">
                     Log{r.log.dropped ? ` (the first ${plural(r.log.dropped, "line")} were dropped to save space)` : ""}

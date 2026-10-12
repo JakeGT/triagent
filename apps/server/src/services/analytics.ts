@@ -7,6 +7,7 @@ import {
     type AnalyticsSection,
     analyse,
     type CurrentFinding,
+    costOf,
     rangeStart,
 } from "../domain/analytics.ts";
 import type { ActivityRow, Project, Workspace } from "../store/types.ts";
@@ -33,6 +34,11 @@ export type Analytics = AnalyticsResult & {
      * (`current`) the findings of the branches not reached.
      */
     truncated: { history: boolean; activity: boolean; current: boolean; sources: boolean };
+    /**
+     * With the reviews part: what a model was asked to write in the range (services/analyst.ts), apart from
+     * the reviews' own figures. `cost` is null when none of it has a price; `unpricedTokens` are left out of it.
+     */
+    analysis?: { count: number; tokens: number; cost: number | null; unpricedTokens: number };
 };
 
 export class AnalyticsService {
@@ -131,6 +137,31 @@ export class AnalyticsService {
             : [];
 
         const slugs = new Map(all.map((p) => [p.id, p.slug]));
+        const price = await this.prices.resolver(workspace.id);
+        // What analyses took, for the scope's project (a question about every project belongs to none).
+        const analysis = { count: 0, tokens: 0, cost: null as number | null, unpricedTokens: 0 };
+        if (wants("reviews")) {
+            const asked = await store.analyses.list(
+                {
+                    workspaceId: workspace.id,
+                    ...(projectId ? { projectId } : {}),
+                    ...(since !== null ? { since: new Date(since).toISOString() } : {}),
+                },
+                LIMITS.page * 5,
+            );
+            for (const a of asked) {
+                if (branch && a.branch !== branch) continue;
+                analysis.count++;
+                if (!a.tokens?.total) continue;
+                analysis.tokens += a.tokens.total;
+                const c = costOf(
+                    { input: a.tokens.input, output: a.tokens.output, cacheRead: 0, total: a.tokens.total },
+                    a.model ? price(a.model.model) : null,
+                );
+                if (c === null) analysis.unpricedTokens += a.tokens.total;
+                else analysis.cost = (analysis.cost ?? 0) + c;
+            }
+        }
         const result = analyse({
             now,
             days: scope.days,
@@ -140,11 +171,12 @@ export class AnalyticsService {
             current,
             sources,
             ...(sections ? { sections } : {}),
-            price: await this.prices.resolver(workspace.id),
+            price,
             projectSlug: (id) => (id ? (slugs.get(id) ?? null) : null),
         });
         return {
             ...result,
+            ...(wants("reviews") ? { analysis } : {}),
             scope: {
                 project: scope.project ? (inScope[0]?.slug ?? null) : null,
                 branch,
