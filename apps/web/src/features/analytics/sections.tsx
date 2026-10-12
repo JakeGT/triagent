@@ -231,10 +231,11 @@ export function ReviewsSection({ a }: { a: Analytics }) {
                     out of the costs. Add prices in Settings → Model prices.
                 </p>
             )}
-            {a.analysis && a.analysis.count > 0 && (
+            {a.analysis && a.analysis.tokens > 0 && (
                 <p className="text-sm text-muted-foreground" data-testid="analysis-usage">
-                    Apart from the reviews: {plural(a.analysis.count, "analysis", "analyses")} written by a model in this range (
-                    {compactCount(a.analysis.tokens)} tokens{a.analysis.cost !== null ? `, ${usd(a.analysis.cost)}` : ""}
+                    Apart from the reviews: {a.analysis.truncated ? "at least " : ""}
+                    {plural(a.analysis.count, "analysis", "analyses")} written by a model in this range ({compactCount(a.analysis.tokens)}{" "}
+                    tokens{a.analysis.cost !== null ? `, ${usd(a.analysis.cost)}` : ""}
                     {a.analysis.unpricedTokens > 0 ? `, ${compactCount(a.analysis.unpricedTokens)} of them without a price` : ""}).
                 </p>
             )}

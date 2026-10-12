@@ -36,9 +36,11 @@ export type Analytics = AnalyticsResult & {
     truncated: { history: boolean; activity: boolean; current: boolean; sources: boolean };
     /**
      * With the reviews part: what a model was asked to write in the range (services/analyst.ts), apart from
-     * the reviews' own figures. `cost` is null when none of it has a price; `unpricedTokens` are left out of it.
+     * the reviews' own figures: how many were written, and the tokens of all that were asked for (one that
+     * failed still used some). `cost` is null when none of it has a price; `unpricedTokens` are left out of
+     * it. `truncated`: there were more than were read, so these are the most recent only.
      */
-    analysis?: { count: number; tokens: number; cost: number | null; unpricedTokens: number };
+    analysis?: { count: number; tokens: number; cost: number | null; unpricedTokens: number; truncated: boolean };
 };
 
 export class AnalyticsService {
@@ -139,7 +141,7 @@ export class AnalyticsService {
         const slugs = new Map(all.map((p) => [p.id, p.slug]));
         const price = await this.prices.resolver(workspace.id);
         // What analyses took, for the scope's project (a question about every project belongs to none).
-        const analysis = { count: 0, tokens: 0, cost: null as number | null, unpricedTokens: 0 };
+        const analysis = { count: 0, tokens: 0, cost: null as number | null, unpricedTokens: 0, truncated: false };
         if (wants("reviews")) {
             const asked = await store.analyses.list(
                 {
@@ -149,9 +151,10 @@ export class AnalyticsService {
                 },
                 LIMITS.page * 5,
             );
+            analysis.truncated = asked.length >= LIMITS.page * 5;
             for (const a of asked) {
                 if (branch && a.branch !== branch) continue;
-                analysis.count++;
+                if (a.status === "done") analysis.count++;
                 if (!a.tokens?.total) continue;
                 analysis.tokens += a.tokens.total;
                 const c = costOf(

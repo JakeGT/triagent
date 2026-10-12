@@ -154,7 +154,7 @@ export interface Analytics {
     truncated: { history: boolean; activity: boolean; current: boolean; sources: boolean };
     models?: ModelsSection;
     /** With the reviews: what a model was asked to write in the range, apart from the reviews' own figures. */
-    analysis?: { count: number; tokens: number; cost: number | null; unpricedTokens: number };
+    analysis?: { count: number; tokens: number; cost: number | null; unpricedTokens: number; truncated: boolean };
     unpriced: { model: string; reviews: number; tokens: number }[];
     reviews?: {
         total: number;

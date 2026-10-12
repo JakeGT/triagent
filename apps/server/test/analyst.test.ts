@@ -386,7 +386,9 @@ describe("asking a model", () => {
     test("analytics count what the asking took, apart from the reviews; with a price, what it cost", async () => {
         await post("/settings/model-prices", { model: "analyst-model", input: 10, output: 10 }, "PUT");
         const a = (await get("/analytics?days=0&sections=reviews")).body;
-        assert.ok(a.analysis.count >= 8, `${a.analysis.count} analyses`);
+        // Those that were written; one that failed isn't counted, though what it used is.
+        assert.ok(a.analysis.count >= 5, `${a.analysis.count} analyses`);
+        assert.equal(a.analysis.truncated, false);
         assert.ok(a.analysis.tokens >= 320 * 5);
         assert.equal(a.analysis.unpricedTokens, 0);
         assert.ok(Math.abs(a.analysis.cost - (a.analysis.tokens * 10) / 1e6) < 1e-9);

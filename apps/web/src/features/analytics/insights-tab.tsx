@@ -74,8 +74,9 @@ function Answer({ analysis }: { analysis: Analysis }) {
                         </p>
                         {lookups.length > 0 && (
                             <ul className="grid list-disc gap-0.5 ps-5">
-                                {lookups.map((l) => (
-                                    <li key={l.label}>
+                                {lookups.map((l, i) => (
+                                    // biome-ignore lint/suspicious/noArrayIndexKey: an answer's lookups are a fixed list, and two can read alike
+                                    <li key={`${i}:${l.label}`}>
                                         <LookupLink lookup={l} />
                                     </li>
                                 ))}
@@ -105,7 +106,8 @@ function Ask({ search, scope }: { search: AnalyticsSearch; scope: string }) {
             }),
         onSuccess: (a) => setAsked(a.id),
     });
-    const waiting = ask.isPending || answer.data?.status === "running";
+    // From the click until there's an answer to show: asking, then the answer's first load, then while it's being written.
+    const waiting = ask.isPending || (asked !== null && !answer.data && !answer.isError) || answer.data?.status === "running";
     const model = settings.data;
     return (
         <Card title="Ask a question">
@@ -160,12 +162,18 @@ function Ask({ search, scope }: { search: AnalyticsSearch; scope: string }) {
 function LatestReview({ project, branch }: { project: string; branch: string }) {
     const { ws } = useWorkspace();
     const queryClient = useQueryClient();
-    const { data } = useQuery(branchAnalysisQuery(ws, project, branch));
+    const { data, isError, error } = useQuery(branchAnalysisQuery(ws, project, branch));
     const write = useMutation({
         mutationFn: ({ runId, kind }: { runId: string; kind: "comparison" | "summary" }) => writeForRun(ws, runId, kind),
         onSettled: () => queryClient.invalidateQueries({ queryKey: analysisKeys.all(ws) }),
     });
-    if (!data) return null;
+    if (isError)
+        return (
+            <p className="text-sm text-destructive" role="alert">
+                Couldn't load what's been written about {branch}: {errorMessage(error)}
+            </p>
+        );
+    if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
     const run = (r: { id: string; title: string } | null): ReactNode =>
         r && (
             <p className="text-sm text-muted-foreground">
@@ -216,6 +224,9 @@ export function InsightsTab({ search, scope }: { search: AnalyticsSearch; scope:
             <Ask search={search} scope={scope} />
             {search.project && branch ? (
                 <LatestReview project={search.project} branch={branch} />
+            ) : search.project ? (
+                // A project is chosen: its default branch is on its way with the list of projects.
+                <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
                 <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground" data-testid="insights-note">
                     Choose a project above to see what its latest review changed, and how that review's models compare.
