@@ -259,15 +259,20 @@ export const TOOLS: Tool[] = [
             ...where,
             ...filterProps,
             assignee: z.string().max(64).optional().describe('A name, or "none"'),
+            author: z
+                .string()
+                .max(120)
+                .optional()
+                .describe('Only findings in code this author last changed ("@login" or "name:…"), in workspaces that show authors'),
             limit: z.number().int().min(1).max(200).optional(),
             offset: z.number().int().min(0).optional(),
         }),
         async run(ctx, args) {
             const { ref, view } = await viewOf(ctx, args);
-            const filters = await ctx.services.patterns.narrow(
+            const filters = await ctx.services.origins.narrow(
                 ref.project,
                 ref.branch,
-                parseFilters(args, { maxLimit: 200, defaultLimit: 50 }),
+                await ctx.services.patterns.narrow(ref.project, ref.branch, parseFilters(args, { maxLimit: 200, defaultLimit: 50 })),
             );
             const r = view.listIssues(filters);
             const more = r.offset + r.items.length < r.total ? `\n_More: repeat with offset ${r.offset + r.items.length}._` : "";
@@ -288,8 +293,10 @@ export const TOOLS: Tool[] = [
         async run(ctx, args) {
             const { ref, view } = await viewOf(ctx, args);
             const issue = view.getIssue(String(args.id));
-            const commonIssue = await ctx.services.patterns.forIssue(ref.project, ref.branch, issue.id);
-            const origin = await ctx.services.origins.forIssue(ref.project, ref.branch, issue.id);
+            const [commonIssue, origin] = await Promise.all([
+                ctx.services.patterns.forIssue(ref.project, ref.branch, issue.id),
+                ctx.services.origins.forIssue(ref.project, ref.branch, issue.id),
+            ]);
             return {
                 text: issueMarkdown(issue, view.branch) + originText(origin) + commonIssueText(commonIssue),
                 data: { ...issue, commonIssue, origin },

@@ -100,7 +100,10 @@ export function originOf(ranges: readonly BlameRange[], startLine: number, endLi
 
 /** How an author is told apart: by GitHub login when there is one (names vary between machines), else by name. */
 export const authorKey = (a: { login: string | null; name: string }): string =>
-    a.login ? `@${a.login.toLowerCase()}` : `name:${a.name.trim().toLowerCase()}`;
+    a.login ? `@${a.login.toLowerCase()}` : `name:${sameAuthor(a.name)}`;
+
+/** A name or key as it's compared: case and spacing don't tell two authors apart (and a filter's value arrives tidied). */
+export const sameAuthor = (s: string): string => s.replace(/\s+/g, " ").trim().toLowerCase();
 
 /** Lines of a file each author last changed. */
 export function linesByAuthor(ranges: readonly BlameRange[], into: Map<string, number>): void {

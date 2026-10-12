@@ -21,6 +21,9 @@ create table finding_origins (
     primary key (project_id, branch, finding_id)
 );
 
+-- For forgetting a workspace's when it turns this off.
+create index finding_origins_workspace on finding_origins (workspace_id);
+
 -- The last time each branch's findings were traced: how it went, and how many lines of the files
 -- looked at each author last changed (so findings can be set against how much someone wrote).
 create table origin_scans (

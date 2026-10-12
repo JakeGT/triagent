@@ -23,6 +23,7 @@ import {
     MAX_BLAME_FILES,
     originOf,
     readBlame,
+    sameAuthor,
     summarise,
     type TracedFinding,
 } from "../domain/origins.ts";
@@ -151,7 +152,12 @@ export class Origins {
                     log.warn("Couldn't trace findings to commits", { project: project.slug, reason: err.message });
                 else logFailure("Tracing findings to commits failed", err, { project: project.slug });
                 const why = err instanceof GitHubError ? err.message : "Something went wrong while asking GitHub.";
-                await this.store.origins.putScan({ ...scan, status: "failed", finishedAt: now(), error: why.slice(0, 500) });
+                await this.store.transaction(async (tx) => {
+                    // Only if it's still this tracing that's on record: turned off meanwhile, there's nothing to say it failed.
+                    const current = await tx.origins.scan(project.id, scan.branch);
+                    if (current?.status !== "running" || current.startedAt !== scan.startedAt) return;
+                    await tx.origins.putScan({ ...scan, status: "failed", finishedAt: now(), error: why.slice(0, 500) });
+                });
             })
             .catch((err: unknown) => logFailure("Couldn't record a failed tracing", err, { project: project.slug }))
             .finally(() => this.pending.delete(task));
@@ -193,7 +199,8 @@ export class Origins {
                 blamed = await ask(batch);
             } catch (err) {
                 // One file too slow to blame takes the request with it: ask for each by itself, and leave out what still fails.
-                if (!(err instanceof GitHubError) || err.status === 401 || err.status === 403 || err.status === 404) throw err;
+                // Refused, or told to slow down: asking again, six times over, would only make it worse.
+                if (!(err instanceof GitHubError) || [401, 403, 404, 429].includes(err.status)) throw err;
                 blamed = [];
                 for (const p of batch) blamed.push((await ask([p]).catch(() => [null]))[0] ?? null);
             }
@@ -257,8 +264,8 @@ export class Origins {
     private async members(workspaceId: string): Promise<(author: { email: string | null; login: string | null }) => string | null> {
         const byEmail = new Map<string, string>();
         const byName = new Map<string, string>();
-        for (const m of await this.store.memberships.forWorkspace(workspaceId)) {
-            const user = await this.store.users.get(m.userId);
+        const members = await this.store.memberships.forWorkspace(workspaceId);
+        for (const user of await Promise.all(members.map((m) => this.store.users.get(m.userId)))) {
             if (!user) continue;
             if (user.email) byEmail.set(user.email.toLowerCase(), user.id);
             if (user.username) byName.set(user.username.toLowerCase(), user.id);
@@ -287,10 +294,9 @@ export class Origins {
 
     private async names(workspaceId: string): Promise<Map<string, string>> {
         const out = new Map<string, string>();
-        for (const m of await this.store.memberships.forWorkspace(workspaceId)) {
-            const user = await this.store.users.get(m.userId);
+        const members = await this.store.memberships.forWorkspace(workspaceId);
+        for (const user of await Promise.all(members.map((m) => this.store.users.get(m.userId))))
             if (user) out.set(user.id, user.displayName);
-        }
         return out;
     }
 
@@ -353,7 +359,7 @@ export class Origins {
         const mine =
             (await this.level(this.store, project.workspaceId)) === "leaderboard"
                 ? (await this.store.origins.forBranch(project.id, branch))
-                      .filter((o) => authorKey({ login: o.authorLogin, name: o.authorName }) === filters.author)
+                      .filter((o) => sameAuthor(authorKey({ login: o.authorLogin, name: o.authorName })) === sameAuthor(filters.author))
                       .map((o) => o.findingId)
                 : [];
         const ids = filters.ids.length ? mine.filter((id) => filters.ids.includes(id)) : mine;

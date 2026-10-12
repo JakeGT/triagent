@@ -150,13 +150,12 @@ export const issueRoutes: Route[] = [
             const ref = branchRef(ctx, ctx.query.branch);
             const view = await ctx.services.reports.view(ctx.services.store, ref.project, ref.branch);
             const issue = view.getIssue(ctx.params.id as string);
-            // The common issue it's under, with its advice, if it's under one.
-            return json({
-                ...issue,
-                commonIssue: await ctx.services.patterns.forIssue(ref.project, ref.branch, issue.id),
-                // The commit behind its lines, when the workspace traces findings to commits.
-                origin: await ctx.services.origins.forIssue(ref.project, ref.branch, issue.id),
-            });
+            // The common issue it's under, with its advice; and the commit behind its lines, when the workspace traces those.
+            const [commonIssue, origin] = await Promise.all([
+                ctx.services.patterns.forIssue(ref.project, ref.branch, issue.id),
+                ctx.services.origins.forIssue(ref.project, ref.branch, issue.id),
+            ]);
+            return json({ ...issue, commonIssue, origin });
         },
     }),
     route({

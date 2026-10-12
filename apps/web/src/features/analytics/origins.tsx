@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
 import { BarList } from "@/components/charts";
+import { LoadError } from "@/components/load-state";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/api";
 import { plural, timeAgo } from "@/lib/format";
@@ -25,12 +26,24 @@ const AGES: [AgeKey, string][] = [
     ["older", "Over a year"],
 ];
 
-/** The page's project and the branch it's about (the project's default when none is chosen). */
-function useBranch(search: AnalyticsSearch) {
+/**
+ * What's known of where the findings of the page's project came from, on the branch it's about (the
+ * project's default when none is chosen). `waiting`: a project is chosen, and its branch or its answer is on its way.
+ */
+function useOrigins(search: AnalyticsSearch) {
     const { ws } = useWorkspace();
     const projects = useQuery(projectsQuery(ws));
-    const branch = search.branch ?? projects.data?.find((p) => p.slug === search.project)?.defaultBranch;
-    return { project: search.project, branch };
+    const project = search.project;
+    const branch = search.branch ?? projects.data?.find((p) => p.slug === project)?.defaultBranch;
+    const query = useQuery({ ...originsQuery(ws, project ?? "", branch ?? ""), enabled: Boolean(project && branch) });
+    const error = projects.isError ? projects.error : query.isError ? query.error : null;
+    return {
+        project,
+        data: query.data,
+        error,
+        retry: () => void (projects.isError ? projects.refetch() : query.refetch()),
+        waiting: Boolean(project) && !error && !query.data,
+    };
 }
 
 /** How the last tracing went, and the button that does it again. */
@@ -79,10 +92,8 @@ function Tracing({ project, data }: { project: string; data: Origins }) {
 
 /** Findings tab: the age of the code behind the open findings, and the pull requests behind the most. Nothing when it's off. */
 export function WhereFrom({ search }: { search: AnalyticsSearch }) {
-    const { ws } = useWorkspace();
-    const { project, branch } = useBranch(search);
-    const query = useQuery({ ...originsQuery(ws, project ?? "", branch ?? ""), enabled: Boolean(project && branch) });
-    const data = query.data;
+    const { project, data, error, retry } = useOrigins(search);
+    if (project && error) return <LoadError error={error} onRetry={retry} title="Couldn't load where the findings came from" />;
     if (!project || !data || data.level === "off") return null;
     return (
         <div className="grid gap-4 lg:grid-cols-2" data-testid="where-from">
@@ -121,89 +132,87 @@ export function WhereFrom({ search }: { search: AnalyticsSearch }) {
 
 /** The Authors tab: findings counted by who last changed the code. Only reachable when the workspace shows it. */
 export function AuthorsTab({ search }: { search: AnalyticsSearch }) {
-    const { ws } = useWorkspace();
-    const { project, branch } = useBranch(search);
-    const query = useQuery({ ...originsQuery(ws, project ?? "", branch ?? ""), enabled: Boolean(project && branch) });
-    const data = query.data;
-    const note = (text: string) => (
-        <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground" data-testid="authors-note">
-            {text}
-        </p>
-    );
     return (
         <Section
             id="authors"
             title="Authors"
             description="Open findings by who last changed the code they're in. For fun, and for knowing who to ask: Git blame names the last person to touch a line, not always the one who wrote the problem."
         >
-            {!project || !branch ? (
-                note("Choose a project above to see its authors.")
-            ) : query.isError ? (
-                note(errorMessage(query.error))
-            ) : !data ? (
-                note("Loading…")
-            ) : !data.authors ? (
-                note("This workspace doesn't show an authors leaderboard. An admin can turn it on in Settings → Analysis.")
-            ) : (
-                <>
-                    <Tracing project={project} data={data} />
-                    <Card title={`Leaderboard for ${data.branch}`}>
-                        <DataTable
-                            caption="Authors by open findings in code they last changed, with how much of the code looked at is theirs"
-                            columns={[
-                                { label: "#", numeric: true },
-                                { label: "Author" },
-                                { label: "Open findings", numeric: true },
-                                { label: "Critical or high", numeric: true },
-                                { label: "All findings", numeric: true },
-                                { label: "Lines", numeric: true },
-                                { label: "Open per 1,000 lines", numeric: true },
-                            ]}
-                            rows={data.authors.map((a, i) => ({
-                                key: a.key,
-                                cells: [
-                                    i + 1,
-                                    <span key="a">
-                                        {a.open > 0 ? (
-                                            <Link
-                                                to="/w/$ws/p/$project/issues"
-                                                params={{ ws, project }}
-                                                search={{ branch: data.branch, author: a.key, status: ["open", "in_progress"] } as never}
-                                                className="link"
-                                            >
-                                                {a.member ?? a.name}
-                                            </Link>
-                                        ) : (
-                                            (a.member ?? a.name)
-                                        )}
-                                        <span className="block font-mono text-xs text-muted-foreground">
-                                            {[a.login ? `@${a.login}` : null, a.member && a.member !== a.name ? a.name : null]
-                                                .filter(Boolean)
-                                                .join(" · ")}
-                                        </span>
-                                    </span>,
-                                    count(a.open),
-                                    count(a.serious),
-                                    count(a.findings),
-                                    count(a.lines),
-                                    a.perThousand === null ? (
-                                        <span key="r" className="text-muted-foreground" title="Too few lines to say">
-                                            —
-                                        </span>
-                                    ) : (
-                                        a.perThousand.toFixed(1)
-                                    ),
-                                ],
-                            }))}
-                            empty="Nothing traced yet."
-                        />
-                        <p className="text-xs text-muted-foreground">
-                            Lines are those each author last changed in the files that have findings, so someone who wrote a lot there has
-                            more to be found in. A name opens their open findings. An author with fewer than 200 lines has no rate.
-                        </p>
-                    </Card>
-                </>
-            )}
+            <Leaderboard search={search} />
         </Section>
+    );
+}
+
+function Leaderboard({ search }: { search: AnalyticsSearch }) {
+    const { ws } = useWorkspace();
+    const { project, data, error, retry, waiting } = useOrigins(search);
+    const note = (text: string) => (
+        <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground" data-testid="authors-note">
+            {text}
+        </p>
+    );
+    if (!project) return note("Choose a project above to see its authors.");
+    if (error) return <LoadError error={error} onRetry={retry} title="Couldn't load the authors" />;
+    if (waiting || !data) return note("Loading…");
+    if (!data.authors) return note("This workspace doesn't show an authors leaderboard. An admin can turn it on in Settings → Analysis.");
+    return (
+        <>
+            <Tracing project={project} data={data} />
+            <Card title={`Leaderboard for ${data.branch}`}>
+                <DataTable
+                    caption="Authors by open findings in code they last changed, with how much of the code looked at is theirs"
+                    columns={[
+                        { label: "#", numeric: true },
+                        { label: "Author" },
+                        { label: "Open findings", numeric: true },
+                        { label: "Critical or high", numeric: true },
+                        { label: "All findings", numeric: true },
+                        { label: "Lines", numeric: true },
+                        { label: "Open per 1,000 lines", numeric: true },
+                    ]}
+                    rows={data.authors.map((a, i) => ({
+                        key: a.key,
+                        cells: [
+                            i + 1,
+                            <span key="a">
+                                {a.open > 0 ? (
+                                    <Link
+                                        to="/w/$ws/p/$project/issues"
+                                        params={{ ws, project }}
+                                        search={{ branch: data.branch, author: a.key, status: ["open", "in_progress"] } as never}
+                                        className="link"
+                                    >
+                                        {a.member ?? a.name}
+                                    </Link>
+                                ) : (
+                                    (a.member ?? a.name)
+                                )}
+                                <span className="block font-mono text-xs text-muted-foreground">
+                                    {[a.login ? `@${a.login}` : null, a.member && a.member !== a.name ? a.name : null]
+                                        .filter(Boolean)
+                                        .join(" · ")}
+                                </span>
+                            </span>,
+                            count(a.open),
+                            count(a.serious),
+                            count(a.findings),
+                            count(a.lines),
+                            a.perThousand === null ? (
+                                <span key="r" className="text-muted-foreground" title="Too few lines to say">
+                                    —
+                                </span>
+                            ) : (
+                                a.perThousand.toFixed(1)
+                            ),
+                        ],
+                    }))}
+                    empty="Nothing traced yet."
+                />
+                <p className="text-xs text-muted-foreground">
+                    Lines are those each author last changed in the files that have findings, so someone who wrote a lot there has more to
+                    be found in. A name opens their open findings. An author with fewer than 200 lines has no rate.
+                </p>
+            </Card>
+        </>
     );
 }
