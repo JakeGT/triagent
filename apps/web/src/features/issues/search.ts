@@ -103,8 +103,9 @@ export function parseIssueSearch(raw: Record<string, unknown>): IssueSearch {
         // Means nothing without a model to be the only one.
         if (flag(raw.onlyModel) === true) out.onlyModel = true;
     }
+    // An id, as the server makes them: anything else would only be refused.
     const pattern = text(raw.pattern, 40);
-    if (pattern) out.pattern = pattern;
+    if (pattern && /^[\w-]+$/.test(pattern)) out.pattern = pattern;
     const sort = text(raw.sort);
     if (sort && (ISSUE_SORTS as readonly string[]).includes(sort) && sort !== "priority") out.sort = sort as IssueSort;
     const page = Number(raw.page);

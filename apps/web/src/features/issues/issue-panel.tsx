@@ -520,7 +520,7 @@ function IssueView({ id }: { id: string }) {
                     data-testid="common-issue"
                 >
                     <h3 id="common-issue-heading" className="text-sm font-medium">
-                        Common issue here
+                        Part of a common issue
                     </h3>
                     <div className="grid gap-1.5 rounded-md border bg-background px-3 py-2 text-sm">
                         <p className="font-medium">{issue.commonIssue.title}</p>

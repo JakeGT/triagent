@@ -268,6 +268,10 @@ export function IssuesPage() {
         setShown(show && selectedIds.length ? selectedIds.slice(0, MAX_SHOWN) : null);
         firstPage();
     };
+    // A link to a common issue's findings (from an issue's panel, say) is a new view of the list: it isn't
+    // answered with the selection that happened to be showing.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: only when the common issue asked for changes
+    useEffect(() => setShown(null), [search.pattern]);
     const clearSelection = () => {
         setSelection({});
         if (shown) showSelected(false);
@@ -345,7 +349,8 @@ export function IssuesPage() {
                     onChange={filter}
                     searchRef={searchRef}
                 />
-                {search.pattern && (
+                {/* Not while showing the selection: that view is of the selected issues, whatever the filters. */}
+                {search.pattern && !shown && (
                     <UnderCommonIssue
                         ws={ws}
                         project={slug}
@@ -517,8 +522,10 @@ function UnderCommonIssue({
     id: string;
     onClear(): void;
 }) {
-    const { data } = useQuery(commonIssuesQuery(ws, project, branch));
+    const { data, isError } = useQuery(commonIssuesQuery(ws, project, branch));
     const item = data?.items.find((x) => x.id === id);
+    // Loaded, and it isn't there: deleted or merged since the link was made.
+    const gone = isError || (data !== undefined && !item);
     return (
         <div
             className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-md border bg-card px-3 py-2 text-sm"
@@ -526,7 +533,9 @@ function UnderCommonIssue({
         >
             <p className="max-w-measure">
                 <span className="text-muted-foreground">Common issue: </span>
-                <span className="font-medium">{item?.title ?? "…"}</span>
+                <span className="font-medium">
+                    {item?.title ?? (gone ? "one that's no longer there (deleted, or merged into another)" : "…")}
+                </span>
                 {item?.guidance && <span className="text-muted-foreground"> How to avoid it: {item.guidance}</span>}
             </p>
             <Button variant="outline" size="sm" onClick={onClear}>
