@@ -856,7 +856,7 @@ export const TOOLS: Tool[] = [
         async run(ctx, args) {
             const { run, comparison } = await ctx.services.runs.comparison(ctx.access.workspace, String(args.id));
             const price = await ctx.services.prices.resolver(ctx.access.workspace.id);
-            const models = comparison.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model)) }));
+            const models = comparison.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model, m.provider)) }));
             const text = [
                 `${run.title}: ${comparison.total} finding(s) between them, ${comparison.agreed} found by more than one model.`,
                 ...models.map(

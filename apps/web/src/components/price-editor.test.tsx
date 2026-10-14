@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { PriceEditor, readPrice } from "./price-editor";
+import { appliesTo, PriceEditor, readPrice } from "./price-editor";
 
 const PRICES = [
     { model: "anthropic/claude-sonnet-4.5", input: 3, output: 15, cacheRead: null, setBy: "Sam", setAt: "2026-10-07T09:30:00.000Z" },
@@ -96,5 +96,55 @@ describe("PriceEditor", () => {
         await user.click(screen.getByRole("button", { name: "Remove the price of anthropic/claude-sonnet-4.5" }));
         await user.click(await screen.findByRole("button", { name: "Remove price" }));
         expect(onRemove).toHaveBeenCalledWith("anthropic/claude-sonnet-4.5");
+    });
+
+    it("suggests only favourites' names, and says when a name matches no review or favourite", async () => {
+        const user = userEvent.setup();
+        const { container, rerender } = render(
+            <PriceEditor
+                title="prices"
+                prices={[]}
+                canEdit
+                catalogue={CATALOGUE}
+                suggest={[{ model: "muse-spark-1.3-contributor", provider: "meta", label: "Muse" }]}
+                used={[{ model: "deepseek-flash", provider: "deepseek" }]}
+                onSave={vi.fn()}
+                onRemove={vi.fn()}
+            />,
+        );
+        const options = [...container.querySelectorAll("datalist option")].map((o) => (o as HTMLOptionElement).value);
+        expect(options).toEqual(["muse-spark-1.3-contributor"]);
+
+        const model = screen.getByLabelText("Model");
+        await user.type(model, "meta/muse-spark");
+        expect(screen.getByTestId("price-unused").textContent).toMatch(/won't change any costs/);
+        for (const name of ["deepseek-flash", "deepseek/deepseek-flash", "muse-spark-1.3-contributor", "meta/muse-spark-1.3-contributor"]) {
+            await user.clear(model);
+            await user.type(model, name);
+            expect(screen.queryByTestId("price-unused"), name).toBeNull();
+        }
+
+        // Set price from the list of models reviews used fills in the name.
+        rerender(
+            <PriceEditor
+                title="prices"
+                prices={[]}
+                canEdit
+                used={[{ model: "deepseek-flash", provider: "deepseek" }]}
+                fill={{ model: "deepseek-flash" }}
+                onSave={vi.fn()}
+                onRemove={vi.fn()}
+            />,
+        );
+        await waitFor(() => expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe("deepseek-flash"));
+        expect(document.activeElement).toBe(screen.getByLabelText("Model"));
+    });
+
+    it("matches names as the server does", () => {
+        const used = { model: "muse-spark-1.3-contributor", provider: "meta" };
+        expect(appliesTo("muse-spark-1.3-contributor", used)).toBe(true);
+        expect(appliesTo("meta/muse-spark-1.3-contributor", used)).toBe(true);
+        expect(appliesTo("openrouter/muse-spark-1.3-contributor", used)).toBe(false);
+        expect(appliesTo("meta/x", { model: "x", provider: null })).toBe(false);
     });
 });

@@ -115,8 +115,13 @@ for (const theme of ["light", "dark"] as const) {
         await signInPage(page, ADMIN_USER, ADMIN_PASSWORD);
         await page.goto(`/w/${ws}/p/${project}/overview`);
         await page.getByRole("link", { name: "Analytics" }).click();
-        await expect(page).toHaveURL(new RegExp(`/w/${ws}/analytics$`));
+        // It opens on the project you were in; every project is a choice away.
+        await expect(page).toHaveURL(new RegExp(`/w/${ws}/analytics\\?project=${project}$`));
         await expect(page.getByRole("heading", { level: 1, name: "Analytics" })).toBeVisible();
+        const what = page.getByRole("form", { name: "What to show" });
+        await expect(what.getByLabel("Project")).toHaveValue(project);
+        await what.getByLabel("Project").selectOption("");
+        await expect(page).toHaveURL(new RegExp(`/w/${ws}/analytics(/overview)?$`));
         const tabs = page.getByRole("navigation", { name: "Analytics" });
         const open = async (name: string, heading: string, address: string) => {
             await tabs.getByRole("link", { name, exact: true }).click();
@@ -235,7 +240,18 @@ test("workspace model prices: set, listed with where each price comes from, and 
     await page.goto(`/w/${ws}/settings/model-prices`);
     await expect(page.getByRole("row", { name: /openai\/gpt-5/ }).first()).toContainText("No price: left out of costs");
     const editor = page.getByTestId("price-editor").first();
-    await editor.getByLabel("Model").fill("openai/gpt-5");
+    // A name that no review used, and isn't a favourite, would price nothing: said before saving.
+    await editor.getByLabel("Model").fill("someone/else");
+    await expect(editor.getByTestId("price-unused")).toBeVisible();
+    // Set price fills in the name reviews used.
+    await page.getByRole("button", { name: "Set price for openai/gpt-5" }).click();
+    await expect(editor.getByLabel("Model")).toHaveValue("openai/gpt-5");
+    await expect(editor.getByLabel("Model")).toBeFocused();
+    await expect(editor.getByTestId("price-unused")).toHaveCount(0);
+    await shot(page, "model-prices-set");
+    await page.setViewportSize({ width: 390, height: 900 });
+    await shot(page, "model-prices-set-narrow");
+    await page.setViewportSize({ width: 1400, height: 900 });
     await editor.getByRole("button", { name: "Use OpenRouter's price" }).click();
     await expect(editor.getByLabel("Input (US$ per million)")).toHaveValue("1.25");
     await editor.getByLabel("Output (US$ per million)").fill("abc");

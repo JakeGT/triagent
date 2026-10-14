@@ -248,3 +248,74 @@ test("instance routes refuse members who aren't instance admins, and every token
     assert.equal(await t.services.store.modelGrants.get(ws), null);
     assert.equal(await t.services.store.secrets.get(null, null, "model-key:openrouter"), null);
 });
+
+test("a price set as provider/model applies to reviews that recorded the model and provider apart, past ones too", async () => {
+    const workspace = (await t.services.store.workspaces.bySlug("acme"))?.id as string;
+    // A review from before any price: meta's own model id, with the provider recorded apart.
+    await t.services.store.reviewHistory.add({
+        id: "meta-review",
+        workspaceId: workspace,
+        projectId: null,
+        branch: "main",
+        at: new Date().toISOString(),
+        source: "run",
+        kind: "pr",
+        status: "done",
+        model: "muse-spark-1.3-contributor",
+        provider: "meta",
+        keySource: "workspace",
+        tokens: { input: 2_000_000, output: 1_000_000, cacheRead: 0, total: 3_000_000 },
+        details: {},
+    });
+    const before = await t.request("/api/v1/w/acme/settings/model-prices", { session: editorSession });
+    const row = () =>
+        before.body.used.find((u: { model: string }) => u.model === "muse-spark-1.3-contributor") as {
+            provider: string;
+            price: unknown;
+        };
+    assert.equal(row().provider, "meta");
+    assert.equal(row().price, null);
+
+    const set = await t.request("/api/v1/w/acme/settings/model-prices", {
+        method: "PUT",
+        session: adminMember,
+        body: { model: "meta/muse-spark-1.3-contributor", input: 1, output: 4 },
+    });
+    assert.equal(set.status, 200, set.text);
+    const price = await t.services.prices.resolver(workspace);
+    assert.equal(price("muse-spark-1.3-contributor", "meta")?.source, "workspace");
+    // Another provider's model of the same name isn't priced by it.
+    assert.equal(price("muse-spark-1.3-contributor", "openrouter"), null);
+    // A bare price covers every provider, but the provider's own wins over it.
+    await t.request("/api/v1/w/acme/settings/model-prices", {
+        method: "PUT",
+        session: adminMember,
+        body: { model: "muse-spark-1.3-contributor", input: 9, output: 9 },
+    });
+    const both = await t.services.prices.resolver(workspace);
+    assert.equal(both("muse-spark-1.3-contributor", "meta")?.input, 1);
+    assert.equal(both("muse-spark-1.3-contributor", "openrouter")?.input, 9);
+    await t.request("/api/v1/w/acme/settings/model-prices", {
+        method: "DELETE",
+        session: adminMember,
+        body: { model: "muse-spark-1.3-contributor" },
+    });
+
+    const after = await t.request("/api/v1/w/acme/settings/model-prices", { session: editorSession });
+    assert.deepEqual(after.body.used.find((u: { model: string }) => u.model === "muse-spark-1.3-contributor").price, {
+        input: 1,
+        output: 4,
+        cacheRead: null,
+        source: "workspace",
+    });
+    const analytics = await t.request("/api/v1/w/acme/analytics?days=0", { session: editorSession });
+    assert.equal(analytics.status, 200, analytics.text);
+    const model = analytics.body.reviews.byModel.find((m: { key: string }) => m.key === "muse-spark-1.3-contributor");
+    assert.equal(model.cost, 6);
+    assert.ok(!analytics.body.unpriced.some((u: { model: string }) => u.model === "muse-spark-1.3-contributor"));
+    await t.request("/api/v1/w/acme/settings/model-prices", {
+        method: "DELETE",
+        session: adminMember,
+        body: { model: "meta/muse-spark-1.3-contributor" },
+    });
+});

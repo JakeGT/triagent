@@ -459,7 +459,7 @@ export class Analyst {
                     byCategory: have ? byCategory : null,
                     seconds: m.seconds,
                     tokens: m.tokensTotal,
-                    cost: costOf(m.tokens, price(m.model)),
+                    cost: costOf(m.tokens, price(m.model, m.provider)),
                     onlyItFoundExamples: mine
                         .filter((x) => x.foundBy?.length === 1)
                         .slice(0, EXAMPLES)

@@ -159,7 +159,7 @@ export class AnalyticsService {
                 analysis.tokens += a.tokens.total;
                 const c = costOf(
                     { input: a.tokens.input, output: a.tokens.output, cacheRead: 0, total: a.tokens.total },
-                    a.model ? price(a.model.model) : null,
+                    a.model ? price(a.model.model, a.model.provider) : null,
                 );
                 if (c === null) analysis.unpricedTokens += a.tokens.total;
                 else analysis.cost = (analysis.cost ?? 0) + c;

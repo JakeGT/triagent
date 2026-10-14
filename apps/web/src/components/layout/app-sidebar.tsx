@@ -230,7 +230,8 @@ export function AppSidebar() {
                                     active={pathname === `/w/${ws}/analytics` || pathname.startsWith(`/w/${ws}/analytics/`)}
                                 >
                                     {(c) => (
-                                        <Link to="/w/$ws/analytics" params={{ ws }}>
+                                        // Opens on the project in hand; "All projects" is a choice on the page.
+                                        <Link to="/w/$ws/analytics" params={{ ws }} search={project ? { project } : {}}>
                                             {c}
                                         </Link>
                                     )}

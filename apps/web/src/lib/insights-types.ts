@@ -300,7 +300,14 @@ export interface PriceEntry extends Price {
 export interface WorkspacePrices {
     prices: PriceEntry[];
     instance: PriceEntry[];
-    used: { model: string; reviews: number; tokens: number; price: (Price & { source: PriceSource }) | null }[];
+    /** The models reviews used: the provider's model id, and the provider apart (null on old reviews). */
+    used: {
+        model: string;
+        provider: string | null;
+        reviews: number;
+        tokens: number;
+        price: (Price & { source: PriceSource }) | null;
+    }[];
 }
 
 export interface Allowance {

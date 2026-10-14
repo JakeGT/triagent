@@ -3,7 +3,7 @@
 // prices and a workspace's own.
 
 import { CircleMinus } from "lucide-react";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
 import { Field, FieldError, FieldRow } from "@/components/field";
 import { FormActions } from "@/components/form";
@@ -44,11 +44,19 @@ export function readPrice(form: { model: string; input: string; output: string; 
 
 const EMPTY = { model: "", input: "", output: "", cacheRead: "" };
 
+/** Whether a price under this name applies to a model reviews used (as the server matches them). */
+export function appliesTo(name: string, used: { model: string; provider: string | null }) {
+    return name === used.model || (used.provider !== null && name === `${used.provider}/${used.model}`);
+}
+
 export function PriceEditor({
     title,
     prices,
     canEdit,
     catalogue = [],
+    suggest = [],
+    used,
+    fill,
     onSave,
     onRemove,
 }: {
@@ -56,8 +64,14 @@ export function PriceEditor({
     title: string;
     prices: PriceEntry[];
     canEdit: boolean;
-    /** OpenRouter's models, to suggest names and fill in their listed prices. */
+    /** OpenRouter's models, to fill in their listed prices. */
     catalogue?: CatalogueModel[];
+    /** The favourites, whose names the model field suggests. */
+    suggest?: { model: string; provider: string | null; label: string }[];
+    /** The models this workspace's reviews used, to say when a name matches none of them (nor a favourite). */
+    used?: { model: string; provider: string | null }[];
+    /** A model name to put in the form (each new object fills it again). */
+    fill?: { model: string } | null;
     onSave(price: PriceInput): Promise<unknown>;
     onRemove(model: string): Promise<unknown>;
 }) {
@@ -65,7 +79,19 @@ export function PriceEditor({
     const [form, setForm] = useState(EMPTY);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
-    const listed = catalogue.find((m) => m.id === form.model.trim());
+    const modelInput = useRef<HTMLInputElement>(null);
+    const name = form.model.trim();
+    const listed = catalogue.find((m) => m.id === name);
+    const unused =
+        used !== undefined && MODEL_NAME.test(name) && !used.some((u) => appliesTo(name, u)) && !suggest.some((f) => appliesTo(name, f));
+    const suggested = [...new Map(suggest.map((f) => [f.model, f])).values()];
+
+    useEffect(() => {
+        if (!fill) return;
+        setForm({ ...EMPTY, model: fill.model });
+        setError(null);
+        modelInput.current?.focus();
+    }, [fill]);
 
     const submit = async (e: FormEvent) => {
         e.preventDefault();
@@ -117,10 +143,13 @@ export function PriceEditor({
                             <TableHead scope="col" className="text-end">
                                 Output
                             </TableHead>
-                            <TableHead scope="col" className="text-end">
+                            {/* On a phone, the price itself: cache reads and who set it are under Edit and on wider screens. */}
+                            <TableHead scope="col" className="hidden text-end sm:table-cell">
                                 Cache reads
                             </TableHead>
-                            <TableHead scope="col">Set by</TableHead>
+                            <TableHead scope="col" className="hidden sm:table-cell">
+                                Set by
+                            </TableHead>
                             {canEdit && (
                                 <TableHead scope="col">
                                     <span className="sr-only">Actions</span>
@@ -131,13 +160,13 @@ export function PriceEditor({
                     <TableBody>
                         {prices.map((p) => (
                             <TableRow key={p.model}>
-                                <TableCell className="font-mono text-xs break-all whitespace-normal">{p.model}</TableCell>
+                                <TableCell className="min-w-24 font-mono text-xs break-all whitespace-normal">{p.model}</TableCell>
                                 <TableCell className="text-end tabular-nums">{perMillion(p.input)}</TableCell>
                                 <TableCell className="text-end tabular-nums">{perMillion(p.output)}</TableCell>
-                                <TableCell className="text-end tabular-nums">
+                                <TableCell className="hidden text-end tabular-nums sm:table-cell">
                                     {p.cacheRead === null ? "As input" : perMillion(p.cacheRead)}
                                 </TableCell>
-                                <TableCell className="text-muted-foreground">
+                                <TableCell className="hidden text-muted-foreground sm:table-cell">
                                     {p.setBy}, {formatDate(p.setAt)}
                                 </TableCell>
                                 {canEdit && (
@@ -160,8 +189,9 @@ export function PriceEditor({
                                             </Button>
                                             <ConfirmAction
                                                 trigger={
-                                                    <Button type="button" size="sm" variant="danger" className="ms-3">
-                                                        <CircleMinus /> Remove <span className="sr-only">the price of {p.model}</span>
+                                                    <Button type="button" size="sm" variant="danger" className="sm:ms-3">
+                                                        <CircleMinus /> <span className="sr-only sm:not-sr-only">Remove</span>{" "}
+                                                        <span className="sr-only">the price of {p.model}</span>
                                                     </Button>
                                                 }
                                                 title={`Remove the price of ${p.model}?`}
@@ -181,7 +211,8 @@ export function PriceEditor({
                 <form className="grid gap-form" onSubmit={submit} aria-label={`Set a price (${title})`}>
                     <FieldRow columns={4} className="lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
                         {field("model", "Model", {
-                            list: catalogue.length ? `${id}-models` : undefined,
+                            ref: modelInput,
+                            list: suggested.length ? `${id}-models` : undefined,
                             spellCheck: false,
                             autoComplete: "off",
                             className: "font-mono",
@@ -190,12 +221,18 @@ export function PriceEditor({
                         {field("output", "Output (US$ per million)", { inputMode: "decimal" })}
                         {field("cacheRead", "Cache reads (optional)", { inputMode: "decimal", placeholder: "As input" })}
                     </FieldRow>
-                    {catalogue.length > 0 && (
+                    {suggested.length > 0 && (
                         <datalist id={`${id}-models`}>
-                            {catalogue.map((m) => (
-                                <option key={m.id} value={m.id} />
+                            {suggested.map((f) => (
+                                <option key={f.model} value={f.model} label={f.label} />
                             ))}
                         </datalist>
+                    )}
+                    {unused && (
+                        <p className="text-sm text-muted-foreground" data-testid="price-unused">
+                            No review here has used a model called {name}, and it isn't a favourite, so this price won't change any costs.
+                            Use the name shown under "Models your reviews used".
+                        </p>
                     )}
                     <FieldError id={`${id}-error`} message={error} />
                     <FormActions>
