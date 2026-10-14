@@ -32,6 +32,7 @@ import type {
     TaskDetail,
     TaskList,
     WorkspaceDetail,
+    WorkspaceGithub,
 } from "./types";
 
 export const keys = {
@@ -200,6 +201,13 @@ export const modelsQuery = (ws: string, p: string | null = null) =>
     queryOptions({
         queryKey: keys.modelChoices(ws, p),
         queryFn: ({ signal }) => api.get<ModelChoices>(`${paths.workspace(ws)}/models`, { project: p ?? undefined }, { signal }),
+    });
+
+/** The workspace's GitHub settings: how projects connect, and which GitHub server. */
+export const workspaceGithubQuery = (ws: string) =>
+    queryOptions({
+        queryKey: keys.wsSettings(ws, "github"),
+        queryFn: ({ signal }) => api.get<WorkspaceGithub>(`${paths.workspace(ws)}/settings/github`, undefined, { signal }),
     });
 
 export const auditQuery = (ws: string) =>

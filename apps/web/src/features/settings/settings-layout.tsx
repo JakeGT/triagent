@@ -100,6 +100,7 @@ export function SettingsLayout() {
     });
     const workspaceItems: Item[] = [
         wsLink("/projects", "Projects", "/w/$ws/settings/projects"),
+        ...(can("configure") ? [wsLink("/github", "GitHub", "/w/$ws/settings/github")] : []),
         wsLink("/models", "Models", "/w/$ws/settings/models"),
         wsLink("/model-prices", "Model prices", "/w/$ws/settings/model-prices"),
         wsLink("/analysis", "Analysis", "/w/$ws/settings/analysis"),

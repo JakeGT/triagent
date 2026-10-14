@@ -2,7 +2,7 @@
 
 Triagent runs [Open Code Review](https://www.npmjs.com/package/@alibaba-group/open-code-review) on your GitHub pull requests and gives people and AI agents one place to triage what it finds.
 
-- **Automatic reviews**: through a GitHub App (or a fine-grained token), every pull request is reviewed once it's ready and its checks have passed, summarised in a comment and reported as a commit status. Later pushes are reviewed when someone asks: a `/review` comment, the `review` label, or a button.
+- **Automatic reviews**: through a GitHub App (or a personal access token, for one project or a whole workspace, on github.com or GitHub Enterprise Server), every pull request is reviewed once it's ready and its checks have passed, summarised in a comment and reported as a commit status. Later pushes are reviewed when someone asks: a `/review` comment, the `review` label, or a button.
 - **Triage board**: filter, assign, correct ratings, mark duplicates, add notes and track the reviewer's tasks, per branch.
 - **Built for agents**: an MCP server, a REST API with OpenAPI, and Markdown views, so Claude Code, Codex and others can claim and fix findings alongside people.
 - **Workspaces**: a personal workspace for everyone, plus organisations, each with its own projects, members, keys and API tokens.
@@ -73,7 +73,7 @@ PUBLIC_ORIGIN=http://localhost:5173 TRIAGENT_ADMIN_USER=me TRIAGENT_ADMIN_PASSWO
 TRIAGENT_SERVER_URL=http://localhost:8080 pnpm dev:runner    # in another terminal, with the same secret
 ```
 
-Then connect a project to GitHub (Project settings → GitHub: the GitHub App, set up under Settings → GitHub App by an instance admin, or a fine-grained token), connect a model provider with its key and choose a model (Settings → Models), and start a review from Runs, Pull requests or Branches & reports. `apps/runner/.env.example` lists the runner's settings; How many reviews run at once is set by an instance admin under Settings → Instance → Reviews (on the instance, and in one workspace) and, for one workspace, under Workspaces; `REVIEW_CONCURRENCY` (default 1) and `REVIEW_CONCURRENCY_PER_WORKSPACE` (default 1) are the server's defaults until limits are saved there. A runner works on `RUNNER_CONCURRENCY` reviews at once (default 1), and reviews past what the runners can do wait for a free slot. The tests use a fake GitHub and a fake `ocr` (`tests/fakes`), so they need `git` but nothing else.
+Then connect a project to GitHub (Project settings → GitHub: the GitHub App, set up under Settings → GitHub App by an instance admin, or a token; or give the whole workspace a token, and its own GitHub Enterprise Server if it has one, under Workspace settings → GitHub), connect a model provider with its key and choose a model (Settings → Models), and start a review from Runs, Pull requests or Branches & reports. `apps/runner/.env.example` lists the runner's settings; How many reviews run at once is set by an instance admin under Settings → Instance → Reviews (on the instance, and in one workspace) and, for one workspace, under Workspaces; `REVIEW_CONCURRENCY` (default 1) and `REVIEW_CONCURRENCY_PER_WORKSPACE` (default 1) are the server's defaults until limits are saved there. A runner works on `RUNNER_CONCURRENCY` reviews at once (default 1), and reviews past what the runners can do wait for a free slot. The tests use a fake GitHub and a fake `ocr` (`tests/fakes`), so they need `git` but nothing else.
 
 ### Model providers
 
@@ -99,7 +99,7 @@ Reviews can use any of these. Each workspace connects as many as it likes under 
 | Azure OpenAI | `openai-responses` or `openai` | your resource's endpoint + `/openai/v1` | endpoint, API key; the deployment name is the model |
 | Custom | `openai`, `openai-responses` or `anthropic` | the base URL you give | base URL and key (Ollama, LiteLLM, vLLM or a gateway) |
 
-Custom and Azure addresses must use https and resolve only to public addresses, checked when saved and again when each review starts. A self-hosted instance can allow private ones (an Ollama on its own network, plain http included) with `ALLOW_PRIVATE_MODEL_URLS=true` on the server.
+Custom and Azure addresses must use https and resolve only to public addresses, checked when saved and again when each review starts. A self-hosted instance can allow private ones (an Ollama on its own network, plain http included) with `ALLOW_PRIVATE_MODEL_URLS=true` on the server. A workspace's GitHub Enterprise Server address is checked the same way; `ALLOW_PRIVATE_GITHUB_URLS=true` allows one on a private network.
 
 ### Running it with Docker
 

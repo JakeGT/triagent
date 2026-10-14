@@ -603,7 +603,8 @@ export class FakeGitHub {
             return json(res, 200, { access_token: token, token_type: "bearer" });
         }
         if (!url.pathname.startsWith("/api/")) return json(res, 404, { message: "Not Found" });
-        const p = url.pathname.slice(4);
+        // GitHub Enterprise Server's REST API is under /api/v3 (its GraphQL at /api/graphql): served the same.
+        const p = url.pathname.startsWith("/api/v3/") ? url.pathname.slice(7) : url.pathname.slice(4);
         const token = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "")?.[1] ?? null;
         const auth = this.who(token);
         this.log.push({ method: req.method ?? "GET", path: `${p}${url.search}`, auth: auth.kind, body });

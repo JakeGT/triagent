@@ -85,7 +85,7 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
         return (
             <SettingsSection title="GitHub App">
                 <p className="text-sm text-muted-foreground">
-                    This instance has no GitHub App yet, so this project uses an access token (below).{" "}
+                    This instance has no GitHub App yet, so projects use access tokens: the project's own (below), or the workspace's.{" "}
                     {me.user.isInstanceAdmin ? (
                         <Link to="/w/$ws/settings/github-app" params={{ ws }} className="link">
                             Set up the GitHub App

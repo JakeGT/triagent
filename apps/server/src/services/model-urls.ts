@@ -109,6 +109,10 @@ function reachesPrivate(address: string): boolean {
 export interface UrlPolicy {
     allowPrivate: boolean;
     lookup: Lookup;
+    /** For messages: what is sent there ("model keys"), the setting that allows private addresses, and the field secrets go in. */
+    sends?: string;
+    flag?: string;
+    secretField?: string;
 }
 
 /**
@@ -123,7 +127,8 @@ export async function checkModelUrl(raw: string, policy: UrlPolicy, what = "The 
         throw new UnsafeUrl(`${what} isn't a valid address. Give the full address, starting https://.`);
     }
     if (url.protocol !== "https:" && url.protocol !== "http:") throw new UnsafeUrl(`${what} must start https://.`);
-    if (url.username || url.password) throw new UnsafeUrl(`${what} mustn't contain a user name or password. Use the key field.`);
+    if (url.username || url.password)
+        throw new UnsafeUrl(`${what} mustn't contain a user name or password. Use the ${policy.secretField ?? "key field"}.`);
     if (url.search || url.hash) throw new UnsafeUrl(`${what} mustn't have a query string or fragment.`);
     const host = url.hostname.replace(/^\[|\]$/g, "");
     let addresses: string[];
@@ -146,7 +151,7 @@ export async function checkModelUrl(raw: string, policy: UrlPolicy, what = "The 
     const isPrivate = addresses.some(isPrivateAddress);
     if (isPrivate && !policy.allowPrivate)
         throw new UnsafeUrl(
-            `${what} points at a private or loopback address (${host}). This instance only sends model keys to public addresses; its administrator can allow private ones with ALLOW_PRIVATE_MODEL_URLS=true.`,
+            `${what} points at a private or loopback address (${host}). This instance only sends ${policy.sends ?? "model keys"} to public addresses; its administrator can allow private ones with ${policy.flag ?? "ALLOW_PRIVATE_MODEL_URLS"}=true.`,
         );
     // Plain http only where the instance has allowed private addresses, and only to them.
     if (url.protocol === "http:" && !(policy.allowPrivate && addresses.every(reachesPrivate)))

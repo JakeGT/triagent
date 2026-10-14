@@ -2,7 +2,9 @@
 //
 //  - app: the instance's GitHub App, installed on an account and linked to a workspace; the project picks
 //    one of the installation's repositories. Tokens are minted per use and narrowed to that repository.
-//  - token: a fine-grained personal access token stored (encrypted) on the project, the fallback.
+//  - token: a personal access token (fine-grained or classic) stored (encrypted) on the project, or else
+//    the workspace's, when the workspace is set to lend one (services/github/workspace.ts). Token
+//    connections use the workspace's GitHub server: the instance's, or its own GitHub Enterprise Server.
 //
 // Also: linking installations to workspaces (only after proving the person can see the installation),
 // creating the instance's app, commit statuses and the pull request comment.
@@ -15,10 +17,12 @@ import { logFailure } from "../../failure.ts";
 import { now, sha256 } from "../../security.ts";
 import type { GithubDelivery, GithubInstallation, Project, Repos, User, Workspace } from "../../store/types.ts";
 import type { Actor, Core } from "../core.ts";
+import type { Lookup } from "../model-urls.ts";
 import type { Projects } from "../projects.ts";
 import type { Settings } from "../settings.ts";
 import { type AppCredentials, GithubApp } from "./app.ts";
 import { type CommitState, GitHubClient, GitHubError, parseRepo, type RepoTarget } from "./client.ts";
+import { WorkspaceGithub } from "./workspace.ts";
 
 const CONNECTION = "github-connection";
 const KEEP_DELIVERIES = 50;
@@ -39,6 +43,8 @@ interface AppConnection {
 /** What a project uses to reach GitHub. */
 export interface GithubAccess {
     mode: "app" | "token";
+    /** Whose token a token connection uses: the project's own, or the workspace's. */
+    tokenFrom?: "project" | "workspace";
     /** For reading pull requests and branches, and writing comments and statuses. */
     client: GitHubClient;
     /**
@@ -117,8 +123,19 @@ export class NotConnected extends ApiError {
     }
 }
 
+function connectionMode(app: boolean, token: boolean): "app" | "token" | "none" {
+    if (app) return "app";
+    return token ? "token" : "none";
+}
+
+function tokenSource(own: boolean, lent: boolean): "project" | "workspace" | null {
+    if (own) return "project";
+    return lent ? "workspace" : null;
+}
+
 export class Github {
     readonly app: GithubApp;
+    readonly workspace: WorkspaceGithub;
     private readonly core: Core;
     private readonly settings: Settings;
     private readonly projects: Projects;
@@ -126,11 +143,12 @@ export class Github {
     /** Token owners' logins, by a hash of the token, so `GET /user` isn't asked on every comment. */
     private readonly owners = new Map<string, string>();
 
-    constructor(core: Core, settings: Settings, projects: Projects) {
+    constructor(core: Core, settings: Settings, projects: Projects, lookup?: Lookup) {
         this.core = core;
         this.settings = settings;
         this.projects = projects;
         this.app = new GithubApp(core);
+        this.workspace = new WorkspaceGithub(core, lookup);
     }
 
     private get store() {
@@ -143,8 +161,8 @@ export class Github {
         return ((await repos.settings.get(project.workspaceId, project.id, CONNECTION))?.value as AppConnection | undefined) ?? null;
     }
 
-    cloneUrl(repo: RepoTarget): string {
-        return `${this.core.config.githubUrl}/${repo.owner}/${repo.name}.git`;
+    cloneUrl(repo: RepoTarget, server: string = this.core.config.githubUrl): string {
+        return `${server}/${repo.owner}/${repo.name}.git`;
     }
 
     /** How to reach the project's repository, or a NotConnected error saying what's missing. */
@@ -193,23 +211,41 @@ export class Github {
                 },
             };
         }
-        const token = await this.settings.githubToken(repos, project);
+        const own = await this.settings.githubToken(repos, project);
+        const token = own ?? (await this.workspace.token(repos, project.workspaceId));
         if (!token)
             throw new NotConnected(
-                "This project isn't connected to GitHub: pick a repository from the GitHub App, or add a token, in its GitHub settings.",
+                "This project isn't connected to GitHub: pick a repository from the GitHub App, or add a token, in its GitHub settings (or give the workspace a token in its GitHub settings).",
             );
         const repo = parseRepo(project.repoUrl);
         if (!repo) throw new NotConnected("Set the project's repository address in its General settings first.");
-        const client = new GitHubClient(this.core.config.githubApiUrl, async () => token, "token");
+        let server: Awaited<ReturnType<WorkspaceGithub["server"]>>;
+        try {
+            server = await this.workspace.server(repos, project.workspaceId);
+        } catch (err) {
+            if (err instanceof ApiError) throw new NotConnected(`The workspace's GitHub server can't be used: ${err.message}`);
+            throw err;
+        }
+        // On the workspace's own server, the repository must be there too: owner/name alone could name
+        // another repository on it.
+        // (Stored repository addresses have no port, so host names are compared.)
+        const repoHost = project.repoUrl ? new URL(project.repoUrl).hostname.toLowerCase() : null;
+        if (server.own && repoHost && repoHost !== new URL(server.url).hostname.toLowerCase())
+            throw new NotConnected(
+                `This project's repository is on ${repoHost}, but the workspace's GitHub is ${server.url}. Change one of them.`,
+            );
+        const client = new GitHubClient(server.apiUrl, async () => token, "token");
         return {
             mode: "token",
+            tokenFrom: own ? "project" : "workspace",
             client,
             checks: client,
             repo,
-            cloneUrl: this.cloneUrl(repo),
+            cloneUrl: this.cloneUrl(repo, server.url),
             tokenForJob: async () => ({ token, revoke: false }),
             identity: async () => {
-                const key = sha256(token);
+                // The same token can belong to different accounts on different servers.
+                const key = sha256(`${server.apiUrl}\n${token}`);
                 const known = this.owners.get(key);
                 if (known) return known;
                 const { login } = await client.viewer();
@@ -304,11 +340,22 @@ export class Github {
         const app = await this.app.info();
         const installations = await this.store.githubInstallations.forWorkspace(project.workspaceId);
         const state = (await this.store.githubState.get(project.id)) as { checksReadable?: boolean } | null;
+        const ws = await this.workspace.view(project.workspaceId, Boolean(app));
+        const own = base.connection.method === "token";
+        const lent = !own && ws.method === "token" && ws.token.set;
         return {
             ...base,
             // False once GitHub has refused to show this connection a commit's check runs (services/github/automation.ts).
             checksReadable: state?.checksReadable ?? null,
-            mode: conn ? "app" : base.connection.method === "token" ? "token" : "none",
+            mode: connectionMode(Boolean(conn), own || lent),
+            tokenFrom: conn ? null : tokenSource(own, lent),
+            // What the workspace's GitHub settings lend projects, and the server tokens go to.
+            workspace: {
+                method: ws.method,
+                server: ws.server ?? ws.defaultServer,
+                ownServer: ws.server !== null,
+                token: ws.token.set ? { owner: ws.token.owner, kind: ws.token.kind } : null,
+            },
             app: app ? { available: true, name: app.name, slug: app.slug, htmlUrl: app.htmlUrl } : { available: false },
             installations: installations.map(publicInstallation),
             repository: conn ? { installationId: conn.installationId, repositoryId: conn.repositoryId, fullName: conn.fullName } : null,

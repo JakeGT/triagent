@@ -220,6 +220,10 @@ const wsSettingsRoutes = [
         },
     }),
     settingsPage(
+        "/github",
+        lazyRouteComponent(() => import("@/features/settings/workspace-github"), "WorkspaceGithubSettings"),
+    ),
+    settingsPage(
         "/analysis",
         lazyRouteComponent(() => import("@/features/settings/analysis-settings"), "AnalysisSettings"),
     ),
