@@ -106,7 +106,7 @@ describe("PriceEditor", () => {
                 prices={[]}
                 canEdit
                 catalogue={CATALOGUE}
-                suggest={[{ model: "muse-spark-1.3-contributor", label: "Muse" }]}
+                suggest={[{ model: "muse-spark-1.3-contributor", provider: "meta", label: "Muse" }]}
                 used={[{ model: "deepseek-flash", provider: "deepseek" }]}
                 onSave={vi.fn()}
                 onRemove={vi.fn()}
@@ -118,7 +118,7 @@ describe("PriceEditor", () => {
         const model = screen.getByLabelText("Model");
         await user.type(model, "meta/muse-spark");
         expect(screen.getByTestId("price-unused").textContent).toMatch(/won't change any costs/);
-        for (const name of ["deepseek-flash", "deepseek/deepseek-flash", "muse-spark-1.3-contributor"]) {
+        for (const name of ["deepseek-flash", "deepseek/deepseek-flash", "muse-spark-1.3-contributor", "meta/muse-spark-1.3-contributor"]) {
             await user.clear(model);
             await user.type(model, name);
             expect(screen.queryByTestId("price-unused"), name).toBeNull();

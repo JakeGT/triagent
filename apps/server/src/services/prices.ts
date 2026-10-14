@@ -103,7 +103,8 @@ export class Prices {
         const find = (prices: PriceList, names: string[]) =>
             names.map((n) => (Object.hasOwn(prices, n) ? prices[n] : undefined)).find(Boolean);
         return (model, provider) => {
-            const names = provider && !model.startsWith(`${provider}/`) ? [model, `${provider}/${model}`] : [model];
+            // The provider's own price first: a bare one may be meant for every provider of that model id.
+            const names = provider && !model.startsWith(`${provider}/`) ? [`${provider}/${model}`, model] : [model];
             const w = find(own, names);
             if (w) return { input: w.input, output: w.output, cacheRead: w.cacheRead, source: "workspace" };
             const i = find(instance, names);

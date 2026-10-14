@@ -73,7 +73,11 @@ export function InstanceModelSettings() {
                                 prices={prices.data.prices}
                                 canEdit
                                 catalogue={catalogue.data?.models ?? []}
-                                suggest={data.favourites.map((f) => ({ model: f.model, label: f.name ?? f.providerName }))}
+                                suggest={data.favourites.map((f) => ({
+                                    model: f.model,
+                                    provider: f.provider,
+                                    label: f.name ?? f.providerName,
+                                }))}
                                 onSave={async (p) => {
                                     await api.put(instancePaths.prices, p);
                                     await refreshPrices();

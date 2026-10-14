@@ -67,7 +67,7 @@ export function PriceEditor({
     /** OpenRouter's models, to fill in their listed prices. */
     catalogue?: CatalogueModel[];
     /** The favourites, whose names the model field suggests. */
-    suggest?: { model: string; label: string }[];
+    suggest?: { model: string; provider: string | null; label: string }[];
     /** The models this workspace's reviews used, to say when a name matches none of them (nor a favourite). */
     used?: { model: string; provider: string | null }[];
     /** A model name to put in the form (each new object fills it again). */
@@ -83,7 +83,7 @@ export function PriceEditor({
     const name = form.model.trim();
     const listed = catalogue.find((m) => m.id === name);
     const unused =
-        used !== undefined && MODEL_NAME.test(name) && !used.some((u) => appliesTo(name, u)) && !suggest.some((f) => f.model === name);
+        used !== undefined && MODEL_NAME.test(name) && !used.some((u) => appliesTo(name, u)) && !suggest.some((f) => appliesTo(name, f));
     const suggested = [...new Map(suggest.map((f) => [f.model, f])).values()];
 
     useEffect(() => {

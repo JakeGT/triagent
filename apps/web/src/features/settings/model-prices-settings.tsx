@@ -11,9 +11,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, paths } from "@/lib/api";
 import { compactCount, count, perMillion, SOURCE_LABEL } from "@/lib/insights-format";
 import { catalogueQuery, insightKeys, pricesQuery } from "@/lib/insights-queries";
+import type { WorkspacePrices } from "@/lib/insights-types";
 import { modelsQuery } from "@/lib/queries";
 import { useWorkspace } from "@/lib/session";
 import { ReadOnlyNote, SettingsPage, SettingsSection } from "./settings-page";
+
+type Used = WorkspacePrices["used"][number];
+
+/**
+ * The name to price a model reviews used by: its own id, or provider/id when another provider's model has
+ * the same id (a price under the bare id would apply to both).
+ */
+export function priceName(u: Used, used: readonly Used[]): string {
+    const shared = used.some((o) => o.model === u.model && o.provider !== u.provider);
+    return shared && u.provider ? `${u.provider}/${u.model}` : u.model;
+}
 
 export function ModelPricesSettings() {
     const { ws, can } = useWorkspace();
@@ -22,7 +34,11 @@ export function ModelPricesSettings() {
     const query = useQuery(pricesQuery(ws));
     const catalogue = useQuery({ ...catalogueQuery(ws), enabled: editable });
     const models = useQuery({ ...modelsQuery(ws), enabled: editable });
-    const favourites = (models.data?.favourites ?? []).map((f) => ({ model: f.model, label: f.name ?? f.providerName }));
+    const favourites = (models.data?.favourites ?? []).map((f) => ({
+        model: f.model,
+        provider: f.provider,
+        label: f.name ?? f.providerName,
+    }));
     const refresh = () =>
         Promise.all([
             queryClient.invalidateQueries({ queryKey: insightKeys.prices(ws) }),
@@ -106,11 +122,11 @@ export function ModelPricesSettings() {
                                                         type="button"
                                                         size="sm"
                                                         variant="outline"
-                                                        onClick={() => setFill({ model: u.model })}
+                                                        onClick={() => setFill({ model: priceName(u, query.data.used) })}
                                                     >
                                                         {u.price?.source === "workspace" ? "Change" : "Set"}
                                                         <span className="sr-only sm:not-sr-only"> price</span>
-                                                        <span className="sr-only"> for {u.model}</span>
+                                                        <span className="sr-only"> for {priceName(u, query.data.used)}</span>
                                                     </Button>
                                                 </TableCell>
                                             )}

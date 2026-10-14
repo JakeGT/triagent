@@ -286,6 +286,20 @@ test("a price set as provider/model applies to reviews that recorded the model a
     assert.equal(price("muse-spark-1.3-contributor", "meta")?.source, "workspace");
     // Another provider's model of the same name isn't priced by it.
     assert.equal(price("muse-spark-1.3-contributor", "openrouter"), null);
+    // A bare price covers every provider, but the provider's own wins over it.
+    await t.request("/api/v1/w/acme/settings/model-prices", {
+        method: "PUT",
+        session: adminMember,
+        body: { model: "muse-spark-1.3-contributor", input: 9, output: 9 },
+    });
+    const both = await t.services.prices.resolver(workspace);
+    assert.equal(both("muse-spark-1.3-contributor", "meta")?.input, 1);
+    assert.equal(both("muse-spark-1.3-contributor", "openrouter")?.input, 9);
+    await t.request("/api/v1/w/acme/settings/model-prices", {
+        method: "DELETE",
+        session: adminMember,
+        body: { model: "muse-spark-1.3-contributor" },
+    });
 
     const after = await t.request("/api/v1/w/acme/settings/model-prices", { session: editorSession });
     assert.deepEqual(after.body.used.find((u: { model: string }) => u.model === "muse-spark-1.3-contributor").price, {
