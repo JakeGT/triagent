@@ -16,6 +16,13 @@ describe("offeredInstallations", () => {
         expect(offeredInstallations(signed({ purpose: "link-choice", options }))).toEqual(options);
     });
 
+    it("reads unpadded base64url of any length", () => {
+        for (const account of ["a", "ab", "abc", "abcd"]) {
+            const options = [{ id: 7, account }];
+            expect(offeredInstallations(signed({ options })), account).toEqual(options);
+        }
+    });
+
     it("offers nothing for a missing, garbled or odd list", () => {
         expect(offeredInstallations(undefined)).toEqual([]);
         expect(offeredInstallations("not base64!.x")).toEqual([]);

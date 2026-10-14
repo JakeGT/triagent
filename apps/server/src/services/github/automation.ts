@@ -1195,8 +1195,7 @@ export class Automation {
         }
         if (!linked) return note("ignored", "That installation isn't linked to a workspace, so there's nothing to do.");
         const repositoryId = Number((payload.repository as { id?: unknown } | undefined)?.id);
-        const projects: Project[] = [];
-        for (const link of links) projects.push(...(await this.projectsFor(link.workspaceId, link.id, repositoryId)));
+        const projects = (await Promise.all(links.map((link) => this.projectsFor(link.workspaceId, link.id, repositoryId)))).flat();
         if (!projects.length) return note("ignored", "No project in the workspace uses that repository.");
         const results = [];
         for (const project of projects) results.push(await this.handleEvent(project, event, payload, deliveryId));

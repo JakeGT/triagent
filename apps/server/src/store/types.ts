@@ -418,8 +418,7 @@ export interface LogLine {
     line: string;
 }
 
-/** A GitHub App installation linked to a workspace (by someone who proved they can see it). */
-/** A GitHub App installation linked to a workspace (one row per workspace it's linked to). */
+/** A GitHub App installation linked to a workspace, by someone who proved they own its account (one row per workspace it's linked to). */
 export interface GithubInstallation {
     id: number;
     workspaceId: string;

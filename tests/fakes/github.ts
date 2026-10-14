@@ -163,7 +163,7 @@ export class FakeGitHub {
     private readonly admin: boolean;
     /** Who installs the app next through GitHub's installation page (the browser flow), and on what. */
     nextInstall: { account: string; repos: string[]; login: string } | null = null;
-    /** Who authorizes the app next (GET /login/oauth/authorize, without installing it). */
+    /** Who authorizes the app next (GET /login/oauth/authorize, without installing it): once. */
     nextAuthorize: string | null = null;
 
     constructor(options: { admin?: boolean } = {}) {
@@ -598,6 +598,7 @@ export class FakeGitHub {
             if (url.searchParams.get("client_id") !== this.app.clientId) return json(res, 404, { message: "Not Found" });
             const callback = new URL(String((this.app.manifest?.callback_urls as string[] | undefined)?.[0] ?? ""));
             callback.searchParams.set("code", this.oauthCode(this.nextAuthorize));
+            this.nextAuthorize = null;
             callback.searchParams.set("state", url.searchParams.get("state") ?? "");
             res.writeHead(302, { location: callback.toString() });
             return res.end();

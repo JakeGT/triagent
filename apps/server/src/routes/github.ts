@@ -150,7 +150,7 @@ export const githubRoutes: Route[] = [
         browserOnly: true,
         tag: "Settings",
         summary: "Link the installation you chose from those GitHub said you could link (`choice` from the way back)",
-        body: z.object({ choice: z.string().max(2000), installationId: z.number().int().positive() }),
+        body: z.object({ choice: z.string().max(4000), installationId: z.number().int().positive() }),
         async handler({ services, access, body, actor }) {
             return json(await services.github.chooseLink(actor, (access as Access).workspace, body));
         },

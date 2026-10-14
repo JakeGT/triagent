@@ -771,6 +771,27 @@ describe("the GitHub App", () => {
             ).status,
             400,
         );
+        // An installation that's moved to another account since the list was made isn't linked.
+        const moved = env.fake.installations.get(second.id);
+        assert.ok(moved);
+        moved.account.login = "someone-else";
+        let refused = await pick({ choice, installationId: second.id });
+        assert.equal(refused.status, 400);
+        assert.match(refused.text, /couldn't confirm/);
+        moved.account.login = "second";
+        // Nor one GitHub can't tell us about just now.
+        const app = env.t.services.github.app;
+        const original = app.installation.bind(app);
+        app.installation = async () => {
+            throw new Error("GitHub is down");
+        };
+        try {
+            refused = await pick({ choice, installationId: second.id });
+            assert.equal(refused.status, 400);
+        } finally {
+            app.installation = original;
+        }
+        assert.equal(await store.githubInstallations.get(second.id, acmeId), null);
         const picked = await pick({ choice, installationId: second.id });
         assert.equal(picked.status, 200, picked.text);
         assert.equal((await store.githubInstallations.get(second.id, acmeId))?.accountLogin, "second");

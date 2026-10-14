@@ -143,11 +143,20 @@ interface InstallState extends Record<string, unknown> {
     link?: boolean;
 }
 
-/** Of the installations someone can see, how many are checked for one they may link. */
+/** Of the installations someone can see, how many are checked for one they may link, and how many at once. */
 const MAX_LINK_CANDIDATES = 20;
+const LINK_CHECKS_AT_ONCE = 5;
+/** How long a list of installations to choose from stands: they were checked with GitHub when it was made. */
+const LINK_CHOICE_MS = 10 * 60_000;
 
-const backTo = (state: InstallState) => (outcome: string) =>
-    `/w/${encodeURIComponent(state.ws)}/p/${encodeURIComponent(state.project)}/settings/github?github=${outcome}${state.setup === true ? "&setup=project" : ""}`;
+/** Back to the project's GitHub settings: in the workspace as it's called now (`ws`), if it's been renamed. */
+const backTo =
+    (state: InstallState, ws = state.ws) =>
+    (outcome: string) =>
+        `/w/${encodeURIComponent(ws)}/p/${encodeURIComponent(state.project)}/settings/github?github=${outcome}${state.setup === true ? "&setup=project" : ""}`;
+
+/** A reason linking failed, worth showing over the others: GitHub's answer rather than "not yours". */
+const WORTH_SAYING = ["members-permission", "failed"];
 
 export class Github {
     readonly app: GithubApp;
@@ -496,12 +505,12 @@ export class Github {
             // Changed on GitHub without starting from Triagent (e.g. repositories added): nothing to link.
             return { redirect: "/", outcome: "ignored" as const };
         }
-        const back = backTo(state);
-        if (state.userId !== user.id) return { redirect: back("not-you"), outcome: "refused" as const };
+        if (state.userId !== user.id) return { redirect: backTo(state)("not-you"), outcome: "refused" as const };
         // Still allowed to manage the workspace's secrets (the installation grants access to code).
         const workspace = await this.store.workspaces.get(state.workspaceId);
         if (!workspace || !(await this.maySecrets(this.store, workspace.id, user.id)))
-            return { redirect: back("not-allowed"), outcome: "refused" as const };
+            return { redirect: backTo(state)("not-allowed"), outcome: "refused" as const };
+        const back = backTo(state, workspace.slug);
         const id = Number(query.installation_id);
         const linking = state.link === true && query.installation_id === undefined;
         if ((!linking && (!Number.isSafeInteger(id) || id <= 0)) || typeof query.code !== "string" || !query.code)
@@ -517,21 +526,24 @@ export class Github {
         }
         if (linking) {
             // Of the installations they can see, those they may link: an organisation's they own, or their own.
-            const options: { id: number; account: string }[] = [];
-            let checkFailed: string | null = null;
-            for (const candidate of visible.slice(0, MAX_LINK_CANDIDATES)) {
-                const verdict = await this.mayLink(userToken, candidate);
-                if (verdict.ok) options.push({ id: candidate, account: verdict.account });
-                else if (verdict.reason === "members-permission" || verdict.reason === "failed") checkFailed = verdict.reason;
-            }
-            if (options.length === 0) return { redirect: back(checkFailed ?? "none-to-link"), outcome: "refused" as const };
-            if (options.length === 1) return this.link(user, workspace, (options[0] as { id: number }).id, back);
-            const choice = this.app.signState({
-                purpose: "link-choice",
-                userId: user.id,
-                workspaceId: workspace.id,
-                options,
+            // Checked a few at a time (each takes two or three calls to GitHub).
+            const candidates = visible.slice(0, MAX_LINK_CANDIDATES);
+            const verdicts: Awaited<ReturnType<Github["mayLink"]>>[] = [];
+            for (let i = 0; i < candidates.length; i += LINK_CHECKS_AT_ONCE)
+                verdicts.push(...(await Promise.all(candidates.slice(i, i + LINK_CHECKS_AT_ONCE).map((c) => this.mayLink(userToken, c)))));
+            const options = candidates.flatMap((id, i) => {
+                const v = verdicts[i];
+                return v?.ok ? [{ id, account: v.account }] : [];
             });
+            if (options.length === 0) {
+                const failed = WORTH_SAYING.find((r) => verdicts.some((v) => !v.ok && v.reason === r));
+                return { redirect: back(failed ?? "none-to-link"), outcome: "refused" as const };
+            }
+            if (options.length === 1) return this.link(user, workspace, (options[0] as { id: number }).id, back);
+            const choice = this.app.signState(
+                { purpose: "link-choice", userId: user.id, workspaceId: workspace.id, options },
+                LINK_CHOICE_MS,
+            );
             return { redirect: `${back("choose")}&choice=${encodeURIComponent(choice)}`, outcome: "choose" as const };
         }
         if (!visible.includes(id)) return { redirect: back("not-yours"), outcome: "refused" as const };
@@ -542,7 +554,10 @@ export class Github {
 
     /**
      * Link one of the installations offered after authorizing (several were eligible): `choice` is the
-     * signed list they were offered, for them and this workspace, within 15 minutes.
+     * signed list they were offered, for them and this workspace, within ten minutes. GitHub isn't asked
+     * again whether they own its account (their authorization isn't kept): the list is that answer, as of
+     * when it was made. The installation must still be on the same account, and they must still manage the
+     * workspace's secrets.
      */
     async chooseLink(actor: Actor, workspace: Workspace, input: { choice: string; installationId: number }) {
         const choice = this.app.readState<{ userId: string; workspaceId: string; options: { id: number; account: string }[] }>(
@@ -554,9 +569,11 @@ export class Github {
         if (!choice.options.some((o) => o.id === input.installationId)) throw badRequest("That installation wasn't one of those offered.");
         const user = actor.userId ? await this.store.users.get(actor.userId) : null;
         if (!user) throw forbidden("Sign in through the browser to link an installation.");
-        const out = await this.link(user, workspace, input.installationId, () => "");
-        if (out.outcome !== "linked")
+        const offered = choice.options.find((o) => o.id === input.installationId)?.account;
+        const out = await this.link(user, workspace, input.installationId, (outcome) => outcome, offered);
+        if (out.redirect === "not-allowed")
             throw forbidden("You're no longer allowed to manage this workspace's secrets, so nothing was linked.");
+        if (out.outcome !== "linked") throw badRequest("GitHub couldn't confirm that installation now. Start linking again.");
         return { linked: input.installationId };
     }
 
@@ -587,9 +604,21 @@ export class Github {
         }
     }
 
-    /** Link an installation to a workspace (it may be linked to others too), once the person may. */
-    private async link(user: User, workspace: Workspace, id: number, back: (outcome: string) => string) {
-        const details = await this.app.installation(id);
+    /**
+     * Link an installation to a workspace (it may be linked to others too), once the person may. With
+     * `account`, only if the installation is still on that account.
+     */
+    private async link(user: User, workspace: Workspace, id: number, back: (outcome: string) => string, account?: string) {
+        let details: Awaited<ReturnType<GithubApp["installation"]>>;
+        try {
+            details = await this.app.installation(id);
+        } catch (err) {
+            logFailure("Reading a GitHub App installation to link it failed", err);
+            return { redirect: back("failed"), outcome: "refused" as const };
+        }
+        const owner = details.account;
+        if (!owner?.login || (account !== undefined && owner.login.toLowerCase() !== account.toLowerCase()))
+            return { redirect: back("failed"), outcome: "refused" as const };
         const actor: Actor = { name: user.displayName, userId: user.id, via: "web" };
         return this.core.write(actor, async (w) => {
             // Again, as part of the link: their role may have changed while GitHub was being asked.
@@ -600,8 +629,8 @@ export class Github {
             const record: GithubInstallation = {
                 id,
                 workspaceId: workspace.id,
-                accountLogin: details.account?.login ?? "unknown",
-                accountType: details.account?.type ?? "User",
+                accountLogin: owner.login,
+                accountType: owner.type ?? "User",
                 repositorySelection: details.repository_selection,
                 suspended: Boolean(details.suspended_at),
                 linkedBy: existing?.linkedBy ?? user.displayName,

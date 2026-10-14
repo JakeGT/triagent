@@ -46,6 +46,10 @@ const OUTCOMES: Record<string, { ok: boolean; text: string }> = {
         ok: false,
         text: "GitHub didn't send your authorization back, so the installation couldn't be checked. Try again.",
     },
+    choose: {
+        ok: false,
+        text: "The list of installations to choose from has expired or didn't come through. Link one again.",
+    },
     "none-to-link": {
         ok: false,
         text: "GitHub shows no installation of the app that you can link: one on your own account, or on an organisation you're an owner of. Install it on GitHub first, or ask an owner to link it here.",
@@ -58,7 +62,9 @@ export function offeredInstallations(choice: string | undefined): { id: number; 
     const body = choice?.split(".")[0];
     if (!body) return [];
     try {
-        const bytes = Uint8Array.from(atob(body.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+        // base64url, unpadded: put back what atob may want (the forgiving decoder doesn't, but older ones do).
+        const b64 = body.replace(/-/g, "+").replace(/_/g, "/");
+        const bytes = Uint8Array.from(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "=")), (c) => c.charCodeAt(0));
         const json = new TextDecoder().decode(bytes);
         const options = (JSON.parse(json) as { options?: unknown }).options;
         return Array.isArray(options)
@@ -80,7 +86,8 @@ function ChooseInstallation({ choice, onLinked }: { choice: string; onLinked(): 
         mutationFn: () => api.post(`${paths.workspace(ws)}/github/installations/link`, { choice, installationId: Number(picked) }),
         onSuccess: () => {
             onLinked();
-            void navigate({ to: ".", search: { github: "linked" } as never, replace: true });
+            // Back to where linking started: into the project's guided setup, if that's where it was.
+            void navigate({ to: ".", search: ((s: { setup?: string }) => ({ github: "linked", setup: s.setup })) as never, replace: true });
         },
     });
     if (!options.length) return null;
@@ -167,7 +174,9 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
     const repos = (installations.data ?? []).flatMap((i) =>
         i.repositories.map((r) => ({ ...r, installationId: i.id, account: i.account })),
     );
-    const shown = outcome ? OUTCOMES[outcome] : undefined;
+    // "choose" says something only when there's nothing to choose from (an expired or garbled list).
+    const choosing = outcome === "choose" && offeredInstallations(offered).length > 0;
+    const shown = outcome && !choosing ? OUTCOMES[outcome] : undefined;
     return (
         <SettingsSection
             title="GitHub App"
