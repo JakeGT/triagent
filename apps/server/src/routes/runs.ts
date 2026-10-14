@@ -114,7 +114,7 @@ export const runRoutes: Route[] = [
             const workspace = (access as Access).workspace;
             const out = await services.runs.breakdown(workspace, params.runId as string);
             const price = await services.prices.resolver(workspace.id);
-            return json({ ...out, models: out.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model)) })) });
+            return json({ ...out, models: out.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model, m.provider)) })) });
         },
     }),
     route({
@@ -130,7 +130,7 @@ export const runRoutes: Route[] = [
             const workspace = (access as Access).workspace;
             const { run, comparison } = await services.runs.comparison(workspace, params.runId as string);
             const price = await services.prices.resolver(workspace.id);
-            const models = comparison.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model)) }));
+            const models = comparison.models.map((m) => ({ ...m, cost: costOf(m.tokens, price(m.model, m.provider)) }));
             return json({ run, ...comparison, models });
         },
     }),

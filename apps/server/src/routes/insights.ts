@@ -42,15 +42,16 @@ export const daysOf = (v: string | undefined): AnalyticsDays => (v === undefined
 /** The models a workspace's reviews used, with what each costs there (or null: no price). */
 export async function usedModels(services: Services, workspace: Workspace) {
     const price = await services.prices.resolver(workspace.id);
-    const used = new Map<string, { model: string; reviews: number; tokens: number }>();
+    const used = new Map<string, { model: string; provider: string | null; reviews: number; tokens: number }>();
     for (const r of await services.store.reviewHistory.list({ workspaceId: workspace.id }, 5000)) {
         if (!r.model) continue;
-        const u = used.get(r.model) ?? { model: r.model, reviews: 0, tokens: 0 };
+        const key = `${r.provider ?? ""}\0${r.model}`;
+        const u = used.get(key) ?? { model: r.model, provider: r.provider, reviews: 0, tokens: 0 };
         u.reviews++;
         u.tokens += r.tokens?.total ?? 0;
-        used.set(r.model, u);
+        used.set(key, u);
     }
-    return [...used.values()].sort((a, b) => b.tokens - a.tokens).map((u) => ({ ...u, price: price(u.model) }));
+    return [...used.values()].sort((a, b) => b.tokens - a.tokens).map((u) => ({ ...u, price: price(u.model, u.provider) }));
 }
 
 export const insightRoutes: Route[] = [

@@ -21,6 +21,13 @@ export function InstanceModelSettings() {
     const catalogue = useQuery({ ...catalogueQuery(ws), enabled: allowed });
     const data = query.data;
     const refresh = () => queryClient.invalidateQueries({ queryKey: insightKeys.instanceModel });
+    // Instance prices change this workspace's costs too.
+    const refreshPrices = () =>
+        Promise.all([
+            queryClient.invalidateQueries({ queryKey: insightKeys.instancePrices }),
+            queryClient.invalidateQueries({ queryKey: insightKeys.prices(ws) }),
+            queryClient.invalidateQueries({ queryKey: ["ws", ws, "analytics"] }),
+        ]);
 
     if (!allowed)
         return (
@@ -66,14 +73,15 @@ export function InstanceModelSettings() {
                                 prices={prices.data.prices}
                                 canEdit
                                 catalogue={catalogue.data?.models ?? []}
+                                suggest={data.favourites.map((f) => ({ model: f.model, label: f.name ?? f.providerName }))}
                                 onSave={async (p) => {
                                     await api.put(instancePaths.prices, p);
-                                    await queryClient.invalidateQueries({ queryKey: insightKeys.instancePrices });
+                                    await refreshPrices();
                                     toast.success(`Instance price for ${p.model} saved.`);
                                 }}
                                 onRemove={async (model) => {
                                     await api.delete(instancePaths.prices, { model });
-                                    await queryClient.invalidateQueries({ queryKey: insightKeys.instancePrices });
+                                    await refreshPrices();
                                     toast.success(`Instance price for ${model} removed.`);
                                 }}
                             />

@@ -56,7 +56,7 @@ export interface AnalyticsInput {
     sources?: readonly FindingSource[];
     /** Only these parts of the answer are worked out (all of them, when absent). */
     sections?: ReadonlySet<AnalyticsSection>;
-    price(model: string): PricedModel | null;
+    price(model: string, provider?: string | null): PricedModel | null;
     projectSlug(projectId: string | null): string | null;
 }
 
@@ -359,7 +359,7 @@ function reviewsSection(recs: readonly ReviewRecord[], range: ReturnType<typeof 
 
     // Each model's own record: tokens, cost and the by-model comparison.
     for (const r of recs) {
-        const price = r.model ? input.price(r.model) : null;
+        const price = r.model ? input.price(r.model, r.provider) : null;
         const c = costOf(r.tokens, price);
         costs.set(r.id, c);
         const found = r.status === "done" || r.status === "partial" ? (r.details.findings?.total ?? 0) : 0;
@@ -963,7 +963,7 @@ function modelsSection(
         if (r.status === "failed") m.failed++;
         if (r.details.stopped === "stalled" || /^Stalled:/.test(r.details.error ?? "")) m.stalled++;
         m.tokens += r.tokens?.total ?? 0;
-        const c = costOf(r.tokens, input.price(r.model));
+        const c = costOf(r.tokens, input.price(r.model, r.provider));
         if (c !== null) {
             m.cost = (m.cost ?? 0) + c;
             const p = point(r.at, r.model);
@@ -983,7 +983,7 @@ function modelsSection(
             {
                 model: r.model,
                 seconds: r.details.runSeconds ?? null,
-                cost: costOf(r.tokens, input.price(r.model)),
+                cost: costOf(r.tokens, input.price(r.model, r.provider)),
                 // A model run again later is the same model of the same review: its cost counts, its time doesn't.
                 again: Boolean(r.details.attempt),
             },

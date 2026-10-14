@@ -87,22 +87,30 @@ export class Prices {
         return clean((await repos.settings.get(workspaceId, null, KEY))?.value);
     }
 
-    /** What a model costs in this workspace, and where that price comes from. */
-    async resolver(workspaceId: string): Promise<(model: string) => PricedModel | null> {
+    /**
+     * What a model costs in this workspace, and where that price comes from. Reviews record the provider's
+     * own model id and the provider apart (muse-spark-1.3 from meta), so a price set as "meta/muse-spark-1.3"
+     * applies to it too, as does one set under the bare id; a price for another provider's model of that
+     * name doesn't.
+     */
+    async resolver(workspaceId: string): Promise<(model: string, provider?: string | null) => PricedModel | null> {
         const repos = this.core.store;
         const [own, instance, listed] = await Promise.all([
             this.workspacePrices(repos, workspaceId),
             this.instancePrices(repos),
             this.catalogue.prices(),
         ]);
-        return (model) => {
-            const w = Object.hasOwn(own, model) ? own[model] : undefined;
+        const find = (prices: PriceList, names: string[]) =>
+            names.map((n) => (Object.hasOwn(prices, n) ? prices[n] : undefined)).find(Boolean);
+        return (model, provider) => {
+            const names = provider && !model.startsWith(`${provider}/`) ? [model, `${provider}/${model}`] : [model];
+            const w = find(own, names);
             if (w) return { input: w.input, output: w.output, cacheRead: w.cacheRead, source: "workspace" };
-            const i = Object.hasOwn(instance, model) ? instance[model] : undefined;
+            const i = find(instance, names);
             if (i) return { input: i.input, output: i.output, cacheRead: i.cacheRead, source: "instance" };
             // A provider's own name for a model OpenRouter lists under another (claude-sonnet-4-5 is
             // anthropic/claude-sonnet-4.5), when OpenRouter lists exactly that name.
-            const c = [model, ...catalogueCandidates(model)].map((id) => listed.get(id)).find(Boolean);
+            const c = [...names, ...catalogueCandidates(model)].map((id) => listed.get(id)).find(Boolean);
             return c ? { ...c.price, source: "openrouter" } : null;
         };
     }
