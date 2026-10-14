@@ -1385,7 +1385,15 @@ export class PostgresStore implements Store {
     };
 
     githubInstallations: Repos["githubInstallations"] = {
-        get: async (id) => first(await this.rows((sql) => sql`select * from github_installations where id = ${id}`), toInstallation),
+        get: async (id, workspaceId) =>
+            first(
+                await this.rows((sql) => sql`select * from github_installations where id = ${id} and workspace_id = ${workspaceId}`),
+                toInstallation,
+            ),
+        forInstallation: async (id) =>
+            (await this.rows((sql) => sql`select * from github_installations where id = ${id} order by linked_at, workspace_id`)).map(
+                toInstallation,
+            ),
         forWorkspace: async (workspaceId) =>
             (
                 await this.rows((sql) => sql`select * from github_installations where workspace_id = ${workspaceId} order by linked_at, id`)
@@ -1403,11 +1411,12 @@ export class PostgresStore implements Store {
                     linked_by: i.linkedBy,
                     linked_at: i.linkedAt,
                 },
-                ["id"],
+                ["id", "workspace_id"],
             ),
-        delete: (id) =>
+        delete: (id, workspaceId) =>
             this.write(async (sql) => {
-                await sql`delete from github_installations where id = ${id}`;
+                if (workspaceId === undefined) await sql`delete from github_installations where id = ${id}`;
+                else await sql`delete from github_installations where id = ${id} and workspace_id = ${workspaceId}`;
             }),
         deleteAll: () =>
             this.write(async (sql) => {

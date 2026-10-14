@@ -128,16 +128,31 @@ export const githubRoutes: Route[] = [
         scope: "workspace",
         permission: "secrets",
         tag: "Settings",
-        summary: "Start installing the GitHub App: returns the address on GitHub to go to",
-        description: "GitHub sends you back to Triagent, which links the installation once GitHub confirms you can see it.",
+        summary: "Start installing the GitHub App, or linking an installation you already have: returns the address on GitHub to go to",
+        description:
+            "GitHub sends you back to Triagent, which links the installation once GitHub confirms you can see it and own the account it's on. With `link`, GitHub only asks you to authorize the app: an account can install it once, and its installation can be linked to several workspaces. When several installations could be linked, you come back with `?github=choose&choice=…` to pick one (POST …/github/installations/link).",
         body: z.object({
             project: z.string().max(40).describe("The project whose settings to come back to"),
             setup: z.boolean().optional().describe("Come back into the project's guided setup instead"),
+            link: z.boolean().optional().describe("Link an installation you already have, instead of installing"),
         }),
         async handler({ services, access, body, actor }) {
             const workspace = (access as Access).workspace;
             await services.projects.get(services.store, workspace, body.project);
-            return json(await services.github.startInstall(actor, workspace, body.project, body.setup === true));
+            return json(await services.github.startInstall(actor, workspace, body.project, body.setup === true, body.link === true));
+        },
+    }),
+    route({
+        method: "POST",
+        path: `${W}/github/installations/link`,
+        scope: "workspace",
+        permission: "secrets",
+        browserOnly: true,
+        tag: "Settings",
+        summary: "Link the installation you chose from those GitHub said you could link (`choice` from the way back)",
+        body: z.object({ choice: z.string().max(2000), installationId: z.number().int().positive() }),
+        async handler({ services, access, body, actor }) {
+            return json(await services.github.chooseLink(actor, (access as Access).workspace, body));
         },
     }),
     route({

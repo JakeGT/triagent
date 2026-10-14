@@ -289,7 +289,7 @@ export class MemoryStore implements Store {
                 for (const p of this.t.patterns.values()) if (p.workspaceId === id) await this.patterns.delete(p.id);
                 await this.origins.clear(id);
                 for (const i of this.t.githubInstallations.values())
-                    if (i.workspaceId === id) this.t.githubInstallations.delete(String(i.id));
+                    if (i.workspaceId === id) this.t.githubInstallations.delete(`${i.id}:${i.workspaceId}`);
                 this.t.modelGrants.delete(id);
                 this.t.workspaces.delete(id);
             }),
@@ -669,10 +669,20 @@ export class MemoryStore implements Store {
     };
 
     githubInstallations: Repos["githubInstallations"] = {
-        get: async (id) => this.t.githubInstallations.get(String(id)),
+        get: async (id, workspaceId) => this.t.githubInstallations.get(`${id}:${workspaceId}`),
+        forInstallation: async (id) =>
+            this.t.githubInstallations
+                .values()
+                .filter((i) => i.id === id)
+                .sort((a, b) => a.linkedAt.localeCompare(b.linkedAt)),
         forWorkspace: async (workspaceId) => this.t.githubInstallations.values().filter((i) => i.workspaceId === workspaceId),
-        put: (i) => this.write(() => this.t.githubInstallations.set(String(i.id), i)),
-        delete: (id) => this.write(() => this.t.githubInstallations.delete(String(id))),
+        put: (i) => this.write(() => this.t.githubInstallations.set(`${i.id}:${i.workspaceId}`, i)),
+        delete: (id, workspaceId) =>
+            this.write(() => {
+                for (const i of this.t.githubInstallations.values())
+                    if (i.id === id && (workspaceId === undefined || i.workspaceId === workspaceId))
+                        this.t.githubInstallations.delete(`${i.id}:${i.workspaceId}`);
+            }),
         deleteAll: () =>
             this.write(() => {
                 for (const k of [...this.t.githubInstallations.rows.keys()]) this.t.githubInstallations.delete(k);

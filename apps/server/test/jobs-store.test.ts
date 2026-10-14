@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { MemoryStore } from "../src/store/memory.ts";
-import type { Job, Store } from "../src/store/types.ts";
+import type { GithubInstallation, Job, Store } from "../src/store/types.ts";
 import { postgresStore, TEST_DATABASE_URL } from "./helpers.ts";
 
 let clock = Date.UTC(2026, 3, 1);
@@ -186,7 +186,19 @@ for (const kind of kinds) {
                 linkedBy: "admin",
                 linkedAt: at(),
             });
-            assert.equal((await store.githubInstallations.get(42))?.accountLogin, "acme");
+            assert.equal((await store.githubInstallations.get(42, "w1"))?.accountLogin, "acme");
+            assert.equal(await store.githubInstallations.get(42, "w2"), null);
+            // The same installation linked to a second workspace: a row of its own.
+            await store.githubInstallations.put({
+                ...((await store.githubInstallations.get(42, "w1")) as GithubInstallation),
+                workspaceId: "w2",
+            });
+            assert.deepEqual((await store.githubInstallations.forInstallation(42)).map((i) => i.workspaceId).sort(), ["w1", "w2"]);
+            await store.githubInstallations.delete(42, "w2");
+            assert.deepEqual(
+                (await store.githubInstallations.forInstallation(42)).map((i) => i.workspaceId),
+                ["w1"],
+            );
             assert.equal((await store.githubInstallations.forWorkspace("w1")).length, 1);
             assert.equal((await store.githubInstallations.forWorkspace("w2")).length, 0);
 
@@ -234,7 +246,7 @@ for (const kind of kinds) {
             assert.equal(await store.githubState.get("w1-p"), null);
             assert.equal((await store.githubDeliveries.list("w1-p", 10)).length, 0);
             await store.workspaces.delete("w1");
-            assert.equal(await store.githubInstallations.get(42), null);
+            assert.equal(await store.githubInstallations.get(42, "w1"), null);
         });
 
         test("runners are remembered by id", async () => {

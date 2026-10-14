@@ -133,6 +133,22 @@ function tokenSource(own: boolean, lent: boolean): "project" | "workspace" | nul
     return lent ? "workspace" : null;
 }
 
+interface InstallState extends Record<string, unknown> {
+    userId: string;
+    workspaceId: string;
+    ws: string;
+    project: string;
+    setup?: boolean;
+    /** Linking an installation they already have, rather than installing. */
+    link?: boolean;
+}
+
+/** Of the installations someone can see, how many are checked for one they may link. */
+const MAX_LINK_CANDIDATES = 20;
+
+const backTo = (state: InstallState) => (outcome: string) =>
+    `/w/${encodeURIComponent(state.ws)}/p/${encodeURIComponent(state.project)}/settings/github?github=${outcome}${state.setup === true ? "&setup=project" : ""}`;
+
 export class Github {
     readonly app: GithubApp;
     readonly workspace: WorkspaceGithub;
@@ -169,8 +185,8 @@ export class Github {
     async githubFor(project: Project, repos: Repos = this.store): Promise<GithubAccess> {
         const conn = await this.connection(repos, project);
         if (conn) {
-            const installation = await repos.githubInstallations.get(conn.installationId);
-            if (!installation || installation.workspaceId !== project.workspaceId)
+            const installation = await repos.githubInstallations.get(conn.installationId, project.workspaceId);
+            if (!installation)
                 throw new NotConnected(
                     "The GitHub App installation this project used is no longer linked. Choose a repository again in its GitHub settings.",
                 );
@@ -363,8 +379,8 @@ export class Github {
     }
 
     async setConnection(actor: Actor, project: Project, input: { installationId: number; repositoryId: number }) {
-        const installation = await this.store.githubInstallations.get(input.installationId);
-        if (!installation || installation.workspaceId !== project.workspaceId) throw notFound("No such installation in this workspace.");
+        const installation = await this.store.githubInstallations.get(input.installationId, project.workspaceId);
+        if (!installation) throw notFound("No such installation in this workspace.");
         const repos = await this.app.repositories(installation.id);
         const repo = repos.find((r) => r.id === input.repositoryId);
         if (!repo) throw badRequest(`The installation on ${installation.accountLogin} doesn't include that repository.`);
@@ -446,9 +462,11 @@ export class Github {
 
     /**
      * Where to send a workspace admin to install the app (on GitHub), with a signed state for the way back:
-     * to the project's GitHub settings, or (`setup`) into its guided setup.
+     * to the project's GitHub settings, or (`setup`) into its guided setup. With `link`, they go to GitHub
+     * only to say who they are, to link an installation they already have (an account can only install the
+     * app once, and one installation can serve several workspaces).
      */
-    async startInstall(actor: Actor, workspace: Workspace, project: string, setup = false) {
+    async startInstall(actor: Actor, workspace: Workspace, project: string, setup = false, link = false) {
         const app = await this.app.info();
         if (!app) throw badRequest("No GitHub App is set up on this instance yet. Ask an instance admin to create one.");
         if (!actor.userId) throw forbidden("Sign in through the browser to install the GitHub App.");
@@ -459,36 +477,34 @@ export class Github {
             ws: workspace.slug,
             project,
             ...(setup ? { setup: true } : {}),
+            ...(link ? { link: true } : {}),
         });
-        return { url: this.app.installUrl(app.slug, state) };
+        return { url: link ? await this.app.authorizeUrl(state) : this.app.installUrl(app.slug, state) };
     }
 
     /**
-     * The way back from installing the app. The installation id in the address isn't trusted: the person
-     * must have started this from Triagent (the signed state), still be allowed to manage secrets in that
-     * workspace, and GitHub must confirm, with their own authorization, that they can see the installation
-     * and administer the organisation it's on (or are the account, for a personal one). Returns where to
-     * send them next.
+     * The way back from GitHub: after installing the app, or (`link` in the state) after authorizing it to
+     * link an installation the person already has. The installation id in the address isn't trusted: the
+     * person must have started this from Triagent (the signed state), still be allowed to manage secrets in
+     * that workspace, and GitHub must confirm, with their own authorization, that they can see the
+     * installation and administer the organisation it's on (or are the account, for a personal one).
+     * Returns where to send them next.
      */
     async completeInstall(user: User, query: { code?: string; installation_id?: string; state?: string; setup_action?: string }) {
-        const state = this.app.readState<{ userId: string; workspaceId: string; ws: string; project: string; setup?: boolean }>(
-            query.state,
-            "install",
-        );
+        const state = this.app.readState<InstallState>(query.state, "install");
         if (!state) {
             // Changed on GitHub without starting from Triagent (e.g. repositories added): nothing to link.
             return { redirect: "/", outcome: "ignored" as const };
         }
-        const back = (outcome: string) =>
-            `/w/${encodeURIComponent(state.ws)}/p/${encodeURIComponent(state.project)}/settings/github?github=${outcome}${state.setup === true ? "&setup=project" : ""}`;
+        const back = backTo(state);
         if (state.userId !== user.id) return { redirect: back("not-you"), outcome: "refused" as const };
         // Still allowed to manage the workspace's secrets (the installation grants access to code).
         const workspace = await this.store.workspaces.get(state.workspaceId);
-        const membership = workspace ? await this.store.memberships.get(workspace.id, user.id) : null;
-        if (!workspace || !membership || !ROLE_PERMISSIONS[membership.role].includes("secrets"))
+        if (!workspace || !(await this.maySecrets(this.store, workspace.id, user.id)))
             return { redirect: back("not-allowed"), outcome: "refused" as const };
         const id = Number(query.installation_id);
-        if (!Number.isSafeInteger(id) || id <= 0 || typeof query.code !== "string" || !query.code)
+        const linking = state.link === true && query.installation_id === undefined;
+        if ((!linking && (!Number.isSafeInteger(id) || id <= 0)) || typeof query.code !== "string" || !query.code)
             return { redirect: back("no-authorization"), outcome: "refused" as const };
         let visible: number[];
         let userToken: string;
@@ -499,33 +515,88 @@ export class Github {
             logFailure("Linking a GitHub App installation failed", err);
             return { redirect: back("failed"), outcome: "refused" as const };
         }
+        if (linking) {
+            // Of the installations they can see, those they may link: an organisation's they own, or their own.
+            const options: { id: number; account: string }[] = [];
+            let checkFailed: string | null = null;
+            for (const candidate of visible.slice(0, MAX_LINK_CANDIDATES)) {
+                const verdict = await this.mayLink(userToken, candidate);
+                if (verdict.ok) options.push({ id: candidate, account: verdict.account });
+                else if (verdict.reason === "members-permission" || verdict.reason === "failed") checkFailed = verdict.reason;
+            }
+            if (options.length === 0) return { redirect: back(checkFailed ?? "none-to-link"), outcome: "refused" as const };
+            if (options.length === 1) return this.link(user, workspace, (options[0] as { id: number }).id, back);
+            const choice = this.app.signState({
+                purpose: "link-choice",
+                userId: user.id,
+                workspaceId: workspace.id,
+                options,
+            });
+            return { redirect: `${back("choose")}&choice=${encodeURIComponent(choice)}`, outcome: "choose" as const };
+        }
         if (!visible.includes(id)) return { redirect: back("not-yours"), outcome: "refused" as const };
-        const details = await this.app.installation(id);
-        // Seeing an installation isn't enough: any member of an organisation can. Linking one hands this
-        // workspace every repository in it, so it takes an admin of the organisation, or for a personal
-        // account's installation, that person.
-        const account = details.account;
+        const verdict = await this.mayLink(userToken, id);
+        if (!verdict.ok) return { redirect: back(verdict.reason), outcome: "refused" as const };
+        return this.link(user, workspace, id, back);
+    }
+
+    /**
+     * Link one of the installations offered after authorizing (several were eligible): `choice` is the
+     * signed list they were offered, for them and this workspace, within 15 minutes.
+     */
+    async chooseLink(actor: Actor, workspace: Workspace, input: { choice: string; installationId: number }) {
+        const choice = this.app.readState<{ userId: string; workspaceId: string; options: { id: number; account: string }[] }>(
+            input.choice,
+            "link-choice",
+        );
+        if (!choice || choice.userId !== actor.userId || choice.workspaceId !== workspace.id)
+            throw badRequest("That choice has expired or isn't yours. Start linking again.");
+        if (!choice.options.some((o) => o.id === input.installationId)) throw badRequest("That installation wasn't one of those offered.");
+        const user = actor.userId ? await this.store.users.get(actor.userId) : null;
+        if (!user) throw forbidden("Sign in through the browser to link an installation.");
+        const out = await this.link(user, workspace, input.installationId, () => "");
+        if (out.outcome !== "linked")
+            throw forbidden("You're no longer allowed to manage this workspace's secrets, so nothing was linked.");
+        return { linked: input.installationId };
+    }
+
+    private async maySecrets(repos: Repos, workspaceId: string, userId: string) {
+        const membership = await repos.memberships.get(workspaceId, userId);
+        return Boolean(membership && ROLE_PERMISSIONS[membership.role].includes("secrets"));
+    }
+
+    /**
+     * Whether this person may link an installation. Seeing one isn't enough: any member of an organisation
+     * can. Linking it hands a workspace every repository in it, so it takes an owner of the organisation,
+     * or for a personal account's installation, that person.
+     */
+    private async mayLink(userToken: string, id: number): Promise<{ ok: true; account: string } | { ok: false; reason: string }> {
         try {
-            if (!account) return { redirect: back("failed"), outcome: "refused" as const };
+            const account = (await this.app.installation(id)).account;
+            if (!account) return { ok: false, reason: "failed" };
             if (account.type === "Organization") {
                 const membership = await this.app.orgMembership(userToken, account.login);
-                if (membership?.state !== "active" || membership.role !== "admin")
-                    return { redirect: back("not-admin"), outcome: "refused" as const };
+                if (membership?.state !== "active" || membership.role !== "admin") return { ok: false, reason: "not-admin" };
             } else if ((await this.app.userLogin(userToken)).toLowerCase() !== account.login.toLowerCase())
-                return { redirect: back("not-account"), outcome: "refused" as const };
+                return { ok: false, reason: "not-account" };
+            return { ok: true, account: account.login };
         } catch (err) {
             logFailure("Checking who may link a GitHub App installation failed", err);
             const forbidden = err instanceof GitHubError && err.status === 403;
-            return { redirect: back(forbidden ? "members-permission" : "failed"), outcome: "refused" as const };
+            return { ok: false, reason: forbidden ? "members-permission" : "failed" };
         }
+    }
+
+    /** Link an installation to a workspace (it may be linked to others too), once the person may. */
+    private async link(user: User, workspace: Workspace, id: number, back: (outcome: string) => string) {
+        const details = await this.app.installation(id);
         const actor: Actor = { name: user.displayName, userId: user.id, via: "web" };
         return this.core.write(actor, async (w) => {
             // Again, as part of the link: their role may have changed while GitHub was being asked.
-            const still = await w.tx.memberships.get(workspace.id, user.id);
-            if (!still || !ROLE_PERMISSIONS[still.role].includes("secrets") || !(await w.tx.workspaces.get(workspace.id)))
+            if (!(await w.tx.workspaces.get(workspace.id)) || !(await this.maySecrets(w.tx, workspace.id, user.id)))
                 return { redirect: back("not-allowed"), outcome: "refused" as const };
-            const existing = await w.tx.githubInstallations.get(id);
-            if (existing && existing.workspaceId !== workspace.id) return { redirect: back("taken"), outcome: "refused" as const };
+            // Already linked to other workspaces is fine: whoever links it here administers the account it's on.
+            const existing = await w.tx.githubInstallations.get(id, workspace.id);
             const record: GithubInstallation = {
                 id,
                 workspaceId: workspace.id,
@@ -549,9 +620,9 @@ export class Github {
 
     async unlink(actor: Actor, workspace: Workspace, id: number) {
         return this.core.write(actor, async (w) => {
-            const existing = await w.tx.githubInstallations.get(id);
-            if (!existing || existing.workspaceId !== workspace.id) throw notFound("No such installation in this workspace.");
-            await w.tx.githubInstallations.delete(id);
+            const existing = await w.tx.githubInstallations.get(id, workspace.id);
+            if (!existing) throw notFound("No such installation in this workspace.");
+            await w.tx.githubInstallations.delete(id, workspace.id);
             await w.audit({
                 workspaceId: workspace.id,
                 kind: "settings",

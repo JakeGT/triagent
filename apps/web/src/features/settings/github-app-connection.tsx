@@ -3,7 +3,7 @@
 // connection works.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { Unplug } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
@@ -46,9 +46,70 @@ const OUTCOMES: Record<string, { ok: boolean; text: string }> = {
         ok: false,
         text: "GitHub didn't send your authorization back, so the installation couldn't be checked. Try again.",
     },
-    taken: { ok: false, text: "That installation is already linked to another workspace. Unlink it there first." },
+    "none-to-link": {
+        ok: false,
+        text: "GitHub shows no installation of the app that you can link: one on your own account, or on an organisation you're an owner of. Install it on GitHub first, or ask an owner to link it here.",
+    },
     failed: { ok: false, text: "GitHub couldn't confirm the installation. Try again in a moment." },
 };
+
+/** The installations offered after authorizing (?github=choose&choice=…): read from the signed list, which the server checks again. */
+export function offeredInstallations(choice: string | undefined): { id: number; account: string }[] {
+    const body = choice?.split(".")[0];
+    if (!body) return [];
+    try {
+        const bytes = Uint8Array.from(atob(body.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+        const json = new TextDecoder().decode(bytes);
+        const options = (JSON.parse(json) as { options?: unknown }).options;
+        return Array.isArray(options)
+            ? options.filter((o): o is { id: number; account: string } => typeof o?.id === "number" && typeof o?.account === "string")
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+/** Several installations could be linked: pick one. */
+function ChooseInstallation({ choice, onLinked }: { choice: string; onLinked(): void }) {
+    const { ws } = useProject();
+    const id = useId();
+    const navigate = useNavigate();
+    const options = offeredInstallations(choice);
+    const [picked, setPicked] = useState(String(options[0]?.id ?? ""));
+    const link = useMutation({
+        mutationFn: () => api.post(`${paths.workspace(ws)}/github/installations/link`, { choice, installationId: Number(picked) }),
+        onSuccess: () => {
+            onLinked();
+            void navigate({ to: ".", search: { github: "linked" } as never, replace: true });
+        },
+    });
+    if (!options.length) return null;
+    return (
+        <form
+            className="grid gap-field"
+            data-testid="choose-installation"
+            onSubmit={(e) => {
+                e.preventDefault();
+                link.mutate();
+            }}
+        >
+            <Label htmlFor={id}>Which installation should this workspace use?</Label>
+            <ControlGroup>
+                <NativeSelect id={id} value={picked} onChange={(e) => setPicked(e.target.value)}>
+                    {options.map((o) => (
+                        <option key={o.id} value={o.id}>
+                            {o.account}
+                        </option>
+                    ))}
+                </NativeSelect>
+                <Button type="submit" disabled={link.isPending}>
+                    Link it
+                </Button>
+            </ControlGroup>
+            <FieldError message={link.error ? errorMessage(link.error) : null} />
+        </form>
+    );
+}
 
 /** `setup`: installing the app comes back into the project's guided setup rather than to its settings. */
 export function GithubAppConnection({ data, setup = false }: { data: GithubSettings; setup?: boolean }) {
@@ -57,7 +118,7 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
     const me = useMe();
     const queryClient = useQueryClient();
     const selectId = useId();
-    const outcome = useLocation({ select: (l) => (l.search as { github?: string }).github });
+    const { github: outcome, choice: offered } = useLocation({ select: (l) => l.search as { github?: string; choice?: string } });
     const installations = useQuery({ ...installationsQuery(ws), enabled: data.app.available && data.installations.length > 0 });
     const [choice, setChoice] = useState("");
     const base = `${paths.project(ws, slug)}/settings/github`;
@@ -67,9 +128,15 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
         void queryClient.invalidateQueries({ queryKey: keys.pullRequests(ws, slug) });
     };
 
+    // Installing it, or (`link`) linking an installation already on GitHub: an account can install the app
+    // once, and one installation can serve several workspaces.
     const install = useMutation({
-        mutationFn: () =>
-            api.post<{ url: string }>(`${paths.workspace(ws)}/github/installations`, { project: slug, ...(setup ? { setup: true } : {}) }),
+        mutationFn: (link: boolean) =>
+            api.post<{ url: string }>(`${paths.workspace(ws)}/github/installations`, {
+                project: slug,
+                ...(setup ? { setup: true } : {}),
+                ...(link ? { link: true } : {}),
+            }),
         onSuccess: (r) => window.location.assign(r.url),
     });
     const pick = useMutation({
@@ -113,7 +180,7 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
         >
             {shown && (
                 <Alert variant={shown.ok ? "default" : "destructive"} data-testid="install-outcome">
-                    <AlertTitle>{shown.ok ? "Installed" : "Not linked"}</AlertTitle>
+                    <AlertTitle>{shown.ok ? "Linked" : "Not linked"}</AlertTitle>
                     <AlertDescription>{shown.text}</AlertDescription>
                 </Alert>
             )}
@@ -141,13 +208,23 @@ export function GithubAppConnection({ data, setup = false }: { data: GithubSetti
                         ))}
                     </ul>
                 )}
+                {outcome === "choose" && can("secrets") && <ChooseInstallation key={offered} choice={offered ?? ""} onLinked={refresh} />}
                 {can("secrets") && (
-                    <FormActions>
-                        <Button variant="outline" onClick={() => install.mutate()} disabled={install.isPending}>
-                            Install on GitHub…
-                        </Button>
+                    <>
+                        <FormActions>
+                            <Button variant="outline" onClick={() => install.mutate(false)} disabled={install.isPending}>
+                                Install on GitHub…
+                            </Button>
+                            <Button variant="outline" onClick={() => install.mutate(true)} disabled={install.isPending}>
+                                Link one you already have…
+                            </Button>
+                        </FormActions>
+                        <p className="text-sm text-muted-foreground">
+                            Already installed on the account, for another workspace say? GitHub won't install it twice: link it instead, and
+                            GitHub only asks who you are.
+                        </p>
                         <FieldError message={install.error ? errorMessage(install.error) : null} />
-                    </FormActions>
+                    </>
                 )}
             </div>
             {data.installations.length > 0 && can("configure") && (

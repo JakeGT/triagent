@@ -163,6 +163,8 @@ export class FakeGitHub {
     private readonly admin: boolean;
     /** Who installs the app next through GitHub's installation page (the browser flow), and on what. */
     nextInstall: { account: string; repos: string[]; login: string } | null = null;
+    /** Who authorizes the app next (GET /login/oauth/authorize, without installing it). */
+    nextAuthorize: string | null = null;
 
     constructor(options: { admin?: boolean } = {}) {
         this.root = mkdtempSync(path.join(tmpdir(), "fake-github-"));
@@ -592,6 +594,14 @@ export class FakeGitHub {
             res.writeHead(302, { location: callback.toString() });
             return res.end();
         }
+        if (url.pathname === "/login/oauth/authorize" && req.method === "GET" && this.app && this.nextAuthorize) {
+            if (url.searchParams.get("client_id") !== this.app.clientId) return json(res, 404, { message: "Not Found" });
+            const callback = new URL(String((this.app.manifest?.callback_urls as string[] | undefined)?.[0] ?? ""));
+            callback.searchParams.set("code", this.oauthCode(this.nextAuthorize));
+            callback.searchParams.set("state", url.searchParams.get("state") ?? "");
+            res.writeHead(302, { location: callback.toString() });
+            return res.end();
+        }
         if (url.pathname === "/login/oauth/access_token" && req.method === "POST") {
             const app = this.app;
             const login = this.oauthCodes.get(String(body.code));
@@ -960,6 +970,9 @@ export class FakeGitHub {
                 return json(res, 200, await this.openPull(str("fullName"), b as never));
             case "/_fake/pat":
                 this.pat(str("token"), str("login"), b.repos as string[], { noChecks: b.noChecks === true });
+                return json(res, 200, { ok: true });
+            case "/_fake/next-authorize":
+                this.nextAuthorize = str("login");
                 return json(res, 200, { ok: true });
             case "/_fake/next-install":
                 this.nextInstall = b as never;

@@ -1159,11 +1159,14 @@ export class Automation {
         }
         const installationId = Number((payload.installation as { id?: unknown } | undefined)?.id);
         const action = String(payload.action ?? "");
-        const linked = Number.isSafeInteger(installationId) ? await this.store.githubInstallations.get(installationId) : null;
+        // Every workspace the installation is linked to (one installation can serve several).
+        const links = Number.isSafeInteger(installationId) ? await this.store.githubInstallations.forInstallation(installationId) : [];
+        const linked = links[0] ?? null;
         const note = async (outcome: "received" | "ignored", detail: string) => {
             await this.github.recordDelivery({
                 ...instance,
-                workspaceId: linked?.workspaceId ?? null,
+                // A delivery for one workspace belongs to it; one for several, to the instance.
+                workspaceId: links.length === 1 ? (linked?.workspaceId ?? null) : null,
                 what: action || null,
                 outcome,
                 detail,
@@ -1179,21 +1182,21 @@ export class Automation {
             }
             const inst = (payload.installation ?? {}) as { repository_selection?: string; suspended_at?: string | null };
             await this.store.transaction(async (tx) => {
-                const current = await tx.githubInstallations.get(linked.id);
-                if (!current) return;
-                await tx.githubInstallations.put({
-                    ...current,
-                    suspended:
-                        action === "suspend" ? true : action === "unsuspend" ? false : Boolean(inst.suspended_at ?? current.suspended),
-                    repositorySelection: inst.repository_selection ?? current.repositorySelection,
-                });
+                for (const current of await tx.githubInstallations.forInstallation(linked.id))
+                    await tx.githubInstallations.put({
+                        ...current,
+                        suspended:
+                            action === "suspend" ? true : action === "unsuspend" ? false : Boolean(inst.suspended_at ?? current.suspended),
+                        repositorySelection: inst.repository_selection ?? current.repositorySelection,
+                    });
             });
             log.info("A GitHub App installation changed on GitHub", { action: action || "changed", account: linked.accountLogin });
             return note("received", `Installation ${action || "changed"} on ${linked.accountLogin}.`);
         }
         if (!linked) return note("ignored", "That installation isn't linked to a workspace, so there's nothing to do.");
         const repositoryId = Number((payload.repository as { id?: unknown } | undefined)?.id);
-        const projects = await this.projectsFor(linked.workspaceId, linked.id, repositoryId);
+        const projects: Project[] = [];
+        for (const link of links) projects.push(...(await this.projectsFor(link.workspaceId, link.id, repositoryId)));
         if (!projects.length) return note("ignored", "No project in the workspace uses that repository.");
         const results = [];
         for (const project of projects) results.push(await this.handleEvent(project, event, payload, deliveryId));

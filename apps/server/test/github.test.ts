@@ -9,10 +9,14 @@ import { after, before, describe, test } from "node:test";
 import { captureLog } from "@triagent/shared/log";
 import { COMMENT_MARKER } from "../src/services/github/service.ts";
 import { specForBranch } from "../src/services/runs.ts";
+import type { Repos } from "../src/store/types.ts";
 import { ADMIN_PASSWORD, type Session, testApp } from "./helpers.ts";
 import { eventually, finished, PAT, patProject, type ReviewEnv, reviewEnv } from "./review-helpers.ts";
 
 const later = (minutes: number) => new Date(Date.now() + minutes * 60_000);
+
+/** An installation as linked to its first workspace, or null when it's linked to none. */
+const firstLink = async (store: Repos, id: number) => (await store.githubInstallations.forInstallation(id))[0] ?? null;
 
 describe("pull requests with a token: webhooks, checks and the baseline", () => {
     let env: ReviewEnv;
@@ -587,7 +591,7 @@ describe("the GitHub App", () => {
         // Mallory claims acme's installation id: GitHub says her account can't see it.
         let r = await link(mallory, "evil", acme.id, "mal");
         assert.match(r.location, /\?github=not-yours$/);
-        assert.equal(await env.t.services.store.githubInstallations.get(acme.id), null);
+        assert.equal(await firstLink(env.t.services.store, acme.id), null);
         // A bare installation id, without a state Triagent signed, links nothing.
         const bare = await env.t.app.request(
             `http://triagent.test/api/v1/github/app/installed?installation_id=${acme.id}&setup_action=install`,
@@ -600,24 +604,32 @@ describe("the GitHub App", () => {
         const admins = await link(env.admin, "acme", acme.id, "nobody");
         r = await link(mallory, "evil", acme.id, "alice", { state: admins.state });
         assert.match(r.location, /\?github=not-you$/);
-        assert.equal(await env.t.services.store.githubInstallations.get(acme.id), null);
+        assert.equal(await firstLink(env.t.services.store, acme.id), null);
 
         // The real owners link their own.
         r = await link(env.admin, "acme", acme.id, "alice");
         assert.equal(r.location, "/w/acme/p/app/settings/github?github=linked");
-        assert.equal((await env.t.services.store.githubInstallations.get(acme.id))?.accountLogin, "acme");
+        assert.equal((await firstLink(env.t.services.store, acme.id))?.accountLogin, "acme");
         // Started from the project's guided setup: back into it.
         r = await link(mallory, "evil", evil.id, "mal", { setup: true });
         assert.equal(r.location, "/w/evil/p/app/settings/github?github=linked&setup=project");
-        // An installation already linked to a workspace can't be taken by another, even by an admin of it.
+        // An installation can be linked to several workspaces, each time by an owner of its account: acme's
+        // in "evil" too, once Mallory owns acme on GitHub. Each workspace keeps its own link.
         env.fake.installations.get(acme.id)?.users.add("mal");
         env.fake.orgRole("acme", "mal", "admin");
         r = await link(mallory, "evil", acme.id, "mal");
-        assert.match(r.location, /github=taken$/);
-        assert.equal(
-            (await env.t.services.store.githubInstallations.get(acme.id))?.workspaceId,
-            (await env.t.services.store.workspaces.bySlug("acme"))?.id,
+        assert.match(r.location, /github=linked$/);
+        assert.deepEqual(
+            (await env.t.services.store.githubInstallations.forInstallation(acme.id)).map((i) => i.workspaceId).sort(),
+            [(await env.t.services.store.workspaces.bySlug("acme"))?.id, (await env.t.services.store.workspaces.bySlug("evil"))?.id].sort(),
         );
+        // Unlinking it in one leaves the other's.
+        assert.equal(
+            (await env.t.request(`/api/v1/w/evil/github/installations/${acme.id}`, { method: "DELETE", session: mallory })).status,
+            200,
+        );
+        assert.equal((await env.t.services.store.githubInstallations.forInstallation(acme.id)).length, 1);
+        env.fake.orgRole("acme", "mal", "member");
         // Only people who manage secrets start an installation.
         const token = await env.t.request("/api/v1/w/acme/settings/tokens", {
             method: "POST",
@@ -677,7 +689,7 @@ describe("the GitHub App", () => {
         env.fake.orgRole("corp", "bob", "member");
         let r = await link(env.admin, "acme", corp.id, "bob");
         assert.match(r.location, /\?github=not-admin$/);
-        assert.equal(await env.t.services.store.githubInstallations.get(corp.id), null);
+        assert.equal(await firstLink(env.t.services.store, corp.id), null);
         // An invitation to be an admin isn't the same as being one.
         env.fake.orgRole("corp", "bob", "admin", "pending");
         r = await link(env.admin, "acme", corp.id, "bob");
@@ -690,10 +702,80 @@ describe("the GitHub App", () => {
         const carol = env.fake.install("carol", ["carol/tool"], ["carol", "dave"], { account: { login: "carol", type: "User" } });
         r = await link(env.admin, "acme", carol.id, "dave");
         assert.match(r.location, /\?github=not-account$/);
-        assert.equal(await env.t.services.store.githubInstallations.get(carol.id), null);
+        assert.equal(await firstLink(env.t.services.store, carol.id), null);
         r = await link(env.admin, "acme", carol.id, "carol");
         assert.match(r.location, /\?github=linked$/);
         for (const id of [corp.id, carol.id])
+            assert.equal(
+                (await env.t.request(`/api/v1/w/acme/github/installations/${id}`, { method: "DELETE", session: env.admin })).status,
+                200,
+            );
+    });
+
+    /** "Link one you already have": authorize the app as `login` on GitHub, and come back. */
+    async function linkExisting(session: Session, ws: string, login: string) {
+        const started = await env.t.request(`/api/v1/w/${ws}/github/installations`, {
+            method: "POST",
+            session,
+            body: { project: "app", link: true },
+        });
+        assert.equal(started.status, 200, started.text);
+        const url = new URL(started.body.url);
+        assert.equal(url.pathname, "/login/oauth/authorize");
+        assert.equal(url.searchParams.get("client_id"), env.fake.app?.clientId);
+        const state = url.searchParams.get("state") as string;
+        const res = await env.t.app.request(
+            `http://triagent.test/api/v1/github/app/installed?code=${env.fake.oauthCode(login)}&state=${encodeURIComponent(state)}`,
+            { headers: { cookie: session.cookie } },
+        );
+        return res.headers.get("location") ?? "";
+    }
+
+    test("an installation someone already has is linked without installing again: the one they own, or the one they pick", async () => {
+        const store = env.t.services.store;
+        const acmeId = (await store.workspaces.bySlug("acme"))?.id as string;
+        // Nothing of theirs: GitHub shows Sam no installation at all, then one he's only a member of.
+        let location = await linkExisting(env.admin, "acme", "sam");
+        assert.match(location, /\?github=none-to-link$/);
+        const shared = env.fake.install("shared", ["shared/app"], ["sam"]);
+        env.fake.orgRole("shared", "sam", "member");
+        location = await linkExisting(env.admin, "acme", "sam");
+        assert.match(location, /\?github=none-to-link$/);
+
+        // One he owns: linked straight away.
+        env.fake.orgRole("shared", "sam", "admin");
+        location = await linkExisting(env.admin, "acme", "sam");
+        assert.equal(location, "/w/acme/p/app/settings/github?github=linked");
+        assert.equal((await store.githubInstallations.get(shared.id, acmeId))?.accountLogin, "shared");
+
+        // Two he owns: he picks one, from the signed list he's sent back with.
+        const second = env.fake.install("second", ["second/app"], ["sam"]);
+        env.fake.orgRole("second", "sam", "admin");
+        location = await linkExisting(env.admin, "acme", "sam");
+        const back = new URL(location, "http://triagent.test");
+        assert.equal(back.searchParams.get("github"), "choose");
+        const choice = back.searchParams.get("choice") as string;
+        const pick = (body: object, session: Session = env.admin) =>
+            env.t.request("/api/v1/w/acme/github/installations/link", { method: "POST", session, body });
+        // Only what was offered, only by whoever was offered it, only here.
+        assert.equal((await pick({ choice, installationId: 999_999 })).status, 400);
+        assert.equal((await pick({ choice: `${choice}x`, installationId: second.id })).status, 400);
+        assert.equal((await pick({ choice, installationId: second.id }, mallory)).status, 404);
+        assert.equal(
+            (
+                await env.t.request("/api/v1/w/evil/github/installations/link", {
+                    method: "POST",
+                    session: mallory,
+                    body: { choice, installationId: second.id },
+                })
+            ).status,
+            400,
+        );
+        const picked = await pick({ choice, installationId: second.id });
+        assert.equal(picked.status, 200, picked.text);
+        assert.equal((await store.githubInstallations.get(second.id, acmeId))?.accountLogin, "second");
+
+        for (const id of [shared.id, second.id])
             assert.equal(
                 (await env.t.request(`/api/v1/w/acme/github/installations/${id}`, { method: "DELETE", session: env.admin })).status,
                 200,
@@ -718,7 +800,7 @@ describe("the GitHub App", () => {
         try {
             const r = await link(env.admin, "acme", late.id, "alice");
             assert.match(r.location, /\?github=not-allowed$/);
-            assert.equal(await store.githubInstallations.get(late.id), null);
+            assert.equal(await firstLink(store, late.id), null);
         } finally {
             app.installation = original;
             await store.transaction((tx) => tx.memberships.put(before));
@@ -769,14 +851,57 @@ describe("the GitHub App", () => {
         const unknown = await env.fake.deliver(hook, "pull_request", payload(999_999, "evil/app"), secret);
         assert.equal(unknown.body.ignored, true);
 
+        // An installation linked to two workspaces: its events reach the projects on that repository in both.
+        {
+            const store = env.t.services.store;
+            const evilWs = (await store.workspaces.bySlug("evil"))?.id as string;
+            const link = await store.githubInstallations.get(acme.id, acmeWs as string);
+            assert.ok(link);
+            await store.transaction((tx) => tx.githubInstallations.put({ ...link, workspaceId: evilWs }));
+            const created = await env.t.request("/api/v1/w/evil/projects", {
+                method: "POST",
+                session: mallory,
+                body: { slug: "acme-copy", repoUrl: "https://github.com/acme/app" },
+            });
+            assert.equal(created.status, 201, created.text);
+            const copy = await env.t.request("/api/v1/w/evil/p/acme-copy/settings/github/repository", {
+                method: "PUT",
+                session: mallory,
+                body: { installationId: acme.id, repositoryId: env.fake.repo("acme/app").id },
+            });
+            assert.equal(copy.status, 200, copy.text);
+            await env.t.request("/api/v1/w/evil/p/acme-copy/settings/automation", {
+                method: "PATCH",
+                session: mallory,
+                body: { enabled: true, firstReview: "ready" },
+            });
+            await env.t.services.automation.checkPulls((await store.projects.bySlug(evilWs, "acme-copy")) as never);
+            await env.fake.commit("acme/app", "feat", { "src/g.ts": "g\n" }, "g");
+            const both = await env.fake.deliver(hook, "pull_request", { ...payload(acme.id, "acme/app"), action: "synchronize" }, secret);
+            assert.equal(both.status, 200, JSON.stringify(both.body));
+            await env.t.services.runs.settled();
+            const jobs = await store.jobs.list({ statuses: ["queued"] }, 20);
+            assert.ok(
+                jobs.some((j) => j.workspaceId === evilWs && j.pr?.number === 1),
+                JSON.stringify(both.body),
+            );
+            await store.transaction((tx) => tx.githubInstallations.delete(acme.id, evilWs));
+            for (const j of jobs)
+                await env.t.request(`/api/v1/w/${j.workspaceId === evilWs ? "evil" : "acme"}/runs/${j.id}/cancel`, {
+                    method: "POST",
+                    session: j.workspaceId === evilWs ? mallory : env.admin,
+                    body: {},
+                });
+        }
+
         // Installation events keep the table current; a suspended installation can't be used.
         await env.fake.deliver(hook, "installation", { action: "suspend", installation: { id: evilInst.id } }, secret);
-        assert.equal((await env.t.services.store.githubInstallations.get(evilInst.id))?.suspended, true);
+        assert.equal((await firstLink(env.t.services.store, evilInst.id))?.suspended, true);
         const start = await env.t.request("/api/v1/w/evil/p/app/reviews", { method: "POST", session: mallory, body: { kind: "full" } });
         assert.equal(start.status, 400);
         assert.match(start.body.error, /suspended/);
         await env.fake.deliver(hook, "installation", { action: "deleted", installation: { id: evilInst.id } }, secret);
-        assert.equal(await env.t.services.store.githubInstallations.get(evilInst.id), null);
+        assert.equal(await firstLink(env.t.services.store, evilInst.id), null);
         const status = (await env.t.request("/api/v1/instance/github-app", { session: env.admin })).body;
         assert.ok(!status.deliveries.some((d: { outcome: string }) => d.outcome === "refused"));
         assert.equal(status.refused.count, 1);
