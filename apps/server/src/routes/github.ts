@@ -1,5 +1,5 @@
-// GitHub: a project's repository (from the GitHub App, or a token), linking app installations to a
-// workspace, the app's webhook, and the instance's GitHub App.
+// GitHub: a project's repository (from the GitHub App, or a token), a workspace's GitHub settings (its
+// token and server), linking app installations to a workspace, the app's webhook, and the instance's GitHub App.
 
 import { z } from "zod";
 import { forbidden } from "../errors.ts";
@@ -45,6 +45,66 @@ export const githubRoutes: Route[] = [
         summary: "Check the connection: read the repository and its open pull requests",
         async handler({ services, project: p }) {
             return json(await services.github.test(project(p)));
+        },
+    }),
+
+    // ---- a workspace's GitHub settings ---------------------------------------------------------------
+    route({
+        method: "GET",
+        path: `${W}/settings/github`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "How this workspace's projects reach GitHub when they don't say otherwise, and which GitHub server",
+        description:
+            "`method`: `app` (each project picks a repository from the instance's GitHub App) or `token` (projects without a connection of their own use the workspace's token with their repository address). `server`: a GitHub Enterprise Server's address, or null for the instance's GitHub. The token itself is never returned: only whether it's set, its kind and its owner.",
+        async handler({ services, access }) {
+            const workspace = (access as Access).workspace;
+            return json(await services.github.workspace.view(workspace.id, Boolean(await services.github.app.info())));
+        },
+    }),
+    route({
+        method: "PUT",
+        path: `${W}/settings/github`,
+        scope: "workspace",
+        permission: "configure",
+        tag: "Settings",
+        summary: "Choose how this workspace's projects reach GitHub, and its GitHub server",
+        body: z.object({
+            method: z.enum(["app", "token"]),
+            server: z
+                .string()
+                .max(200)
+                .nullable()
+                .describe("A GitHub Enterprise Server's address, like https://github.example.com; null for the instance's GitHub"),
+        }),
+        async handler({ services, access, body, actor }) {
+            const workspace = (access as Access).workspace;
+            await services.github.workspace.save(actor, workspace, body, Boolean(await services.github.app.info()));
+            return json(await services.github.workspace.view(workspace.id, Boolean(await services.github.app.info())));
+        },
+    }),
+    route({
+        method: "PUT",
+        path: `${W}/settings/github/token`,
+        scope: "workspace",
+        permission: "secrets",
+        tag: "Settings",
+        summary: "Set the workspace's GitHub token (fine-grained or classic; checked with GitHub, then stored encrypted)",
+        body: z.object({ token: z.string().max(300) }),
+        async handler({ services, access, body, actor }) {
+            return json(await services.github.workspace.setToken(actor, (access as Access).workspace, body.token));
+        },
+    }),
+    route({
+        method: "DELETE",
+        path: `${W}/settings/github/token`,
+        scope: "workspace",
+        permission: "secrets",
+        tag: "Settings",
+        summary: "Forget the workspace's GitHub token",
+        async handler({ services, access, actor }) {
+            return json(await services.github.workspace.setToken(actor, (access as Access).workspace, null));
         },
     }),
 

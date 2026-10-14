@@ -9,6 +9,8 @@ const settings = (over: Partial<GithubSettings>): GithubSettings => ({
     connection: { method: "token", token: { name: "GitHub token", set: true, hint: null, setBy: null, setAt: null } },
     webhook: { secretSet: false, setBy: null, setAt: null, url: "" },
     mode: "token",
+    tokenFrom: "project",
+    workspace: { method: "app", server: "https://github.com", ownServer: false, token: null },
     checksReadable: false,
     app: { available: false },
     installations: [],

@@ -56,7 +56,8 @@ export function ProjectGithub() {
                 <>
                     {!canSecrets && <ReadOnlyNote>Only admins can set or clear secrets.</ReadOnlyNote>}
                     {/* Keyed by project, so a one-time secret or a pending result never shows on another project's page. */}
-                    <GithubAppConnection key={`app-${slug}`} data={data} />
+                    {/* The instance's app is on its own GitHub: no use to a workspace on a GitHub Enterprise server. */}
+                    {!(data.workspace.ownServer && !data.repository) && <GithubAppConnection key={`app-${slug}`} data={data} />}
                     <ChecksNote data={data} />
                     <TestConnection key={`test-${slug}`} data={data} />
                     <GithubTokenSection key={`token-${slug}`} data={data} />
@@ -110,7 +111,7 @@ export function ChecksNote({ data }: { data: GithubSettings }) {
     );
 }
 
-/** The project's own fine-grained token: instead of the GitHub App, or where there's none. */
+/** The project's own token: instead of the GitHub App or the workspace's token, or where there's neither. */
 export function GithubTokenSection({ data }: { data: GithubSettings }) {
     const { ws, slug } = useProject();
     const can = useCan();
@@ -120,10 +121,26 @@ export function GithubTokenSection({ data }: { data: GithubSettings }) {
     const refresh = () => queryClient.invalidateQueries({ queryKey: keys.projectSettings(ws, slug, "github") });
     return (
         <SettingsSection
-            title={data.app.available ? "Access token (instead of the app)" : "Access token"}
+            title={
+                data.workspace.token && data.workspace.method === "token"
+                    ? "Access token (instead of the workspace's)"
+                    : data.app.available
+                      ? "Access token (instead of the app)"
+                      : "Access token"
+            }
             description={
                 <>
-                    A fine-grained personal access token limited to{" "}
+                    {data.tokenFrom === "workspace" && (
+                        <span className="mb-2 block" data-testid="workspace-token-note">
+                            This project uses the workspace's token
+                            {data.workspace.token?.owner ? ` (${data.workspace.token.owner})` : ""}, set in the workspace's{" "}
+                            <Link to="/w/$ws/settings/github" params={{ ws }} className="link">
+                                GitHub settings
+                            </Link>
+                            . A token here is used instead.
+                        </span>
+                    )}
+                    A fine-grained personal access token{data.workspace.ownServer ? ` on ${data.workspace.server}` : ""} limited to{" "}
                     {data.repoUrl ? <span className="font-mono">{data.repoUrl}</span> : "the repository"}, with read access to contents and
                     read and write access to pull requests and commit statuses. It's stored encrypted and never shown again.
                 </>

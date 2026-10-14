@@ -433,6 +433,19 @@ export interface ModelChoices {
     options?: ProjectOptions;
 }
 
+export type GithubMethod = "app" | "token";
+
+/** A workspace's GitHub settings (GET …/settings/github): never the token itself. */
+export interface WorkspaceGithub {
+    method: GithubMethod;
+    /** Its own GitHub Enterprise Server's address, or null for the instance's GitHub (`defaultServer`). */
+    server: string | null;
+    defaultServer: string;
+    token: SecretView & { owner: string | null; kind: "fine-grained" | "classic" | "oauth" | null };
+    /** Whether projects could use the instance's GitHub App: there is one, and the workspace is on its GitHub. */
+    appAvailable: boolean;
+}
+
 export interface GithubSettings {
     repoUrl: string | null;
     defaultBranch: string;
@@ -440,6 +453,15 @@ export interface GithubSettings {
     webhook: { secretSet: boolean; setBy: string | null; setAt: string | null; url: string };
     /** How the project reaches GitHub now: the GitHub App, its own token, or not at all. */
     mode: "app" | "token" | "none";
+    /** Whose token a token connection uses: the project's own, or the one the workspace lends. */
+    tokenFrom: "project" | "workspace" | null;
+    /** What the workspace's GitHub settings lend projects, and the server tokens go to. */
+    workspace: {
+        method: GithubMethod;
+        server: string;
+        ownServer: boolean;
+        token: { owner: string | null; kind: WorkspaceGithub["token"]["kind"] } | null;
+    };
     /** False once GitHub has refused to show this connection a commit's check runs; null until it's been asked. */
     checksReadable: boolean | null;
     app: { available: true; name: string; slug: string; htmlUrl: string } | { available: false };

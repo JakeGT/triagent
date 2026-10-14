@@ -89,7 +89,7 @@ export function createServices(config: Config, store: Store, options: ServiceOpt
     const models = new Models(core, history, allowances, setup, settings);
     const modelLists = new ModelLists(setup, catalogue, options.fetch ? { fetch: options.fetch } : {});
     const webhooks = new Webhooks(core, settings);
-    const github = new Github(core, settings, projects);
+    const github = new Github(core, settings, projects, options.lookup);
     const runs = new Runs(core, github, reports, history, models, settings, reviewLimits);
     const automation = new Automation(core, github, runs, reports, settings);
     webhooks.automation = automation;
