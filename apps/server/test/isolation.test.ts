@@ -236,7 +236,7 @@ test("another workspace's runs, installations, invites and projects can't be rea
             assert.equal(r.status, 404, `${method} ${path}: ${r.status} ${r.text.slice(0, 200)}`);
         }
         assert.equal((await s.store.jobs.get(job.id))?.status, "queued");
-        assert.ok(await s.store.githubInstallations.get(4242));
+        assert.ok((await s.store.githubInstallations.forInstallation(4242)).length);
         assert.ok(await s.store.invites.get(inviteId));
     } finally {
         await env.close();

@@ -418,7 +418,7 @@ export interface LogLine {
     line: string;
 }
 
-/** A GitHub App installation linked to a workspace (by someone who proved they can see it). */
+/** A GitHub App installation linked to a workspace, by someone who proved they own its account (one row per workspace it's linked to). */
 export interface GithubInstallation {
     id: number;
     workspaceId: string;
@@ -744,11 +744,16 @@ export interface Repos {
         /** Up to `limit` lines after `after` (a seq), oldest first. */
         log(jobId: string, after: number, limit: number): Promise<LogLine[]>;
     };
+    /** GitHub App installations, as linked to workspaces: one installation can be linked to several. */
     githubInstallations: {
-        get(id: number): Promise<GithubInstallation | null>;
+        /** The installation as linked to this workspace. */
+        get(id: number, workspaceId: string): Promise<GithubInstallation | null>;
+        /** Every workspace's link to the installation. */
+        forInstallation(id: number): Promise<GithubInstallation[]>;
         forWorkspace(workspaceId: string): Promise<GithubInstallation[]>;
         put(installation: GithubInstallation): Promise<void>;
-        delete(id: number): Promise<void>;
+        /** One workspace's link, or (without a workspace) the installation everywhere. */
+        delete(id: number, workspaceId?: string): Promise<void>;
         deleteAll(): Promise<void>;
     };
     /** Each project's view of GitHub (pull requests, branches, the last check), owned by services/github. */

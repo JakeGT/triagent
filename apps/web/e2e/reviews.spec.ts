@@ -347,7 +347,10 @@ test("an instance admin creates the GitHub App, and a project installs it and pi
         await expect(page.getByText("Triagent e2e")).toBeVisible();
     }
 
-    await fake("next-install", { account: "acme", repos: [repo], login: "octo" });
+    // An account and owner of this test's own: other tests install the app too.
+    const account = `acme-${ws}`;
+    const owner = `owner-${ws}`;
+    await fake("next-install", { account, repos: [repo], login: owner });
     await page.goto(`${base}/settings/github`);
     await page.getByRole("button", { name: "Install on GitHub…" }).click();
     await expect(page.getByTestId("install-outcome")).toContainText("The installation is linked to this workspace");
@@ -356,6 +359,17 @@ test("an instance admin creates the GitHub App, and a project installs it and pi
     await expect(page.getByTestId("github-mode")).toHaveText(`Connected to ${repo} through the GitHub App.`);
     await page.getByRole("button", { name: "Test the connection" }).click();
     await expect(page.getByRole("status").filter({ hasText: "Reading works" })).toContainText("posted as the GitHub App");
+
+    // Another workspace can't install it on the same account again, so it links the installation instead:
+    // GitHub only asks who you are.
+    const other = await reviewProject(admin);
+    await fake("next-authorize", { login: owner });
+    await page.goto(`${other.base}/settings/github`);
+    await page.getByRole("button", { name: "Link one you already have…" }).click();
+    await expect(page.getByTestId("install-outcome")).toContainText("The installation is linked to this workspace");
+    await expect(page.getByText(new RegExp(`${account} \\(chosen repositories\\)`))).toBeVisible();
+    if (process.env.SCREENSHOT_DIR)
+        await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, "github-app-linked-existing.png"), fullPage: true });
 });
 
 for (const theme of ["light", "dark"] as const) {

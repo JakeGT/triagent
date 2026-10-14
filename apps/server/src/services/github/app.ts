@@ -275,6 +275,16 @@ export class GithubApp {
         return `${this.webUrl}/apps/${encodeURIComponent(slug)}/installations/new?state=${encodeURIComponent(state)}`;
     }
 
+    /**
+     * Where to send someone to authorize the app as themselves, without installing it (for linking an
+     * installation they already have). GitHub sends them back to the app's callback URL with a code.
+     */
+    async authorizeUrl(state: string): Promise<string> {
+        const app = await this.credentials();
+        if (!app) throw new ApiError(400, "No GitHub App is set up on this instance.");
+        return `${this.webUrl}/login/oauth/authorize?client_id=${encodeURIComponent(app.clientId)}&state=${encodeURIComponent(state)}`;
+    }
+
     /** Exchange the user authorization code from an installation's redirect for that person's token. */
     async userToken(code: string): Promise<string> {
         const app = await this.credentials();
@@ -336,7 +346,8 @@ export class GithubApp {
 
     /** The payload of a state this server signed, if it's genuine, unexpired and for `purpose`. */
     readState<T extends Record<string, unknown>>(state: unknown, purpose: string): T | null {
-        if (typeof state !== "string" || state.length > 2000) return null;
+        // A list of installations to choose from (link-choice) runs to about 2,000 characters at its largest.
+        if (typeof state !== "string" || state.length > 4000) return null;
         const parts = state.split(".");
         const [body, mac] = parts;
         if (parts.length !== 2 || !body || !mac) return null;

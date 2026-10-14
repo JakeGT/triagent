@@ -70,6 +70,8 @@ function runHooks(hooks: (() => void)[]): void {
 }
 const key = (...parts: string[]) => parts.join("\0");
 const linkKey = (f: Pick<PatternFinding, "projectId" | "branch" | "findingId">) => key(f.projectId, f.branch, f.findingId);
+/** An installation's link to one workspace: one installation can be linked to several. */
+const installationKey = (id: number, workspaceId: string) => `${id}:${workspaceId}`;
 const sourceKey = (s: Pick<FindingSource, "projectId" | "branch" | "findingId" | "model" | "provider">) =>
     key(s.projectId, s.branch, s.findingId, s.model, s.provider);
 
@@ -289,7 +291,7 @@ export class MemoryStore implements Store {
                 for (const p of this.t.patterns.values()) if (p.workspaceId === id) await this.patterns.delete(p.id);
                 await this.origins.clear(id);
                 for (const i of this.t.githubInstallations.values())
-                    if (i.workspaceId === id) this.t.githubInstallations.delete(String(i.id));
+                    if (i.workspaceId === id) this.t.githubInstallations.delete(installationKey(i.id, i.workspaceId));
                 this.t.modelGrants.delete(id);
                 this.t.workspaces.delete(id);
             }),
@@ -669,10 +671,20 @@ export class MemoryStore implements Store {
     };
 
     githubInstallations: Repos["githubInstallations"] = {
-        get: async (id) => this.t.githubInstallations.get(String(id)),
+        get: async (id, workspaceId) => this.t.githubInstallations.get(installationKey(id, workspaceId)),
+        forInstallation: async (id) =>
+            this.t.githubInstallations
+                .values()
+                .filter((i) => i.id === id)
+                .sort((a, b) => a.linkedAt.localeCompare(b.linkedAt) || a.workspaceId.localeCompare(b.workspaceId)),
         forWorkspace: async (workspaceId) => this.t.githubInstallations.values().filter((i) => i.workspaceId === workspaceId),
-        put: (i) => this.write(() => this.t.githubInstallations.set(String(i.id), i)),
-        delete: (id) => this.write(() => this.t.githubInstallations.delete(String(id))),
+        put: (i) => this.write(() => this.t.githubInstallations.set(installationKey(i.id, i.workspaceId), i)),
+        delete: (id, workspaceId) =>
+            this.write(() => {
+                for (const i of this.t.githubInstallations.values())
+                    if (i.id === id && (workspaceId === undefined || i.workspaceId === workspaceId))
+                        this.t.githubInstallations.delete(installationKey(i.id, i.workspaceId));
+            }),
         deleteAll: () =>
             this.write(() => {
                 for (const k of [...this.t.githubInstallations.rows.keys()]) this.t.githubInstallations.delete(k);
