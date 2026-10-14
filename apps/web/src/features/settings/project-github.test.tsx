@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { GithubSettings } from "@/lib/types";
-import { ChecksNote } from "./project-github";
+import { ChecksNote, tokenTitle } from "./project-github";
 
 const settings = (over: Partial<GithubSettings>): GithubSettings => ({
     repoUrl: "https://github.com/acme/app",
@@ -29,5 +29,25 @@ describe("ChecksNote", () => {
         expect(screen.queryByTestId("checks-note")).toBeNull();
         rerender(<ChecksNote data={settings({ checksReadable: null })} />);
         expect(screen.queryByTestId("checks-note")).toBeNull();
+    });
+});
+
+describe("tokenTitle", () => {
+    const app = { available: true as const, name: "Triagent", slug: "triagent", htmlUrl: "" };
+    it("says what the project's token is used instead of", () => {
+        expect(tokenTitle(settings({}))).toBe("Access token");
+        expect(tokenTitle(settings({ app }))).toBe("Access token (instead of the app)");
+        expect(
+            tokenTitle(
+                settings({
+                    app,
+                    workspace: { method: "token", server: "https://github.com", ownServer: false, token: { owner: "o", kind: "classic" } },
+                }),
+            ),
+        ).toBe("Access token (instead of the workspace's)");
+        // On the workspace's own Enterprise server the app can't be used.
+        expect(tokenTitle(settings({ app, workspace: { method: "token", server: "https://ghe.x", ownServer: true, token: null } }))).toBe(
+            "Access token",
+        );
     });
 });

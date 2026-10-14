@@ -111,6 +111,14 @@ export function ChecksNote({ data }: { data: GithubSettings }) {
     );
 }
 
+/** What the project's own token is instead of: the workspace's token, or the app where it could be used. */
+export function tokenTitle(data: GithubSettings): string {
+    if (data.workspace.token && data.workspace.method === "token") return "Access token (instead of the workspace's)";
+    // The instance's app can't reach a workspace's own GitHub Enterprise server.
+    if (data.app.available && !data.workspace.ownServer) return "Access token (instead of the app)";
+    return "Access token";
+}
+
 /** The project's own token: instead of the GitHub App or the workspace's token, or where there's neither. */
 export function GithubTokenSection({ data }: { data: GithubSettings }) {
     const { ws, slug } = useProject();
@@ -121,13 +129,7 @@ export function GithubTokenSection({ data }: { data: GithubSettings }) {
     const refresh = () => queryClient.invalidateQueries({ queryKey: keys.projectSettings(ws, slug, "github") });
     return (
         <SettingsSection
-            title={
-                data.workspace.token && data.workspace.method === "token"
-                    ? "Access token (instead of the workspace's)"
-                    : data.app.available
-                      ? "Access token (instead of the app)"
-                      : "Access token"
-            }
+            title={tokenTitle(data)}
             description={
                 <>
                     {data.tokenFrom === "workspace" && (

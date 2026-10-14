@@ -4,7 +4,9 @@
 // settings still win.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { toast } from "sonner";
+import { ChangedElsewhere } from "@/components/changed-elsewhere";
 import { type Choice, ChoiceField, Field, FieldError } from "@/components/field";
 import { FormActions } from "@/components/form";
 import { LoadError, LoadingRows } from "@/components/load-state";
@@ -28,6 +30,13 @@ interface Draft {
     method: GithubMethod;
     enterprise: boolean;
     server: string;
+}
+
+/** Why the app can't be chosen with this draft, or null. */
+function whyNoApp(d: Draft, data: WorkspaceGithub): string | null {
+    if (d.enterprise) return "The instance's GitHub App is on its own GitHub, so it can't reach a GitHub Enterprise server.";
+    if (!data.instanceApp) return "This instance has no GitHub App. An instance admin can set one up.";
+    return null;
 }
 
 const draftOf = (d: WorkspaceGithub): Draft => ({ method: d.method, enterprise: d.server !== null, server: d.server ?? "" });
@@ -84,6 +93,7 @@ function Connection({ data }: { data: WorkspaceGithub }) {
     const { ws, can } = useWorkspace();
     const queryClient = useQueryClient();
     const form = useDraft<Draft>(draftOf(data));
+    const [missing, setMissing] = useState<string | null>(null);
     const save = useMutation({
         mutationFn: (d: Draft) =>
             api.put<WorkspaceGithub>(`${paths.workspace(ws)}/settings/github`, {
@@ -99,12 +109,10 @@ function Connection({ data }: { data: WorkspaceGithub }) {
     });
     if (form.draft === undefined) return null;
     const d = form.draft;
-    const editable = can("configure");
-    const appBlocked = d.enterprise
-        ? "The instance's GitHub App is on its own GitHub, so it can't reach a GitHub Enterprise server."
-        : !data.appAvailable && data.server === null
-          ? "This instance has no GitHub App. An instance admin can set one up."
-          : null;
+    const appBlocked = whyNoApp(d, data);
+    // Moving server sends every token in the workspace there: it takes the secrets permission, and forgets the workspace's token.
+    const savedEnterprise = data.server !== null;
+    const moving = d.enterprise !== savedEnterprise || (d.enterprise && d.server.trim() !== (data.server ?? ""));
     const methods: Choice<GithubMethod>[] = [
         {
             value: "app",
@@ -132,6 +140,8 @@ function Connection({ data }: { data: WorkspaceGithub }) {
         <form
             onSubmit={(e) => {
                 e.preventDefault();
+                setMissing(d.enterprise && !d.server.trim() ? "Enter the GitHub Enterprise server's address." : null);
+                if (d.enterprise && !d.server.trim()) return;
                 save.mutate(d);
             }}
         >
@@ -139,16 +149,23 @@ function Connection({ data }: { data: WorkspaceGithub }) {
                 title="Connection"
                 description="A project with a repository from the app, or a token of its own, keeps using that."
             >
+                <ChangedElsewhere show={form.changedElsewhere} onReload={form.reload} what="These settings" />
                 <ChoiceField
                     legend="GitHub server"
                     name="github-server"
                     value={d.enterprise ? "enterprise" : "github"}
                     choices={servers}
                     onChange={(v) =>
-                        form.setDraft({ ...d, enterprise: v === "enterprise", method: v === "enterprise" ? "token" : d.method })
+                        // Enterprise needs a token; back on the instance's GitHub, the method saved for it returns.
+                        form.setDraft({
+                            ...d,
+                            enterprise: v === "enterprise",
+                            method: v === "enterprise" || savedEnterprise ? "token" : data.method,
+                        })
                     }
-                    disabled={!editable}
+                    disabled={!can("secrets")}
                 />
+                {!can("secrets") && <p className="text-sm text-muted-foreground">Only admins who manage secrets can change the server.</p>}
                 {d.enterprise && (
                     <Field label="Server address">
                         {(p) => (
@@ -162,7 +179,7 @@ function Connection({ data }: { data: WorkspaceGithub }) {
                                 placeholder="https://github.example.com"
                                 value={d.server}
                                 onChange={(e) => form.setDraft({ ...d, server: e.target.value })}
-                                disabled={!editable}
+                                disabled={!can("secrets")}
                             />
                         )}
                     </Field>
@@ -173,16 +190,19 @@ function Connection({ data }: { data: WorkspaceGithub }) {
                     value={d.method}
                     choices={methods}
                     onChange={(v) => form.setDraft({ ...d, method: v })}
-                    disabled={!editable}
                 />
-                <FieldError message={save.error ? errorMessage(save.error) : null} />
-                {editable && (
-                    <FormActions>
-                        <Button type="submit" disabled={save.isPending || !form.dirty}>
-                            {save.isPending ? "Saving…" : "Save connection"}
-                        </Button>
-                    </FormActions>
+                {moving && data.token.set && (
+                    <p className="text-sm text-muted-foreground" data-testid="server-move-note">
+                        Saving forgets the workspace's token: a token for one GitHub is no use on another. Add one for the new server
+                        afterwards.
+                    </p>
                 )}
+                <FieldError message={missing ?? (save.error ? errorMessage(save.error) : null)} />
+                <FormActions>
+                    <Button type="submit" disabled={save.isPending || !form.dirty}>
+                        {save.isPending ? "Saving…" : "Save connection"}
+                    </Button>
+                </FormActions>
             </SettingsSection>
         </form>
     );

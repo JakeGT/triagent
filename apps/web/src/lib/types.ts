@@ -444,6 +444,8 @@ export interface WorkspaceGithub {
     token: SecretView & { owner: string | null; kind: "fine-grained" | "classic" | "oauth" | null };
     /** Whether projects could use the instance's GitHub App: there is one, and the workspace is on its GitHub. */
     appAvailable: boolean;
+    /** Whether the instance has a GitHub App at all. */
+    instanceApp: boolean;
 }
 
 export interface GithubSettings {

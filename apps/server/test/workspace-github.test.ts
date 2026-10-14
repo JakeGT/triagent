@@ -137,7 +137,8 @@ describe("a workspace on its own GitHub Enterprise Server", () => {
     before(async () => {
         ghe = await new FakeGitHub().start();
         env = await reviewEnv({ env: { ALLOW_PRIVATE_GITHUB_URLS: "true" } });
-        await workspaceWithProject(env, "corp", "https://ghe.example.com/corp/app");
+        // The fake Enterprise server is on 127.0.0.1 (stored repository addresses have no port).
+        await workspaceWithProject(env, "corp", "https://127.0.0.1/corp/app");
         ghe.repo("corp/app");
     });
     after(async () => {
@@ -183,11 +184,52 @@ describe("a workspace on its own GitHub Enterprise Server", () => {
         assert.ok(ghe.log.some((l) => l.path === "/graphql"));
     });
 
-    test("moving to another server checks the kept token there first", async () => {
-        env.fake.pats.delete(PAT(9));
-        const r = await settings({ method: "token", server: null });
-        assert.equal(r.status, 400);
-        assert.match(r.text, /turned the token down/);
+    test("a project whose repository is on another host isn't reached through the workspace's server", async () => {
+        const created = await env.t.request("/api/v1/w/corp/projects", {
+            method: "POST",
+            session: env.admin,
+            body: { slug: "elsewhere", repoUrl: "https://github.com/corp/app" },
+        });
+        assert.equal(created.status, 201, created.text);
+        const r = await env.t.request("/api/v1/w/corp/p/elsewhere/settings/github/test", { method: "POST", session: env.admin, body: {} });
+        assert.equal(r.body.code, "github_not_connected");
+        assert.match(r.text, /repository is on github\.com, but the workspace's GitHub is/);
+    });
+
+    test("moving the server takes permission to manage secrets, and forgets the workspace's token rather than send it there", async () => {
+        const manage = (
+            await env.t.request("/api/v1/w/corp/settings/tokens", {
+                method: "POST",
+                session: env.admin,
+                body: { name: "m", scope: "manage" },
+            })
+        ).body.token;
+        const byToken = await env.t.request("/api/v1/w/corp/settings/github", {
+            method: "PUT",
+            token: manage,
+            body: { method: "token", server: "https://elsewhere.example.com" },
+        });
+        assert.equal(byToken.status, 403);
+        assert.match(byToken.text, /permission to manage secrets/);
+        // The method alone it may change.
+        assert.equal(
+            (
+                await env.t.request("/api/v1/w/corp/settings/github", {
+                    method: "PUT",
+                    token: manage,
+                    body: { method: "token", server: ghe.url },
+                })
+            ).status,
+            200,
+        );
+        const before = ghe.log.length;
+        const moved = await settings({ method: "token", server: null });
+        assert.equal(moved.status, 200, moved.text);
+        assert.equal(moved.body.token.set, false);
+        assert.equal(moved.body.token.owner, null);
+        // Nothing was sent to either server to check it.
+        assert.equal(ghe.log.length, before);
+        assert.ok(!env.fake.log.some((l) => l.path === "/user"));
     });
 });
 

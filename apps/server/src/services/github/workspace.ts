@@ -7,9 +7,11 @@
 //
 // A GitHub Enterprise address is fetched by the server and cloned from by runners, so like model URLs it
 // must be https and resolve to public addresses (services/model-urls.ts), checked when saved and again
-// before use; ALLOW_PRIVATE_GITHUB_URLS=true allows private ones (a server on the company network).
+// before use; ALLOW_PRIVATE_GITHUB_URLS=true allows private ones (a server on the company network). Every
+// token in the workspace goes to that server, so changing it takes permission to manage secrets, and the
+// workspace's token is forgotten (never sent to the new server to check it).
 
-import { badRequest } from "../../errors.ts";
+import { ApiError, badRequest, forbidden } from "../../errors.ts";
 import type { Repos, Workspace } from "../../store/types.ts";
 import type { Actor, Core } from "../core.ts";
 import { checkModelUrl, defaultLookup, type Lookup, UnsafeUrl } from "../model-urls.ts";
@@ -48,6 +50,15 @@ export function tokenKind(token: string): TokenKind | string {
     if (/^gh[sr]_/.test(token))
         return "That's a GitHub App's own token, which expires within hours. Use a fine-grained or classic personal access token.";
     return "That doesn't look like a GitHub token (fine-grained tokens start with github_pat_, classic ones with ghp_).";
+}
+
+/** An address's origin as given (no lookups), or the input itself when it isn't one: for comparing. */
+function originOf(raw: string): string {
+    try {
+        return new URL(raw.trim()).origin;
+    } catch {
+        return raw.trim();
+    }
 }
 
 export class WorkspaceGithub {
@@ -135,6 +146,7 @@ export class WorkspaceGithub {
             token: { ...token, owner: token.set ? s.owner : null, kind: token.set ? s.kind : null },
             // The instance's app lives on the instance's GitHub, so a workspace on its own server can't use it.
             appAvailable: appAvailable && !s.server,
+            instanceApp: appAvailable,
         };
     }
 
@@ -148,12 +160,31 @@ export class WorkspaceGithub {
         } catch (err) {
             if (err instanceof GitHubError && (err.status === 401 || err.status === 403))
                 throw badRequest(`${server.own ? server.url : "GitHub"} turned the token down: check it hasn't expired or been revoked.`);
+            // GitHub away, slow or rate limiting: not the token's fault, and worth trying again.
+            if (err instanceof GitHubError && (err.status === 0 || err.status === 429 || err.status >= 500))
+                throw new ApiError(502, `Couldn't check the token with ${server.url} just now: ${err.message} Try again in a moment.`);
             if (err instanceof GitHubError) throw badRequest(`Couldn't check the token with ${server.url}: ${err.message}`);
             throw err;
         }
     }
 
-    async save(actor: Actor, workspace: Workspace, input: { method: GithubMethod; server: string | null }, appAvailable: boolean) {
+    /**
+     * `maySecrets`: whether the actor may set secrets. Every token in the workspace (its own and its
+     * projects') is sent to its server, so moving it is as sensitive as setting one: it takes that
+     * permission, and the workspace's token is forgotten rather than sent to the new server.
+     */
+    async save(
+        actor: Actor,
+        workspace: Workspace,
+        input: { method: GithubMethod; server: string | null },
+        appAvailable: boolean,
+        maySecrets: boolean,
+    ) {
+        const before = await this.stored(this.core.store, workspace.id);
+        // Who may move it is checked first: nothing is looked up for someone who can't.
+        const asked = input.server?.trim() ? originOf(input.server) : null;
+        if (asked !== before.server && !maySecrets)
+            throw forbidden("Changing the GitHub server sends the workspace's tokens there, so it takes permission to manage secrets.");
         const server = input.server?.trim() ? await this.checkServer(input.server) : null;
         if (server && new URL(server).origin === new URL(this.core.config.githubUrl).origin)
             throw badRequest(`${server} is this instance's own GitHub: leave the address empty to use it.`);
@@ -161,16 +192,17 @@ export class WorkspaceGithub {
             throw badRequest("The instance's GitHub App is on its own GitHub, not on a GitHub Enterprise server. Use a token there.");
         if (input.method === "app" && !appAvailable)
             throw badRequest("This instance has no GitHub App. An instance admin can set one up, or use a token.");
-        const repos = this.core.store;
-        const before = await this.stored(repos, workspace.id);
-        let { owner, kind } = before;
-        // A token kept from before is checked against a new server: one server's token is no use on another.
-        if (server !== before.server) {
-            const token = await this.core.secrets.reveal(repos, this.scope(workspace.id), TOKEN);
-            if (token) owner = await this.owner(token, await this.serverAt(server));
-        }
+        const moving = server !== before.server;
+        if (moving && !maySecrets) throw forbidden("Changing the GitHub server takes permission to manage secrets.");
         return this.core.write(actor, async (w) => {
-            const value: Stored = { method: input.method, server, owner, kind };
+            // One server's token is no use on another, and isn't sent there to find out.
+            if (moving) await this.core.secrets.clear(w.tx, this.scope(workspace.id), TOKEN);
+            const value: Stored = {
+                method: input.method,
+                server,
+                owner: moving ? null : before.owner,
+                kind: moving ? null : before.kind,
+            };
             await w.tx.settings.put({ workspaceId: workspace.id, projectId: null, key: KEY, value });
             await w.audit({
                 workspaceId: workspace.id,
@@ -178,7 +210,7 @@ export class WorkspaceGithub {
                 target: KEY,
                 changes: {
                     ...(before.method !== value.method ? { method: { from: before.method, to: value.method } } : {}),
-                    ...(before.server !== value.server ? { server: { from: before.server, to: value.server } } : {}),
+                    ...(moving ? { server: { from: before.server, to: value.server }, [TOKEN]: "cleared" } : {}),
                 },
             });
             return value;

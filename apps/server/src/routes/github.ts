@@ -1,6 +1,7 @@
 // GitHub: a project's repository (from the GitHub App, or a token), a workspace's GitHub settings (its
 // token and server), linking app installations to a workspace, the app's webhook, and the instance's GitHub App.
 
+import { can } from "@triagent/shared";
 import { z } from "zod";
 import { forbidden } from "../errors.ts";
 import { json, type Route, route } from "../http/route.ts";
@@ -80,7 +81,8 @@ export const githubRoutes: Route[] = [
         }),
         async handler({ services, access, body, actor }) {
             const workspace = (access as Access).workspace;
-            await services.github.workspace.save(actor, workspace, body, Boolean(await services.github.app.info()));
+            const maySecrets = can((access as Access).grant, "secrets");
+            await services.github.workspace.save(actor, workspace, body, Boolean(await services.github.app.info()), maySecrets);
             return json(await services.github.workspace.view(workspace.id, Boolean(await services.github.app.info())));
         },
     }),

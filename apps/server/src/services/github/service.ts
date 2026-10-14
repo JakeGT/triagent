@@ -123,6 +123,16 @@ export class NotConnected extends ApiError {
     }
 }
 
+function connectionMode(app: boolean, token: boolean): "app" | "token" | "none" {
+    if (app) return "app";
+    return token ? "token" : "none";
+}
+
+function tokenSource(own: boolean, lent: boolean): "project" | "workspace" | null {
+    if (own) return "project";
+    return lent ? "workspace" : null;
+}
+
 export class Github {
     readonly app: GithubApp;
     readonly workspace: WorkspaceGithub;
@@ -216,6 +226,14 @@ export class Github {
             if (err instanceof ApiError) throw new NotConnected(`The workspace's GitHub server can't be used: ${err.message}`);
             throw err;
         }
+        // On the workspace's own server, the repository must be there too: owner/name alone could name
+        // another repository on it.
+        // (Stored repository addresses have no port, so host names are compared.)
+        const repoHost = project.repoUrl ? new URL(project.repoUrl).hostname.toLowerCase() : null;
+        if (server.own && repoHost && repoHost !== new URL(server.url).hostname.toLowerCase())
+            throw new NotConnected(
+                `This project's repository is on ${repoHost}, but the workspace's GitHub is ${server.url}. Change one of them.`,
+            );
         const client = new GitHubClient(server.apiUrl, async () => token, "token");
         return {
             mode: "token",
@@ -226,7 +244,8 @@ export class Github {
             cloneUrl: this.cloneUrl(repo, server.url),
             tokenForJob: async () => ({ token, revoke: false }),
             identity: async () => {
-                const key = sha256(token);
+                // The same token can belong to different accounts on different servers.
+                const key = sha256(`${server.apiUrl}\n${token}`);
                 const known = this.owners.get(key);
                 if (known) return known;
                 const { login } = await client.viewer();
@@ -328,8 +347,8 @@ export class Github {
             ...base,
             // False once GitHub has refused to show this connection a commit's check runs (services/github/automation.ts).
             checksReadable: state?.checksReadable ?? null,
-            mode: conn ? "app" : own || lent ? "token" : "none",
-            tokenFrom: conn ? null : own ? "project" : lent ? "workspace" : null,
+            mode: connectionMode(Boolean(conn), own || lent),
+            tokenFrom: conn ? null : tokenSource(own, lent),
             // What the workspace's GitHub settings lend projects, and the server tokens go to.
             workspace: {
                 method: ws.method,
